@@ -3,20 +3,27 @@ import Image from "next/image";
 import { FormInput } from "../../components/formInput";
 import { FormSelect } from "../../components/formSelect";
 import { FormSelectSize } from "../../components/formSelectSize";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { DialogFooter } from "@/components/ui/dialog";
 import { DialogClose } from "@radix-ui/react-dialog";
-import { Product } from "@/types";
+import { Product2 } from "@/types";
 import { productsOrder } from "@/db/schema";
-import { updateOrder } from "@/actions/updateOrder";
+import { anularOrder, updateOrder } from "@/actions/updateOrder";
 
 type Props = {
-  product: Product;
+  product: Product2;
   orderProduct: typeof productsOrder.$inferSelect;
 };
 
 export const FormProduct = ({ product, orderProduct }: Props) => {
-  // const { updateProductOrder } = useContext(OrderContext);
+  const handleAnular = async () => {
+    console.log("1");
+    await anularOrder(
+      orderProduct.id.toString(),
+      orderProduct.variant_id.toString()
+    );
+    console.log("2");
+  };
   const [action, setAction] = useState<string>(
     orderProduct.action === "CAMBIO"
       ? "Quiero cambiar este producto"
@@ -79,7 +86,7 @@ export const FormProduct = ({ product, orderProduct }: Props) => {
         value={motivo}
         onChange={handleMotivoChange}
       />
-      <FormInput name="notas" title="Notas" icon={false} />
+      <FormInput name="notas" title="Notas" icon={false} valueini="" />
       {action === "Quiero cambiar este producto" && motivo !== "" && (
         <div className="w-full flex flex-col mt-8 gap-4">
           <h3 className="text-base font-bold">NUEVO PRODUCTO</h3>
@@ -115,11 +122,17 @@ export const FormProduct = ({ product, orderProduct }: Props) => {
       <DialogClose asChild>
         <button
           type="submit"
-          className="bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full mt-8 mb-2 hover:text-white"
+          className="bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full mt-8 hover:text-white"
         >
           Confirmar selección
         </button>
       </DialogClose>
+      <button
+        onClick={handleAnular}
+        className="bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full mt-1 mb-2 hover:text-white"
+      >
+        Anular selección
+      </button>
       <DialogFooter className="w-full"></DialogFooter>
     </form>
   );

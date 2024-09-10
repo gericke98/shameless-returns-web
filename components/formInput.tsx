@@ -8,16 +8,18 @@ export const FormInput = ({
   name,
   title,
   icon,
+  valueini,
 }: {
   name: string;
   title: string;
   icon: boolean;
+  valueini: string | undefined;
 }) => {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { value } = e.target;
     setValue(value);
   };
-  const [value, setValue] = useState<string>("");
+  const [value, setValue] = useState<string>(valueini || "");
   return (
     <div className="w-full h-8">
       <h6 className="bg-slate-200 rounded-t-lg text-xxs pl-4 pt-2 text-slate-600 focus:text-slate-800">

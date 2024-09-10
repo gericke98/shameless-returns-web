@@ -15,7 +15,6 @@ export async function getOrder(formData: FormData) {
   };
   if (rawFormData.order) {
     const order = await getOrderQuery(rawFormData.order.toString());
-    console.log(order);
     // Compruebo si el mail es el mismo (Check de seguridad)
     if (order) {
       if (rawFormData.email?.toString() === order.contact_email) {
@@ -28,32 +27,43 @@ export async function getOrder(formData: FormData) {
           try {
             // Inserto la order en nuestra tabla
             await db.insert(orders).values({
-              id: order.id.toString(),
-              orderNumber: order.name,
-              subtotal: (Number(order.subtotal_price) * 100).toFixed(0),
-              email: order.contact_email,
-              shippingName: order.shipping_address.name,
-              shippingAddress1: order.shipping_address.address1,
-              shippingAddress2: order.shipping_address.address2 && "",
-              shippingZip: order.shipping_address.zip,
-              shippingCity: order.shipping_address.city,
-              shippingProvince: order.shipping_address.province,
-              shippingCountry: order.shipping_address.country,
-              shippingPhone: order.shipping_address.phone,
+              id: order.id.toString() || "No information provided",
+              orderNumber: order.name || "No information provided",
+              subtotal: Math.round(Number(order.subtotal_price) * 100) || 0,
+              email: order.contact_email || "No information provided",
+              shippingName:
+                order.shipping_address.name || "No information provided",
+              shippingAddress1:
+                order.shipping_address.address1 || "No information provided",
+              shippingAddress2:
+                order.shipping_address.address2 || "No information provided",
+              shippingZip:
+                order.shipping_address.zip || "No information provided",
+              shippingCity:
+                order.shipping_address.city || "No information provided",
+              shippingProvince:
+                order.shipping_address.province || "No information provided",
+              shippingCountry:
+                order.shipping_address.country || "No information provided",
+              shippingPhone:
+                order.shipping_address.phone || "No information provided",
             });
             // Inserto cada producto de la order en la otra tabla
 
             order.line_items.map(async (item: OrderLineItem) => {
               if (item.current_quantity > 0) {
                 await db.insert(productsOrder).values({
-                  lineItemId: item.id.toString(),
-                  orderId: order.id.toString(),
-                  productId: item.product_id,
-                  title: item.title,
-                  variant_title: item.variant_title,
-                  variant_id: item.variant_id,
-                  price: item.price,
-                  quantity: item.quantity,
+                  lineItemId: item.id.toString() || "No information provided",
+                  orderId: order.id.toString() || "No information provided",
+                  productId:
+                    item.product_id.toString() || "No information provided",
+                  title: item.title || "No information provided",
+                  variant_title:
+                    item.variant_title || "No information provided",
+                  variant_id:
+                    item.variant_id.toString() || "No information provided",
+                  price: item.price || "No information provided",
+                  quantity: item.quantity || 0,
                   changed: false,
                   confirmed: false,
                 });

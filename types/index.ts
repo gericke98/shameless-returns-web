@@ -1,4 +1,8 @@
 export type Product = {
+  product: Product2;
+};
+
+export type Product2 = {
   id: number;
   title: string;
   image: {

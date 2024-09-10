@@ -1,38 +1,58 @@
-import { Progress } from "@/components/ui/progress";
-import { ProductLine } from "./components/productLine";
+"use client";
 import Image from "next/image";
 import Logo from "@/public/LOGO_black.png";
-import { productsOrder } from "@/db/schema";
+import { orders, productsOrder } from "@/db/schema";
+import { useState } from "react";
+import { Product } from "@/types";
+import { FirstWindow } from "./components/firstWindow";
+import { SecondWindow } from "./components/secondWindow";
+import { cn } from "@/lib/utils";
+import { ThirdWindow } from "./components/thirdWindow";
+import { LastWindow } from "./components/lastWindow";
 import { AsyncButton } from "@/components/asyncButton";
 
 type Props = {
   name: string;
-  items: (typeof productsOrder.$inferSelect)[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
+  order: typeof orders.$inferSelect;
   id: string;
 };
-export const ClientOrder = ({ name, items, id }: Props) => {
+export const ClientOrder = ({ name, items, order, id }: Props) => {
+  const [position, setPosition] = useState<number>(1);
+  const handleClick = () => {
+    setPosition(position + 1);
+  };
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black">
-      <div className="bg-white flex flex-col w-[30%] rounded-3xl items-center py-5 px-10">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern gap-10 pb-20">
+      <div className="bg-white flex flex-col w-[30%] rounded-b-3xl items-center py-3 px-5">
         <Image src={Logo} alt="Logo" width={150} height={150} />
-        <span className="border w-full border-slate-100 mt-5" />
-        <h3 className="text-xs mt-2 mb-10 text-slate-500">
-          CAMBIOS Y DEVOLUCIONES
-        </h3>
-        <Progress value={33} />
-        <div className="flex flex-col w-full items-start mb-5">
-          <h3 className="text-2xl font-bold mt-8">Pedido {name}</h3>
-          <h5 className="text-xs font-regular text-slate-600 mt-6">
-            Selecciona al menos un producto para continuar
-          </h5>
-          <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer">
-            {items.map(async (product) => (
-              <ProductLine key={product.id} orderProduct={product} />
-            ))}
-          </div>
-          <span className="mt-5 border-b border-slate-200 w-full" />
-        </div>
-        <AsyncButton text="Actualizar pedido" id={id} />
+        <span className="border w-full border-slate-200 mt-2" />
+        <h3 className="text-xs mt-2 text-slate-500">CAMBIOS Y DEVOLUCIONES</h3>
+      </div>
+      <div className="bg-white-pattern flex flex-col w-[30%] rounded-3xl items-center py-10 px-6">
+        {position === 1 && <FirstWindow name={name} items={items} />}
+        {position === 2 && (
+          <SecondWindow
+            order={order}
+            position={position}
+            setPosition={setPosition}
+            items={items}
+          />
+        )}
+        {position === 3 && <ThirdWindow items={items} shipping={true} />}
+        {position === 4 && <LastWindow items={items} shipping={true} />}
+        {position >= 4 && <AsyncButton text="Actualizar pedido" id={id} />}
+        {position < 4 && (
+          <button
+            className={cn(
+              "bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full",
+              position === 2 && "hidden"
+            )}
+            onClick={handleClick}
+          >
+            Continuar
+          </button>
+        )}
       </div>
     </div>
   );

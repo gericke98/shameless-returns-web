@@ -8,7 +8,7 @@ import {
   getOrderProductsById,
   removeLineItem,
 } from "@/db/queries";
-import { productsOrder } from "@/db/schema";
+import { orders, productsOrder } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -61,6 +61,60 @@ export async function updateOrder(formData: FormData) {
       .where(eq(productsOrder.variant_id, rawFormData.oldVariantId.toString()));
     revalidatePath("/", "layout");
   }
+}
+
+export async function anularOrder(id: string, oldVariantId: string) {
+  if (id && oldVariantId) {
+    // Actualizo la información de los productos
+    const result = await db
+      .update(productsOrder)
+      .set({
+        changed: false,
+        action: null,
+        reason: null,
+        notes: null,
+        new_variant_title: null,
+        new_variant_id: null,
+      })
+      .returning()
+      .where(eq(productsOrder.variant_id, oldVariantId));
+    console.log(result);
+    revalidatePath("/", "layout");
+  }
+}
+
+export async function updateData(prevState: number, formData: FormData) {
+  // Extraigo la informacion del form
+  const rawFormData = {
+    id: formData.get("id"),
+    name: formData.get("name"),
+    address: formData.get("address"),
+    address2: formData.get("address2"),
+    zip: formData.get("zip"),
+    city: formData.get("city"),
+    province: formData.get("province"),
+    country: formData.get("country"),
+    phone: formData.get("phone"),
+  };
+  if (rawFormData.id && rawFormData.name && rawFormData.address) {
+    // Actualizo la información de envío
+    await db
+      .update(orders)
+      .set({
+        shippingName: rawFormData.name?.toString(),
+        shippingAddress1: rawFormData.address?.toString(),
+        shippingAddress2: rawFormData.address2?.toString(),
+        shippingZip: rawFormData.zip?.toString(),
+        shippingCity: rawFormData.city?.toString(),
+        shippingProvince: rawFormData.province?.toString(),
+        shippingCountry: rawFormData.country?.toString(),
+        shippingPhone: rawFormData.phone?.toString(),
+      })
+      .where(eq(orders.id, rawFormData.id.toString()));
+    revalidatePath("/", "layout");
+    return prevState + 1;
+  }
+  return prevState;
 }
 
 export async function updateFinalOrder(id: string) {

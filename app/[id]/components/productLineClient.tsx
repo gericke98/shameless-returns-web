@@ -10,25 +10,27 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import Image from "next/image";
 import { FormProduct } from "../form";
-import { Product } from "@/types";
+import { Product, Product2 } from "@/types";
 import { productsOrder } from "@/db/schema";
 import { cn } from "@/lib/utils";
+import { LiaExchangeAltSolid } from "react-icons/lia";
+import { IoIosReturnLeft } from "react-icons/io";
 
 type Props = {
   orderProduct: typeof productsOrder.$inferSelect;
-  product: Product;
+  product: Product2;
 };
 
 export const ProductLineClient = ({ orderProduct, product }: Props) => {
   return (
-    <div className="w-full p-2 hover:bg-slate-100">
+    <div className="w-full p-2 hover:bg-white">
       <Dialog>
         <DialogTrigger className="w-full flex flex-row flex-nowrap gap-4">
           <Image
             alt={product.image.src}
             src={product.image.src}
             width={100}
-            height={100}
+            height={140}
             className="rounded-xl"
           />
           <div className="flex flex-col w-full gap-1 items-start">
@@ -54,12 +56,20 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
               {orderProduct.price} €
             </h4>
             {orderProduct.action && (
-              <div className="flex flex-col gap-1 w-full">
-                <h5 className="text-sm bg-blue-200 rounded-md px-2 w-2/3">
-                  {orderProduct.action}
-                </h5>
-                <h5 className="text-xs italic rounded-md px-2 text-left">
-                  {orderProduct.reason}
+              <div className="flex flex-col justify-center gap-1 w-full">
+                <div className="w-full h-5 flex flex-row items-center justify-center bg-blue-100 rounded-md max-w-24">
+                  {orderProduct.action === "CAMBIO" ? (
+                    <LiaExchangeAltSolid size={11} />
+                  ) : (
+                    <IoIosReturnLeft size={11} />
+                  )}
+                  <h5 className="text-xs font-light text-left align-text-middle px-2 flex-none">
+                    {orderProduct.action.charAt(0) +
+                      orderProduct.action.slice(1).toLowerCase()}
+                  </h5>
+                </div>
+                <h5 className="text-xs font-light italic rounded-md text-left">
+                  &quot;{orderProduct.reason}&quot;
                 </h5>
               </div>
             )}

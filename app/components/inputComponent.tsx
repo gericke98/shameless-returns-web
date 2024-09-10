@@ -25,8 +25,8 @@ export const InputComponent = () => {
         </span>
       </h5>
       <form className="mt-10 w-full flex flex-col gap-8" action={getOrder}>
-        <FormInput name="order" title="Número de pedido" icon={true} />
-        <FormInput name="email" title="Email" icon={true} />
+        <FormInput name="order" title="Número de pedido" icon valueini="" />
+        <FormInput name="email" title="Email" icon valueini="" />
         <h6 className="text-xxs text-black mt-5">
           Al continuar, confirmas que aceptas los{" "}
           <span>

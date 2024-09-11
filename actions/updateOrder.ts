@@ -63,8 +63,8 @@ export async function updateOrder(formData: FormData) {
   }
 }
 
-export async function anularOrder(id: string, oldVariantId: string) {
-  if (id && oldVariantId) {
+export async function anularOrder(oldVariantId: string) {
+  if (oldVariantId) {
     // Actualizo la información de los productos
     const result = await db
       .update(productsOrder)
@@ -76,9 +76,7 @@ export async function anularOrder(id: string, oldVariantId: string) {
         new_variant_title: null,
         new_variant_id: null,
       })
-      .returning()
       .where(eq(productsOrder.variant_id, oldVariantId));
-    console.log(result);
     revalidatePath("/", "layout");
   }
 }

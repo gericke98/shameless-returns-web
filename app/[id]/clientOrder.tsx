@@ -39,8 +39,22 @@ export const ClientOrder = ({ name, items, order, id }: Props) => {
             items={items}
           />
         )}
-        {position === 3 && <ThirdWindow items={items} shipping={true} />}
-        {position === 4 && <LastWindow items={items} shipping={true} />}
+        {position === 3 && (
+          <ThirdWindow
+            items={items}
+            shipping={true}
+            position={position}
+            setPosition={setPosition}
+          />
+        )}
+        {position === 4 && (
+          <LastWindow
+            items={items}
+            shipping={true}
+            position={position}
+            setPosition={setPosition}
+          />
+        )}
         {position >= 4 && <AsyncButton text="Actualizar pedido" id={id} />}
         {position < 4 && (
           <button

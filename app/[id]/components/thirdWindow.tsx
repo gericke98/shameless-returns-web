@@ -8,13 +8,21 @@ import CardBlack from "@/public/cardBlack.svg";
 import { Product } from "@/types";
 import Image from "next/image";
 import { useState } from "react";
+import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   shipping: boolean;
+  position: number;
+  setPosition: React.Dispatch<React.SetStateAction<number>>;
 };
 
-export const ThirdWindow = ({ items, shipping }: Props) => {
+export const ThirdWindow = ({
+  items,
+  shipping,
+  position,
+  setPosition,
+}: Props) => {
   const totalPriceDevolver = items
     .filter((item) => item.action)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
@@ -32,7 +40,12 @@ export const ThirdWindow = ({ items, shipping }: Props) => {
   return (
     <div className="w-full h-full flex flex-col gap-3 mb-3">
       <Progress value={75} />
-      <h3 className="font-bold text-2xl text-left mt-4">Elige tu reembolso</h3>
+      <FaArrowAltCircleLeft
+        size={25}
+        className="mt-4 cursor-pointer"
+        onClick={() => setPosition(position - 1)}
+      />
+      <h3 className="font-bold text-2xl text-left mt-1">Elige tu reembolso</h3>
       <div
         className={cn(
           "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer",

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { SecondWindowForm } from "./secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
+import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -23,7 +24,12 @@ export const SecondWindow = ({
   return (
     <div className="w-full h-full flex flex-col">
       <Progress value={50} />
-      <h3 className="font-bold text-2xl text-left mt-4">
+      <FaArrowAltCircleLeft
+        size={25}
+        className="mt-4 cursor-pointer"
+        onClick={() => setPosition(position - 1)}
+      />
+      <h3 className="font-bold text-2xl text-left mt-1">
         Método de devolución
       </h3>
       <p className="mt-5 text-sm text-gray-700">

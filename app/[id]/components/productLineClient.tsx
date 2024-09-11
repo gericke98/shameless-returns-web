@@ -15,6 +15,7 @@ import { productsOrder } from "@/db/schema";
 import { cn } from "@/lib/utils";
 import { LiaExchangeAltSolid } from "react-icons/lia";
 import { IoIosReturnLeft } from "react-icons/io";
+import { useState } from "react";
 
 type Props = {
   orderProduct: typeof productsOrder.$inferSelect;
@@ -22,6 +23,7 @@ type Props = {
 };
 
 export const ProductLineClient = ({ orderProduct, product }: Props) => {
+  const [changed, setChanged] = useState<boolean>(false);
   return (
     <div className="w-full p-2 hover:bg-white">
       <Dialog>
@@ -104,7 +106,12 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
                 </div>
               </div>
               <div className="w-full mt-2 max-h-full">
-                <FormProduct product={product} orderProduct={orderProduct} />
+                <FormProduct
+                  product={product}
+                  orderProduct={orderProduct}
+                  changed={changed}
+                  setChanged={setChanged}
+                />
               </div>
             </ScrollArea>
           </DialogDescription>

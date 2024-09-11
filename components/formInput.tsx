@@ -22,35 +22,37 @@ export const FormInput = ({
   const [value, setValue] = useState<string>(valueini || "");
   return (
     <div className="w-full h-8">
-      <h6 className="bg-slate-200 rounded-t-lg text-xxs pl-4 pt-2 text-slate-600 focus:text-slate-800">
-        {title}
-      </h6>
-      <div
-        className={cn(
-          "w-full h-full pl-4 flex bg-slate-200 border-b-2 border-[#868687] focus:border-[#383839]",
-          icon === true ? "flex-row" : "flex-col"
-        )}
-      >
-        {icon === true && (
-          <Image
-            src={name === "order" ? BoxIcon : MailIcon}
-            alt="Icon 1"
-            width={15}
-            height={15}
-          />
-        )}
-
-        <input
-          type="text"
-          name={name}
+      <div className="w-full h-full">
+        <h6 className="bg-slate-100 rounded-t-lg text-xxs pl-4 pt-2 text-slate-400">
+          {title}
+        </h6>
+        <div
           className={cn(
-            "h-full w-full bg-slate-200 text-sm text-black font-light focus:outline-none",
-            icon === true && "pl-4"
+            "w-full h-full pl-4 flex bg-slate-100 border-b-2 border-[#868687] focus-within:border-[#383839]",
+            icon === true ? "flex-row" : "flex-col"
           )}
-          placeholder=""
-          value={value}
-          onChange={handleChange}
-        />
+        >
+          {icon === true && (
+            <Image
+              src={name === "order" ? BoxIcon : MailIcon}
+              alt="Icon 1"
+              width={15}
+              height={15}
+            />
+          )}
+
+          <input
+            type="text"
+            name={name}
+            className={cn(
+              "h-full w-full bg-slate-100 text-sm text-black font-light focus:outline-none",
+              icon === true && "pl-4"
+            )}
+            placeholder=""
+            value={value}
+            onChange={handleChange}
+          />
+        </div>
       </div>
     </div>
   );

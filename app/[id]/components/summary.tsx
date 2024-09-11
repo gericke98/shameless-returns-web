@@ -6,21 +6,34 @@ type Props = {
   items: (typeof productsOrder.$inferSelect)[];
   shipping: boolean;
   final: boolean;
+  credito?: boolean;
 };
-export const SummaryComponent = ({ items, shipping, final }: Props) => {
+export const SummaryComponent = ({
+  items,
+  shipping,
+  final,
+  credito,
+}: Props) => {
   const totalPriceDevolver = items
-    .filter((item) => item.action)
+    .filter((item) => item.action && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
-  const itemsToDevolver = items.filter((item) => item.action);
+  const itemsToDevolver = items.filter(
+    (item) => item.action && !item.confirmed
+  );
 
   const totalPriceCambio = items
-    .filter((item) => item.action === "CAMBIO")
+    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
-  const itemsToCambio = items.filter((item) => item.action === "CAMBIO");
+  const itemsToCambio = items.filter(
+    (item) => item.action === "CAMBIO" && !item.confirmed
+  );
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
   if (shipping) {
-    totalPrice = totalPrice - Number(4);
+    if (totalPrice !== 0) {
+      // Caso de que hay una devolución --> Si es solo cambio, no se cobra logística
+      totalPrice = totalPrice - Number(4);
+    }
   }
   return (
     <div className="w-full h-full flex flex-col mt-5">
@@ -37,11 +50,11 @@ export const SummaryComponent = ({ items, shipping, final }: Props) => {
         ))}
         <div className="w-full h-full flex flex-row justify-between mt-5">
           <h5 className="font-semibold text-sm">
-            Nuevos productos solicitados {shipping && "& Logística"}
+            Nuevos productos {shipping && totalPrice !== 0 && "& Logística"}
           </h5>
           <h5 className="font-semibold text-sm">
-            {"-"}
-            {shipping
+            {(totalPriceCambio > 0 || shipping) && "-"}
+            {shipping && totalPrice !== 0
               ? (totalPriceCambio + Number(4)).toFixed(2)
               : totalPriceCambio.toFixed(2)}
             {" €"}
@@ -50,11 +63,24 @@ export const SummaryComponent = ({ items, shipping, final }: Props) => {
         {itemsToCambio.map((item) => (
           <SummaryLine key={item.id} item={item} newAction={true} />
         ))}
-        {shipping && <SummaryShipping />}
+        {shipping && totalPrice !== 0 && <SummaryShipping />}
+        {credito && (
+          <div className="w-full h-full flex flex-row justify-between mt-5">
+            <h5 className="font-semibold text-sm">
+              Bonificaciones - Crédito en tienda
+            </h5>
+            <h5 className="font-semibold text-sm">
+              {(totalPrice * 0.15).toFixed(2)}
+              {" €"}
+            </h5>
+          </div>
+        )}
       </div>
       <div className="bg-gray-300 flex flex-row justify-between px-2 py-3 my-4 rounded-sm mt-4">
         <h6 className="pl-5 font-semibold">Total reembolso</h6>
-        <h6 className="pr-1 font-semibold">{totalPrice.toFixed(2)} €</h6>
+        <h6 className="pr-1 font-semibold">
+          {credito ? (totalPrice * 1.15).toFixed(2) : totalPrice.toFixed(2)} €
+        </h6>
       </div>
       {!final && (
         <h5 className="text-xs mt-0 mb-4 font-light">

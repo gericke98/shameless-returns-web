@@ -93,9 +93,9 @@ export const FormProduct = ({
         />
         <FormInput name="notas" title="Notas" icon={false} valueini="" />
         {action === "Quiero cambiar este producto" && motivo !== "" && (
-          <div className="w-full flex flex-col mt-8 gap-4">
+          <div className="w-full flex flex-col mt-8 gap-3">
             <h3 className="text-base font-bold">NUEVO PRODUCTO</h3>
-            <div className="w-full flex flex-row flex-nowrap gap-4">
+            <div className="w-full flex flex-row flex-nowrap gap-3">
               <Image
                 alt={product.image.src}
                 src={product.image.src}
@@ -127,7 +127,7 @@ export const FormProduct = ({
         <DialogClose asChild>
           <button
             type="submit"
-            className="bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full mt-8 hover:text-white"
+            className="bg-cyan-800 text-white py-3 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full mt-8 font-bold"
           >
             Confirmar selección
           </button>
@@ -138,7 +138,7 @@ export const FormProduct = ({
       <DialogClose asChild>
         <button
           onClick={handleAnular}
-          className="bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full mt-1 mb-2 hover:text-white"
+          className="bg-white border border-cyan-800 py-3 rounded-full hover:bg-cyan-800 focus:bg-cyan-800 flex items-center justify-center w-full -mt-2 mb-2 hover:text-white font-bold"
         >
           Anular selección
         </button>

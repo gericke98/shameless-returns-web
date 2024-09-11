@@ -28,4 +28,6 @@ pnpm dev
 bun dev
 ```
 
+npx drizzle-kit push:pg to sync changes to DB
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

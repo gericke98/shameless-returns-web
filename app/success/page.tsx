@@ -5,8 +5,8 @@ import Link from "next/link";
 
 export default async function SuccessPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black">
-      <div className="bg-white flex flex-col w-[30%] rounded-3xl items-center py-5 px-10">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern">
+      <div className="bg-white-pattern flex flex-col w-[30%] rounded-3xl items-center py-5 px-10">
         <Link href="https://shamelesscollective.com">
           <Image src={Logo} alt="Logo" width={150} height={150} />
         </Link>
@@ -20,11 +20,11 @@ export default async function SuccessPage() {
             className="mt-5"
           />
           <h1 className="text-base font-semibold mt-5 mb-2 text-center px-5">
-            Your request have been successfully recorded
+            Hemos recibido tu solicitud correctamente!
           </h1>
           <h5 className="text-sm text-center">
-            We have correctly received your request and changes have been made
-            successfully
+            Hemos recibido tu solicitud y se te ha enviado un correo electrónico
+            con los siguientes pasos
           </h5>
         </div>
       </div>

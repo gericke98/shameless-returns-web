@@ -25,7 +25,12 @@ type Props = {
 export const ProductLineClient = ({ orderProduct, product }: Props) => {
   const [changed, setChanged] = useState<boolean>(false);
   return (
-    <div className="w-full p-2 hover:bg-white">
+    <div
+      className={cn(
+        "w-full p-2 hover:bg-white hover:cursor-pointer",
+        orderProduct.confirmed && "pointer-events-none cursor-none"
+      )}
+    >
       <Dialog>
         <DialogTrigger className="w-full flex flex-row flex-nowrap gap-4">
           <Image
@@ -74,6 +79,11 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
                   &quot;{orderProduct.reason}&quot;
                 </h5>
               </div>
+            )}
+            {orderProduct.confirmed && (
+              <h5 className="text-xs font-bold text-left px-1 py-2 flex-none bg-blue-200 rounded-md">
+                El producto ya ha sido modificado
+              </h5>
             )}
           </div>
         </DialogTrigger>

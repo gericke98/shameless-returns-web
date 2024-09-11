@@ -19,9 +19,20 @@ type Props = {
 };
 export const ClientOrder = ({ name, items, order, id }: Props) => {
   const [position, setPosition] = useState<number>(1);
+  const [credito, setCredito] = useState<boolean | null>(null);
   const handleClick = () => {
+    console.log(position);
     setPosition(position + 1);
+    console.log(position);
   };
+  const totalPriceDevolver = items
+    .filter((item) => item.action && !item.confirmed)
+    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const totalPriceCambio = items
+    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const totalPrice = totalPriceDevolver - totalPriceCambio;
+  console.log(position);
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern gap-10 pb-20">
       <div className="bg-white flex flex-col w-[30%] rounded-b-3xl items-center py-3 px-5">
@@ -39,27 +50,28 @@ export const ClientOrder = ({ name, items, order, id }: Props) => {
             items={items}
           />
         )}
-        {position === 3 && (
+        {position === 3 && totalPrice !== 0 && (
           <ThirdWindow
             items={items}
             shipping={true}
             position={position}
             setPosition={setPosition}
+            setCredito={setCredito}
           />
         )}
         {position === 4 && (
           <LastWindow
             items={items}
-            shipping={true}
             position={position}
             setPosition={setPosition}
+            credito={credito}
           />
         )}
         {position >= 4 && <AsyncButton text="Actualizar pedido" id={id} />}
         {position < 4 && (
           <button
             className={cn(
-              "bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full",
+              "bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold",
               position === 2 && "hidden"
             )}
             onClick={handleClick}

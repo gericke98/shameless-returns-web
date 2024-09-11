@@ -7,7 +7,7 @@ import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
 import { Product } from "@/types";
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
@@ -15,6 +15,7 @@ type Props = {
   shipping: boolean;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
+  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
 };
 
 export const ThirdWindow = ({
@@ -22,21 +23,24 @@ export const ThirdWindow = ({
   shipping,
   position,
   setPosition,
+  setCredito,
 }: Props) => {
   const totalPriceDevolver = items
-    .filter((item) => item.action)
+    .filter((item) => item.action && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
-  const itemsToDevolver = items.filter((item) => item.action);
 
   const totalPriceCambio = items
-    .filter((item) => item.action === "CAMBIO")
+    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
-  const itemsToCambio = items.filter((item) => item.action === "CAMBIO");
+
   let totalPrice = totalPriceDevolver - totalPriceCambio;
   if (shipping) {
-    totalPrice = totalPrice - Number(4.01);
+    totalPrice = totalPrice - Number(4);
   }
   const [selected, setSelected] = useState<number>(0);
+  // useEffect(() => {
+  //   setCredito(true);
+  // }, []);
   return (
     <div className="w-full h-full flex flex-col gap-3 mb-3">
       <Progress value={75} />
@@ -51,7 +55,10 @@ export const ThirdWindow = ({
           "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer",
           selected === 0 ? "bg-black" : "bg-white"
         )}
-        onClick={() => setSelected(0)}
+        onClick={() => {
+          setSelected(0);
+          setCredito(true);
+        }}
       >
         <div className="w-full flex flex-row gap-2">
           <Image
@@ -109,7 +116,10 @@ export const ThirdWindow = ({
           "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer",
           selected === 1 ? "bg-black" : "bg-white"
         )}
-        onClick={() => setSelected(1)}
+        onClick={() => {
+          setSelected(1);
+          setCredito(false);
+        }}
       >
         <div className="w-full flex flex-row gap-2">
           <Image

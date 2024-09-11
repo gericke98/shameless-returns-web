@@ -15,7 +15,9 @@ export const SummaryLine = ({ item, newAction }: Props) => {
           {item.price} €
         </h6>
       </div>
-      <h6 className="text-xs tracking-wide font-light">{item.variant_title}</h6>
+      <h6 className="text-xs tracking-wide font-light">
+        {newAction ? item.new_variant_title : item.variant_title}
+      </h6>
     </div>
   );
 };

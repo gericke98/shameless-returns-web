@@ -8,12 +8,12 @@ export const Button = ({ text }: { text: string }) => {
   return (
     <button
       className={cn(
-        "bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full"
+        "bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
       )}
       type="submit"
       disabled={pending}
     >
-      {pending ? <BeatLoader /> : text}
+      {pending ? <BeatLoader color="white" /> : text}
     </button>
   );
 };

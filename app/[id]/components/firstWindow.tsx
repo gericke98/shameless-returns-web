@@ -18,7 +18,7 @@ export const FirstWindow = ({ name, items }: Props) => {
         <h5 className="text-sm font-regular text-slate-600 mt-6">
           Selecciona al menos un producto para continuar:
         </h5>
-        <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer flex flex-col gap-4">
+        <div className="w-full h-full mt-5 rounded-xl flex flex-col gap-4">
           {items.map((product) => {
             if (product.newp) {
               return (

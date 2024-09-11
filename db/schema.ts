@@ -40,6 +40,7 @@ export const productsOrder = pgTable("productsorder", {
   new_variant_title: text("new_variant_title"),
   new_variant_id: text("new_variant_id"),
   confirmed: boolean("confirmed"),
+  checked: boolean("checked"),
 });
 
 export const productsOrderRelations = relations(productsOrder, ({ one }) => ({

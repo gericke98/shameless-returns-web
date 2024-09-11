@@ -156,3 +156,20 @@ export async function updateFinalOrder(id: string) {
   });
   redirect("/success");
 }
+
+export async function updateDashboard(id: string) {
+  // Extraigo la informacion del order correspondiente
+  const products = await getOrderProductsById(id);
+  // Actualizo cada línea de procuto que tenga cambio
+  products.map(async (product) => {
+    if (product.action) {
+      await db
+        .update(productsOrder)
+        .set({ confirmed: true })
+        .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+      // Aquí estaría bien tener una página de success
+      revalidatePath("/", "layout");
+    }
+  });
+  redirect("/success");
+}

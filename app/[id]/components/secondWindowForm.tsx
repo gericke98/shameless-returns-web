@@ -19,10 +19,22 @@ export const SecondWindowForm = ({
   items,
 }: Props) => {
   const [state, formAction] = useFormState(updateData, position);
+  const totalPriceDevolver = items
+    .filter((item) => item.action && !item.confirmed)
+    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const totalPriceCambio = items
+    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const totalPrice = totalPriceDevolver - totalPriceCambio;
   useEffect(() => {
-    console.log(state);
-    setPosition(state);
-  }, [setPosition, state]);
+    if (state !== 2) {
+      if (totalPrice !== 0) {
+        setPosition(state);
+      } else {
+        setPosition(state + 1);
+      }
+    }
+  }, [state]);
   return (
     <form className="my-10 w-full flex flex-col gap-8" action={formAction}>
       <input hidden name="id" value={order.id} />
@@ -84,7 +96,7 @@ export const SecondWindowForm = ({
       )}
       <button
         type="submit"
-        className="bg-slate-300 py-4 rounded-full hover:bg-blue-400 focus:bg-blue-400 flex items-center justify-center w-full"
+        className="bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
       >
         Continuar
       </button>

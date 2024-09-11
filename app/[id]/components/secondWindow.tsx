@@ -21,6 +21,13 @@ export const SecondWindow = ({
   setPosition,
   items,
 }: Props) => {
+  const totalPriceDevolver = items
+    .filter((item) => item.action && !item.confirmed)
+    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const totalPriceCambio = items
+    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const totalPrice = totalPriceDevolver - totalPriceCambio;
   return (
     <div className="w-full h-full flex flex-col">
       <Progress value={50} />
@@ -54,7 +61,11 @@ export const SecondWindow = ({
             </h5>
           </div>
           <div className="flex flex-row w-full px-4">
-            <h5 className="text-xxs">Coste: 4,00 €</h5>
+            {totalPrice !== 0 ? (
+              <h5 className="text-xxs">Coste: 4,00 €</h5>
+            ) : (
+              <h5 className="text-xxs">Coste: 0,00 €</h5>
+            )}
           </div>
         </div>
       </div>

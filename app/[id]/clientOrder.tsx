@@ -34,13 +34,13 @@ export const ClientOrder = ({ name, items, order, id }: Props) => {
   const totalPrice = totalPriceDevolver - totalPriceCambio;
   console.log(position);
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern gap-10 pb-20">
-      <div className="bg-white flex flex-col w-[30%] rounded-b-3xl items-center py-3 px-5">
+    <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">
+      <div className="bg-white flex flex-col lg:w-[30%] w-[85%] rounded-b-3xl items-center py-3 px-4 lg:px-6">
         <Image src={Logo} alt="Logo" width={150} height={150} />
         <span className="border w-full border-slate-200 mt-2" />
         <h3 className="text-xs mt-2 text-slate-500">CAMBIOS Y DEVOLUCIONES</h3>
       </div>
-      <div className="bg-white-pattern flex flex-col w-[30%] rounded-3xl items-center py-10 px-6">
+      <div className="bg-white-pattern flex flex-col lg:w-[30%] w-[85%] rounded-3xl items-center py-10 px-4 lg:px-6">
         {position === 1 && <FirstWindow name={name} items={items} />}
         {position === 2 && (
           <SecondWindow

@@ -41,7 +41,7 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
             className="rounded-xl"
           />
           <div className="flex flex-col w-full gap-1 items-start">
-            <h3 className="text-base text-left font-bold leading-tight text-black">
+            <h3 className="lg:text-base text-sm text-left font-bold leading-tight text-black">
               {orderProduct.title}
             </h3>
             <div className="w-full flex flex-row gap-3">

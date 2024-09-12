@@ -104,7 +104,7 @@ export const ThirdWindow = ({
         />
         <p
           className={cn(
-            "text-sm",
+            "text-sm font-bold",
             selected === 0 ? "text-white" : "text-black "
           )}
         >
@@ -162,7 +162,7 @@ export const ThirdWindow = ({
         />
         <p
           className={cn(
-            "text-sm",
+            "text-sm font-bold",
             selected === 1 ? "text-white" : "text-black "
           )}
         >

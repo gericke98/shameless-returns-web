@@ -44,7 +44,7 @@ export const LastWindow = ({
           }
         }}
       />
-      <h3 className="font-bold text-2xl text-left mt-4">Resumen final</h3>
+      <h3 className="font-bold text-2xl text-left mt-1">Resumen final</h3>
       <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer flex flex-col gap-4">
         {items.map((product) => {
           if (product.newp && product.action) {

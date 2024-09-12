@@ -36,7 +36,7 @@ export const SecondWindowForm = ({
     }
   }, [state]);
   return (
-    <form className="my-10 w-full flex flex-col gap-8" action={formAction}>
+    <form className="mt-10 w-full flex flex-col gap-8" action={formAction}>
       <input hidden name="id" value={order.id} />
       <FormInput
         name="name"

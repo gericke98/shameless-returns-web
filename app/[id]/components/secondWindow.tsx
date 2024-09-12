@@ -58,7 +58,7 @@ export const SecondWindow = ({
               className="hidden lg:block"
             />
             <h5 className="text-xs font-semibold">
-              Entrega en punto de recogida
+              Entrega en punto de recogida Correos
             </h5>
           </div>
           <div className="flex flex-row w-full px-4">

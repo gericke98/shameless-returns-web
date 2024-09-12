@@ -38,11 +38,8 @@ export const ThirdWindow = ({
     totalPrice = totalPrice - Number(4);
   }
   const [selected, setSelected] = useState<number>(0);
-  // useEffect(() => {
-  //   setCredito(true);
-  // }, []);
   return (
-    <div className="w-full h-full flex flex-col gap-3 mb-3">
+    <div className="w-full h-full flex flex-col mb-3">
       <Progress value={75} />
       <FaArrowAltCircleLeft
         size={25}
@@ -52,7 +49,7 @@ export const ThirdWindow = ({
       <h3 className="font-bold text-2xl text-left mt-1">Elige tu reembolso</h3>
       <div
         className={cn(
-          "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer",
+          "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer mt-5",
           selected === 0 ? "bg-black" : "bg-white"
         )}
         onClick={() => {

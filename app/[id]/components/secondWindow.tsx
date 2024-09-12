@@ -55,6 +55,7 @@ export const SecondWindow = ({
               alt="Logo correos"
               width={35}
               height={40}
+              className="hidden lg:block"
             />
             <h5 className="text-xs font-semibold">
               Entrega en punto de recogida

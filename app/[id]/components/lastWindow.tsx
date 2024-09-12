@@ -31,7 +31,7 @@ export const LastWindow = ({
     totalPrice = totalPrice - Number(4);
   }
   return (
-    <div className="w-full h-full flex flex-col gap-3 mb-3">
+    <div className="w-full h-full flex flex-col mb-3">
       <Progress value={100} />
       <FaArrowAltCircleLeft
         size={25}

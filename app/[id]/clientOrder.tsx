@@ -32,7 +32,6 @@ export const ClientOrder = ({ name, items, order, id }: Props) => {
     .filter((item) => item.action === "CAMBIO" && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
   const totalPrice = totalPriceDevolver - totalPriceCambio;
-  console.log(position);
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">
       <div className="bg-white flex flex-col lg:w-[30%] w-[85%] rounded-b-3xl items-center py-3 px-4 lg:px-6">

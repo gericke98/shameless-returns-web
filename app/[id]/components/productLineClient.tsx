@@ -87,7 +87,7 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
             )}
           </div>
         </DialogTrigger>
-        <DialogContent className="my-10 max-w-96 max-h-screen overflow-scroll">
+        <DialogContent className="my-10 max-w-96 max-h-screen overflow-scroll lg:mx-0 mx-2">
           <DialogHeader>
             <DialogTitle>
               <h5 className="text-2xl font-bold mt-8 mb-8">Selección</h5>

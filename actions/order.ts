@@ -19,11 +19,26 @@ export async function getOrder(formData: FormData) {
     if (order) {
       if (rawFormData.email?.toString() === order.contact_email) {
         // Extraigo toda la información necesaria y la cargo en tabla propia
-        // Check de si ya existe
+        // Use regular expressions to extract exchanged or returned products
+        const exchangeRegex = /(\d+\s+x\s+.+?)\s+-\s+EXCHANGE/gi;
+        const returnRegex = /(\d+\s+x\s+.+?)\s+-\s+REFUND/gi;
+        let exchanges = [];
+        let returns = [];
+
+        let match;
+        while ((match = exchangeRegex.exec(order.note)) !== null) {
+          exchanges.push(match[1].trim());
+        }
+
+        while ((match = returnRegex.exec(order.note)) !== null) {
+          returns.push(match[1].trim());
+        }
+
         const orderDB = await db.query.orders.findFirst({
           where: eq(orders.id, order.id),
         });
         if (!orderDB && order.id) {
+          // Check de si ya se había cambiado con Reveni
           try {
             // Inserto la order en nuestra tabla
             await db.insert(orders).values({
@@ -52,6 +67,13 @@ export async function getOrder(formData: FormData) {
 
             order.line_items.map(async (item: OrderLineItem) => {
               if (item.current_quantity > 0) {
+                const wasExchanged = exchanges.some((exchange) =>
+                  exchange.includes(item.title)
+                );
+                const wasReturned = returns.some((returnItem) =>
+                  returnItem.includes(item.title)
+                );
+                const wasChanged = wasExchanged || wasReturned;
                 await db.insert(productsOrder).values({
                   lineItemId: item.id.toString() || "No information provided",
                   orderId: order.id.toString() || "No information provided",
@@ -65,7 +87,7 @@ export async function getOrder(formData: FormData) {
                   price: item.price || "No information provided",
                   quantity: item.quantity || 0,
                   changed: false,
-                  confirmed: false,
+                  confirmed: wasChanged,
                 });
               }
             });

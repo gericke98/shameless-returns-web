@@ -12,7 +12,8 @@ export const AsyncButton = ({ text, id }: { text: string; id: string }) => {
       type="submit"
       onClick={async () => {
         // Creo la etiqueta de Correos
-        let statusLabel = await createShippingLabel(id);
+        // let statusLabel = await createShippingLabel(id);
+        let statusLabel = 200;
         if (statusLabel === 200) {
           updateFinalOrder(id);
         }

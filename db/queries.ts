@@ -78,7 +78,8 @@ export async function getOrderTotal(orderId: string) {
 export async function createReturn(
   orderId: string,
   fulfillmentLineItem: string,
-  product: any
+  product: any,
+  discount: any
 ) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -109,19 +110,22 @@ export async function createReturn(
     `;
   // Aqui tengo que diferenciar si es una devolucion directa o un cambio
   if (product.action === "CAMBIO") {
-    const query = `
+    query = `
       mutation {
         returnCreate(returnInput: {
           exchangeLineItems: [
             {
               appliedDiscount: {
-                description: "PRUEBA10",
+                description: "RETURN_DISCOUNT",
                 value: {
-                  percentage: 0.1
+                  amount: {
+                    amount: ${discount.amount_set.shop_money.amount},
+                    currencyCode: ${discount.amount_set.shop_money.currency_code}
+                  }
                 }
               },
               quantity: 1,
-              variantId: "${product.new_variant_id}"
+              variantId: "gid://shopify/ProductVariant/${product.new_variant_id}"
             }
           ],
           orderId: "gid://shopify/Order/${orderId}",

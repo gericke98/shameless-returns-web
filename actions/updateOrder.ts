@@ -117,8 +117,9 @@ export async function updateData(prevState: number, formData: FormData) {
 export async function updateFinalOrder(id: string) {
   // Extraigo toda la info de la order
   const totalOrder = await getOrderTotal(id);
+  console.log(totalOrder);
   const products = await getOrderProductsById(id);
-  // Actualizo cada línea de procuto que tenga cambio
+  // Actualizo cada línea de producto que tenga cambio
   products.map(async (product) => {
     if (product.action) {
       // Extraigo el fulfillement line id del producto id
@@ -126,6 +127,11 @@ export async function updateFinalOrder(id: string) {
         f.line_items.some(
           (item: any) => Number(item.variant_id) === Number(product.variant_id)
         )
+      );
+
+      // Extrago el line item
+      const lineitem = totalOrder.line_items.find(
+        (item: any) => Number(item.variant_id) === Number(product.variant_id)
       );
 
       const fulfillmentIdLink = fulfillment.admin_graphql_api_id;
@@ -143,7 +149,8 @@ export async function updateFinalOrder(id: string) {
       const result = await createReturn(
         id,
         fulfillmentsProduct.node.id,
-        product
+        product,
+        lineitem.discount_allocations[0]
       );
       console.log(result);
       if (result.success === true) {
@@ -156,5 +163,5 @@ export async function updateFinalOrder(id: string) {
       }
     }
   });
-  redirect("/success");
+  // redirect("/success");
 }

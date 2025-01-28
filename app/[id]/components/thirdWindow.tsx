@@ -35,7 +35,8 @@ export const ThirdWindow = ({
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
   if (shipping) {
-    totalPrice = totalPrice - Number(4);
+    totalPrice =
+      totalPrice - Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
   }
   const [selected, setSelected] = useState<number>(0);
   return (

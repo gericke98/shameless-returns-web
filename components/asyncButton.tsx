@@ -1,5 +1,6 @@
 "use client";
-import { updateDashboard, updateFinalOrder } from "@/actions/updateOrder";
+import { createShippingLabel } from "@/actions/shippingLabel";
+import { updateFinalOrder } from "@/actions/updateOrder";
 import { cn } from "@/lib/utils";
 
 export const AsyncButton = ({ text, id }: { text: string; id: string }) => {
@@ -10,8 +11,11 @@ export const AsyncButton = ({ text, id }: { text: string; id: string }) => {
       )}
       type="submit"
       onClick={async () => {
-        // updateFinalOrder(id); Para más adelante en el dashboard
-        updateDashboard(id);
+        // Creo la etiqueta de Correos
+        let statusLabel = await createShippingLabel(id);
+        if (statusLabel === 200) {
+          updateFinalOrder(id);
+        }
       }}
     >
       {text}

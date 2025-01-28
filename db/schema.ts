@@ -40,7 +40,8 @@ export const productsOrder = pgTable("productsorder", {
   new_variant_title: text("new_variant_title"),
   new_variant_id: text("new_variant_id"),
   confirmed: boolean("confirmed"),
-  checked: boolean("checked"),
+  return_id: text("return_id"),
+  refunded: boolean("refunded"),
 });
 
 export const productsOrderRelations = relations(productsOrder, ({ one }) => ({
@@ -49,3 +50,4 @@ export const productsOrderRelations = relations(productsOrder, ({ one }) => ({
     references: [orders.id],
   }),
 }));
+// CODE TO UPDATE TABLA SCHEMA  npx drizzle-kit push:pg

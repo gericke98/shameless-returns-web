@@ -32,7 +32,8 @@ export const SummaryComponent = ({
   if (shipping) {
     if (totalPrice !== 0) {
       // Caso de que hay una devolución --> Si es solo cambio, no se cobra logística
-      totalPrice = totalPrice - Number(4);
+      totalPrice =
+        totalPrice - Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
     }
   }
   return (
@@ -55,7 +56,10 @@ export const SummaryComponent = ({
           <h5 className="font-semibold text-sm">
             {(totalPriceCambio > 0 || shipping) && "-"}
             {shipping && totalPrice !== 0
-              ? (totalPriceCambio + Number(4)).toFixed(2)
+              ? (
+                  totalPriceCambio +
+                  Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
+                ).toFixed(2)
               : totalPriceCambio.toFixed(2)}
             {" €"}
           </h5>

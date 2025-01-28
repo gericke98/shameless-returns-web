@@ -22,7 +22,6 @@ const createSession = (): RequestInit => {
 };
 
 // MUNDO SHOPIFY
-
 export const getOrderById = cache(async (id: string) => {
   const data = await db.query.orders.findMany({
     where: eq(orders.id, id),
@@ -32,6 +31,7 @@ export const getOrderById = cache(async (id: string) => {
   });
   return data[0];
 });
+
 export const getOrderProductsById = cache(async (id: string) => {
   const data = await db.query.productsOrder.findMany({
     where: eq(productsOrder.orderId, id),
@@ -56,85 +56,94 @@ export async function getOrderQuery(orderNumber: string) {
     throw error;
   }
 }
-export async function beginOrderEditing(orderId: string) {
-  const session = createSession();
-  const query = `
-    mutation {
-      orderEditBegin(id: "gid://shopify/Order/${orderId}") {
-        calculatedOrder {
-          id
-        }
-      }
-    }
-  `;
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/graphql.json`;
-  const response = await fetch(shopifyGraphQLUrl, {
-    method: "POST",
-    headers: session.headers,
-    body: JSON.stringify({ query }),
-  });
 
-  const data = await response.json();
-  return data.data.orderEditBegin.calculatedOrder.id;
+export async function getOrderTotal(orderId: string) {
+  const session = createSession();
+  // El %23 es lo mismo que poner #
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/orders.json?query=id:${orderId}`;
+
+  try {
+    const response = await fetch(url, session);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.orders[0];
+  } catch (error) {
+    console.error("Error fetching orders:", error);
+    throw error;
+  }
 }
 
-export async function addLineItem(
-  orderVariant: string,
-  variant: string,
-  quantity: number
+export async function createReturn(
+  orderId: string,
+  fulfillmentLineItem: string,
+  product: any
 ) {
   const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/graphql.json`;
-  const query = `
-    mutation {
-      orderEditAddVariant(id: "${orderVariant}", variantId: "gid://shopify/ProductVariant/${variant}", quantity:${quantity}) {
-        calculatedOrder {
-          id
-          addedLineItems(first: 5) {
-            edges {
-              node {
-                id
-                quantity
+  let query = `
+      mutation {
+        returnCreate(returnInput: 
+          {
+            orderId: "gid://shopify/Order/${orderId}",
+            returnLineItems: [
+              {
+                fulfillmentLineItemId: "${fulfillmentLineItem}",
+                quantity: 1,
+                returnReason: COLOR
               }
-            }
+            ]
+          }) 
+        {
+          return {
+            id
+          }
+          userErrors {
+            field
+            message
           }
         }
-        userErrors {
-          field
-          message
+      }
+    `;
+  // Aqui tengo que diferenciar si es una devolucion directa o un cambio
+  if (product.action === "CAMBIO") {
+    const query = `
+      mutation {
+        returnCreate(returnInput: {
+          exchangeLineItems: [
+            {
+              appliedDiscount: {
+                description: "PRUEBA10",
+                value: {
+                  percentage: 0.1
+                }
+              },
+              quantity: 1,
+              variantId: "${product.new_variant_id}"
+            }
+          ],
+          orderId: "gid://shopify/Order/${orderId}",
+          returnLineItems: [
+            {
+              fulfillmentLineItemId: "${fulfillmentLineItem}",
+              quantity: 1,
+              returnReason: COLOR
+            }
+          ]
+        }) {
+          return {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
         }
       }
-    }
-  `;
-  const response = await fetch(shopifyGraphQLUrl, {
-    method: "POST",
-    headers: session.headers,
-    body: JSON.stringify({ query }),
-  });
-
-  const data = await response.json();
-}
-export async function removeLineItem(orderVariant: string, lineItemId: string) {
-  const session = createSession();
-
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/graphql.json`;
-  const query = `
-    mutation {
-      orderEditSetQuantity(id: "${orderVariant}", lineItemId: "gid://shopify/CalculatedLineItem/${lineItemId}", quantity:0) {
-        calculatedLineItem{
-          id
-        }
-        calculatedOrder {
-          id
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
+    `;
+  }
   try {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",
@@ -143,51 +152,104 @@ export async function removeLineItem(orderVariant: string, lineItemId: string) {
     });
 
     const data = await response.json();
+    console.log("Creating return in Shopify", data);
 
-    if (data.errors) {
-      console.error("GraphQL errors:", data.errors);
-      return { success: false, errors: data.errors };
+    if (data.errors || data.data.returnCreate.userErrors.length > 0) {
+      console.error(
+        "Error creating return:",
+        data.errors || data.data.returnCreate.userErrors
+      );
+      return {
+        success: false,
+        errors: data.errors || data.data.returnCreate.userErrors,
+      };
     }
 
-    const userErrors = data.data.orderEditSetQuantity.userErrors;
-    if (userErrors.length > 0) {
-      console.error("User errors:", userErrors);
-      return { success: false, errors: userErrors };
-    }
-
-    return { success: true, data: data.data.orderEditSetQuantity };
+    return { success: true, data: data.data.returnCreate.return };
   } catch (error) {
     console.error("Fetch error:", error);
     return { success: false, error: error };
   }
 }
 
-export async function commitChanges(orderVariant: string) {
-  const session = createSession();
+export async function getFulfillmentLineItems(fulfillmentId: string) {
+  const session = createSession(); // Replace with your session creation logic
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/graphql.json`;
   const query = `
-    mutation {
-      orderEditCommit(id: "${orderVariant}", notifyCustomer: true,staffNote: "Ha funcionado!!" ) {
-        order {
-          id
+    query FulfillmentShow($id: ID!) {
+      fulfillment(id: $id) {
+        fulfillmentLineItems(first: 10) {
+          edges {
+            node {
+              id
+              lineItem {
+                title
+                variant {
+                  id
+                }
+              }
+              quantity
+              originalTotalSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+            }
+          }
         }
-        userErrors {
-          field
-          message
+        status
+        estimatedDeliveryAt
+        location {
+          id
+          legacyResourceId
+        }
+        service {
+          handle
+        }
+        trackingInfo(first: 10) {
+          company
+          number
+          url
+        }
+        originAddress {
+          address1
+          address2
+          city
+          countryCode
+          provinceCode
+          zip
         }
       }
     }
   `;
-  const response = await fetch(shopifyGraphQLUrl, {
-    method: "POST",
-    headers: session.headers,
-    body: JSON.stringify({ query }),
-  });
 
-  const data = await response.json();
-  return 201;
-  // return data.data.orderEditAddLineItem.calculatedOrder;
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({
+        query,
+        variables: {
+          id: fulfillmentId,
+        },
+      }),
+    });
+
+    const data = await response.json();
+
+    if (data.errors) {
+      console.error("Error fetching fulfillment data:", data.errors);
+      return { success: false, errors: data.errors };
+    }
+
+    console.log("Fulfillment Data:", data.data.fulfillment);
+    return { success: true, data: data.data.fulfillment };
+  } catch (error) {
+    console.error("Error:", error);
+    return { success: false, error };
+  }
 }
 
 export async function getProduct(id: string) {

@@ -46,4 +46,13 @@ export type OrderLineItem = {
   action: string;
   motivo: string;
   current_quantity: number;
+  discount_allocations: DiscountAllocation[];
+};
+
+export type DiscountAllocation = {
+  amount: number;
+};
+
+export type Warning = {
+  message: string;
 };

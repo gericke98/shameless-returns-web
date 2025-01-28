@@ -19,7 +19,6 @@ type Props = {
 };
 export const ClientOrder = ({ name, items, order, id }: Props) => {
   const [position, setPosition] = useState<number>(1);
-  const [itemsToChange, setItemsToChange] = useState<number>(0);
   const [credito, setCredito] = useState<boolean | null>(null);
   const handleClick = () => {
     setPosition(position + 1);
@@ -32,7 +31,6 @@ export const ClientOrder = ({ name, items, order, id }: Props) => {
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
   const totalPrice = totalPriceDevolver - totalPriceCambio;
   const areChanges = items.some((item) => item.action);
-  console.log(areChanges);
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">
       <div className="bg-white flex flex-col lg:w-[30%] w-[85%] rounded-b-3xl items-center py-3 px-4 lg:px-6">
@@ -76,7 +74,7 @@ export const ClientOrder = ({ name, items, order, id }: Props) => {
               !areChanges && "hidden"
             )}
             onClick={handleClick}
-            disabled={areChanges}
+            disabled={!areChanges}
           >
             Continuar
           </button>

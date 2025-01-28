@@ -63,7 +63,9 @@ export const SecondWindow = ({
           </div>
           <div className="flex flex-row w-full px-4">
             {totalPrice !== 0 ? (
-              <h5 className="text-xxs">Coste: 4,00 €</h5>
+              <h5 className="text-xxs">
+                Coste: {process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST},00 €
+              </h5>
             ) : (
               <h5 className="text-xxs">Coste: 0,00 €</h5>
             )}

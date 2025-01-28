@@ -28,7 +28,8 @@ export const LastWindow = ({
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
   if (totalPrice !== 0) {
-    totalPrice = totalPrice - Number(4);
+    totalPrice =
+      totalPrice - Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
   }
   return (
     <div className="w-full h-full flex flex-col mb-3">

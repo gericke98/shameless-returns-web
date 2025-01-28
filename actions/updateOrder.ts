@@ -2,11 +2,10 @@
 
 import db from "@/db/drizzle";
 import {
-  addLineItem,
-  beginOrderEditing,
-  commitChanges,
+  createReturn,
+  getFulfillmentLineItems,
   getOrderProductsById,
-  removeLineItem,
+  getOrderTotal,
 } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -116,59 +115,45 @@ export async function updateData(prevState: number, formData: FormData) {
 }
 
 export async function updateFinalOrder(id: string) {
-  // Extraigo la informacion del order correspondiente
+  // Extraigo toda la info de la order
+  const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
   // Actualizo cada línea de procuto que tenga cambio
   products.map(async (product) => {
     if (product.action) {
-      // Caso de cambio de talla
+      // Extraigo el fulfillement line id del producto id
+      const fulfillment = totalOrder.fulfillments.find((f: any) =>
+        f.line_items.some(
+          (item: any) => Number(item.variant_id) === Number(product.variant_id)
+        )
+      );
 
-      // Primero activo el order editing
-      const result = await beginOrderEditing(id);
-      if (product.new_variant_id && product.changed) {
-        // En el caso de cambio, añado la nueva variante al pedido
-        await addLineItem(
-          result,
-          product.new_variant_id?.toString(),
-          product.quantity
+      const fulfillmentIdLink = fulfillment.admin_graphql_api_id;
+
+      // Extraigo los fulfillment items ids
+      const fulfillmentResponse = await getFulfillmentLineItems(
+        fulfillmentIdLink
+      );
+      const fulfillmentsProduct =
+        fulfillmentResponse.data.fulfillmentLineItems.edges.find(
+          (e: any) =>
+            e.node.lineItem.variant.id ===
+            `gid://shopify/ProductVariant/${product.variant_id}`
         );
-
-        // Elimino la antigua variante
-        await removeLineItem(result, product.lineItemId);
-        const status = await commitChanges(result);
+      const result = await createReturn(
+        id,
+        fulfillmentsProduct.node.id,
+        product
+      );
+      console.log(result);
+      if (result.success === true) {
         await db
           .update(productsOrder)
-          .set({ confirmed: true })
-          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
-        // Aquí estaría bien tener una página de success
-        revalidatePath("/", "layout");
-      } else {
-        // En el caso de devolución, elimino la variante de producto
-        await removeLineItem(result, product.lineItemId);
-        const status = await commitChanges(result);
-        await db
-          .delete(productsOrder)
+          .set({ confirmed: true, return_id: result.data.id })
           .where(eq(productsOrder.variant_id, product.variant_id.toString()));
         // Aquí estaría bien tener una página de success
         revalidatePath("/", "layout");
       }
-    }
-  });
-  redirect("/success");
-}
-
-export async function updateDashboard(id: string) {
-  // Extraigo la informacion del order correspondiente
-  const products = await getOrderProductsById(id);
-  // Actualizo cada línea de procuto que tenga cambio
-  products.map(async (product) => {
-    if (product.action) {
-      await db
-        .update(productsOrder)
-        .set({ confirmed: true })
-        .where(eq(productsOrder.variant_id, product.variant_id.toString()));
-      // Aquí estaría bien tener una página de success
-      revalidatePath("/", "layout");
     }
   });
   redirect("/success");

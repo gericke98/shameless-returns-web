@@ -1,11 +1,35 @@
+"use client";
 import Image from "next/image";
-import Logo from "@/public/LOGO_black.png";
 import Link from "next/link";
-import { FormInput } from "../../components/formInput";
-import { getOrder } from "@/actions/order";
+
+import Logo from "@/public/LOGO_black.png";
+
+import { FormInput } from "@/components/formInput";
 import { Button } from "@/components/button";
+import { useToast } from "@/hooks/use-toast";
+
+import { getOrder } from "@/actions/order";
+import { useFormState } from "react-dom";
+import { useEffect, useState } from "react";
+import { Warning } from "@/types";
 
 export const InputComponent = () => {
+  const [warning, setWarning] = useState<Warning>({
+    message: "",
+  });
+  const { toast } = useToast();
+  const initialState = warning;
+  const [state, formAction] = useFormState(getOrder, initialState);
+  useEffect(() => {
+    if (!state?.message) return;
+    if (state.message) {
+      toast({
+        variant: "destructive",
+        title: "There was an error in your request",
+        description: state.message,
+      });
+    }
+  }, [toast, state]);
   return (
     <div className="flex flex-col items-center">
       <Image src={Logo} alt="Logo" width={150} height={150} />
@@ -24,7 +48,7 @@ export const InputComponent = () => {
           </Link>
         </span>
       </h5>
-      <form className="mt-10 w-full flex flex-col gap-8" action={getOrder}>
+      <form className="mt-10 w-full flex flex-col gap-8" action={formAction}>
         <FormInput name="order" title="Número de pedido" icon valueini="" />
         <FormInput name="email" title="Email" icon valueini="" />
         <h6 className="text-xxs text-black mt-5">

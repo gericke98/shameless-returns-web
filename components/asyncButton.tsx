@@ -3,7 +3,15 @@ import { createShippingLabel } from "@/actions/shippingLabel";
 import { updateFinalOrder } from "@/actions/updateOrder";
 import { cn } from "@/lib/utils";
 
-export const AsyncButton = ({ text, id }: { text: string; id: string }) => {
+export const AsyncButton = ({
+  text,
+  id,
+  isCredit,
+}: {
+  text: string;
+  id: string;
+  isCredit: boolean | null;
+}) => {
   return (
     <button
       className={cn(
@@ -11,11 +19,26 @@ export const AsyncButton = ({ text, id }: { text: string; id: string }) => {
       )}
       type="submit"
       onClick={async () => {
-        // Creo la etiqueta de Correos
-        // let statusLabel = await createShippingLabel(id);
-        let statusLabel = 200;
-        if (statusLabel === 200) {
-          updateFinalOrder(id);
+        try {
+          // First update the database
+          await updateFinalOrder(id);
+
+          // Then create shipping label and send email
+          const statusLabel = await createShippingLabel(id);
+
+          if (statusLabel !== 200) {
+            // If label creation fails, undo database changes
+            await updateFinalOrder(id, true); // Assuming we add a revert parameter
+            console.error("Failed to create shipping label");
+          }
+        } catch (error) {
+          console.error("Error in order processing:", error);
+          // Attempt to undo database changes if there was an error
+          try {
+            await updateFinalOrder(id, true);
+          } catch (undoError) {
+            console.error("Failed to revert database changes:", undoError);
+          }
         }
       }}
     >

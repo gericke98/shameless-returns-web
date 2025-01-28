@@ -166,7 +166,23 @@ async function processProductReturn(product: any, totalOrder: any) {
   }
 }
 
-export async function updateFinalOrder(id: string) {
+export async function updateFinalOrder(id: string, revert: boolean = false) {
+  if (revert) {
+    const products = await getOrderProductsById(id);
+    await Promise.all(
+      products.map(async (product) => {
+        if (product.confirmed) {
+          await db
+            .update(productsOrder)
+            .set({ confirmed: false, return_id: null })
+            .where(eq(productsOrder.variant_id, product.variant_id));
+        }
+      })
+    );
+    revalidatePath("/", "layout");
+    return;
+  }
+
   const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
 

@@ -1,8 +1,8 @@
 import { Progress } from "@/components/ui/progress";
 import { productsOrder } from "@/db/schema";
 import { Product2 } from "@/types"; // Fixed import
-import { SummaryComponent } from "./summary";
-import { ProductLineClient } from "./productLineClient";
+import { SummaryComponent } from "../components/summary";
+import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {

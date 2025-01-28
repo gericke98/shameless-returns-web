@@ -4,10 +4,10 @@ import Logo from "@/public/LOGO_black.png";
 import { orders, productsOrder } from "@/db/schema";
 import { useState } from "react";
 import { Product2 } from "@/types";
-import { FirstWindow } from "./components/firstWindow";
-import { SecondWindow } from "./components/secondWindow";
-import { ThirdWindow } from "./components/thirdWindow";
-import { LastWindow } from "./components/lastWindow";
+import { FirstWindow } from "./windows/firstWindow";
+import { SecondWindow } from "./windows/secondWindow";
+import { ThirdWindow } from "./windows/thirdWindow";
+import { LastWindow } from "./windows/lastWindow";
 import { AsyncButton } from "@/components/asyncButton";
 import { cn } from "@/lib/utils";
 
@@ -158,6 +158,7 @@ const ContinueButton = ({
 
 export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
+  const [credito, setCredito] = useState<boolean | null>(null);
   const hasChanges = items.some((item) => item.action);
 
   return (
@@ -175,7 +176,11 @@ export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
         />
 
         {position >= 4 ? (
-          <AsyncButton text="Actualizar pedido" id={id} />
+          <AsyncButton
+            text={credito ? "Solicitar crédito" : "Actualizar pedido"}
+            id={id}
+            isCredit={credito}
+          />
         ) : (
           <ContinueButton
             position={position}

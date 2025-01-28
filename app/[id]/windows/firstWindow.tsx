@@ -1,7 +1,7 @@
 import { Progress } from "@/components/ui/progress";
-import { SummaryComponent } from "./summary";
+import { SummaryComponent } from "../components/summary";
 import { productsOrder } from "@/db/schema";
-import { ProductLineClient } from "./productLineClient";
+import { ProductLineClient } from "../components/productLineClient";
 import { Product2 } from "@/types";
 
 type OrderItem = typeof productsOrder.$inferSelect & {

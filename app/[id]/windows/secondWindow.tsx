@@ -3,7 +3,7 @@ import Image from "next/image";
 import { IoLocationSharp } from "react-icons/io5";
 import CorreosLogo from "@/public/correos.webp";
 import Link from "next/link";
-import { SecondWindowForm } from "./secondWindowForm";
+import { SecondWindowForm } from "../components/secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
 import { Product2 } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";

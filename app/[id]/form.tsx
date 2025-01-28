@@ -9,6 +9,7 @@ import { DialogClose } from "@radix-ui/react-dialog";
 import { Product2 } from "@/types";
 import { productsOrder } from "@/db/schema";
 import { anularOrder, updateOrder } from "@/actions/updateOrder";
+import { ACTIONS, REASONS } from "@/placeholder";
 
 type Props = {
   product: Product2;
@@ -23,35 +24,39 @@ export const FormProduct = ({
   changed,
   setChanged,
 }: Props) => {
+  const [action, setAction] = useState<string | null>(
+    orderProduct.action === "CAMBIO" ? ACTIONS.CHANGE : ACTIONS.RETURN
+  );
+  const [motivo, setMotivo] = useState<string>(orderProduct.reason || "");
+  const [size, setSize] = useState<string>(
+    orderProduct.new_variant_title || orderProduct.variant_title
+  );
+  const [variantId, setVariantId] = useState<string>(
+    orderProduct.new_variant_id || ""
+  );
+
   const handleAnular = async () => {
     await anularOrder(orderProduct.variant_id.toString());
     setAction(null);
     setChanged(!changed);
   };
-  const [action, setAction] = useState<string | null>(
-    orderProduct.action === "CAMBIO"
-      ? "Quiero cambiar este producto"
-      : "Quiero devolver este producto"
-  );
-  const [motivo, setMotivo] = useState<string>(orderProduct.reason || "");
-  const [size, setSize] = useState<string>(
-    orderProduct.new_variant_title || ""
-  );
-  const [variantId, setVariantId] = useState<string>(
-    orderProduct.new_variant_id || ""
-  );
-  const handleActionChange = (value: string) => setAction(value);
-  const handleMotivoChange = (value: string) => setMotivo(value);
+
   const handleSizeChange = (value: string) => {
-    const newVariant = product.variants.filter((v) => v.title === value)[0];
-    setVariantId(newVariant.id.toString());
-    setSize(value);
+    const newVariant = product.variants.edges.find(
+      (v) => v.node.title === value
+    )?.node;
+    if (newVariant) {
+      setVariantId(newVariant.id);
+      setSize(value);
+    }
   };
 
-  const sizeStock = product.variants.map((variant) => ({
-    title: variant.title,
-    quantity: variant.inventory_quantity,
+  const sizeStock = product.variants.edges.map((variant) => ({
+    title: variant.node.title,
+    quantity: variant.node.inventoryQuantity,
   }));
+
+  const showNewProduct = action === ACTIONS.CHANGE && motivo !== "";
 
   return (
     <>
@@ -59,40 +64,30 @@ export const FormProduct = ({
         <input hidden name="oldVariantId" value={orderProduct.variant_id} />
         <input hidden name="id" value={orderProduct.id} />
         <input hidden name="variantId" value={variantId} />
+
         <FormSelect
           name="accion"
           title="Acción a realizar"
-          options={[
-            "Quiero cambiar este producto",
-            "Quiero devolver este producto",
-          ]}
+          options={[ACTIONS.CHANGE, ACTIONS.RETURN]}
           value={action || "CAMBIO"}
-          onChange={handleActionChange}
+          onChange={setAction}
         />
+
         <FormSelect
           name="motivo"
           title={
-            action === "Quiero cambiar este producto"
+            action === ACTIONS.CHANGE
               ? "Motivo del cambio"
               : "Motivo de la devolución"
           }
-          options={[
-            "Me queda grande",
-            "Me queda pequeño",
-            "Es incómodo o me hace daño",
-            "No me gusta",
-            "Compré varias opciones para probar",
-            "El producto está dañado",
-            "Recibí el producto equivocado",
-            "El producto llegó demasiado tarde",
-            "Otro motivo",
-            "El producto no es como se mostraba",
-          ]}
+          options={REASONS}
           value={motivo}
-          onChange={handleMotivoChange}
+          onChange={setMotivo}
         />
+
         <FormInput name="notas" title="Notas" icon={false} valueini="" />
-        {action === "Quiero cambiar este producto" && motivo !== "" && (
+
+        {showNewProduct && (
           <div className="w-full flex flex-col mt-8 gap-3">
             <h3 className="text-base font-bold">NUEVO PRODUCTO</h3>
             <div className="w-full flex flex-row flex-nowrap gap-3">
@@ -124,6 +119,7 @@ export const FormProduct = ({
             />
           </div>
         )}
+
         <DialogClose asChild>
           <button
             type="submit"
@@ -135,6 +131,7 @@ export const FormProduct = ({
 
         <DialogFooter className="w-full"></DialogFooter>
       </form>
+
       <DialogClose asChild>
         <button
           onClick={handleAnular}

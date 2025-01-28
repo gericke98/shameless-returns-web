@@ -5,14 +5,14 @@ import CorreosLogo from "@/public/correos.webp";
 import Link from "next/link";
 import { SecondWindowForm } from "./secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
-import { Product } from "@/types";
+import { Product2 } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
   order: typeof orders.$inferSelect;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
 };
 
 export const SecondWindow = ({
@@ -24,10 +24,14 @@ export const SecondWindow = ({
   const totalPriceDevolver = items
     .filter((item) => item.action && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
+
   const totalPriceCambio = items
     .filter((item) => item.action === "CAMBIO" && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
+
   const totalPrice = totalPriceDevolver - totalPriceCambio;
+  const shippingCost = process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST;
+
   return (
     <div className="w-full h-full flex flex-col">
       <Progress value={50} />
@@ -62,13 +66,9 @@ export const SecondWindow = ({
             </h5>
           </div>
           <div className="flex flex-row w-full px-4">
-            {totalPrice !== 0 ? (
-              <h5 className="text-xxs">
-                Coste: {process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST},00 €
-              </h5>
-            ) : (
-              <h5 className="text-xxs">Coste: 0,00 €</h5>
-            )}
+            <h5 className="text-xxs">
+              Coste: {totalPrice !== 0 ? `${shippingCost},00 €` : "0,00 €"}
+            </h5>
           </div>
         </div>
       </div>

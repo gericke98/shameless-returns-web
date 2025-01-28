@@ -23,13 +23,13 @@ const createSession = (): RequestInit => {
 
 // MUNDO SHOPIFY
 export const getOrderById = cache(async (id: string) => {
-  const data = await db.query.orders.findMany({
+  const order = await db.query.orders.findFirst({
     where: eq(orders.id, id),
     with: {
       products: true,
     },
   });
-  return data[0];
+  return order;
 });
 
 export const getOrderProductsById = cache(async (id: string) => {
@@ -258,17 +258,73 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
 
 export async function getProduct(id: string) {
   const session = createSession();
-  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/products/${id}.json`;
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
+
+  const query = `
+    query getProduct($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        handle
+        description
+        images(first: 1) {
+          edges {
+            node {
+              url
+              src: url
+            }
+          }
+        }
+        variants(first: 10) {
+          edges {
+            node {
+              id
+              price
+              title
+              inventoryQuantity
+            }
+          }
+        }
+      }
+    }
+  `;
 
   try {
-    const response = await fetch(url, session);
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({
+        query,
+        variables: { id: `gid://shopify/Product/${id}` },
+      }),
+    });
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    const data = await response.json();
-    return data;
+
+    const { data, errors } = await response.json();
+
+    if (errors) {
+      console.error("GraphQL Errors:", errors);
+      throw new Error("GraphQL query failed");
+    }
+
+    // Transform the response to include image.src
+    const product = data.product;
+    if (product.images.edges.length > 0) {
+      product.image = {
+        src: product.images.edges[0].node.src,
+      };
+    } else {
+      product.image = {
+        src: "", // Provide a default empty string if no image exists
+      };
+    }
+
+    return product;
   } catch (error) {
-    console.error("Error fetching orders:", error);
+    console.error("Error fetching product:", error);
     throw error;
   }
 }

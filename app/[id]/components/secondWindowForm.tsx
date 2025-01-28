@@ -4,12 +4,13 @@ import { orders, productsOrder } from "@/db/schema";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "./summary";
-import { Product } from "@/types";
+import { Product2 } from "@/types";
+
 type Props = {
   order: typeof orders.$inferSelect;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
 };
 
 export const SecondWindowForm = ({
@@ -19,22 +20,23 @@ export const SecondWindowForm = ({
   items,
 }: Props) => {
   const [state, formAction] = useFormState(updateData, position);
+
   const totalPriceDevolver = items
     .filter((item) => item.action && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
+
   const totalPriceCambio = items
     .filter((item) => item.action === "CAMBIO" && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
+
   const totalPrice = totalPriceDevolver - totalPriceCambio;
+
   useEffect(() => {
     if (state !== 2) {
-      if (totalPrice !== 0) {
-        setPosition(state);
-      } else {
-        setPosition(state + 1);
-      }
+      setPosition(totalPrice !== 0 ? state : state + 1);
     }
-  }, [state]);
+  }, [state, totalPrice, setPosition]);
+
   return (
     <form className="mt-10 w-full flex flex-col gap-8" action={formAction}>
       <input hidden name="id" value={order.id} />

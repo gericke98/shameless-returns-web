@@ -1,12 +1,12 @@
 import { Progress } from "@/components/ui/progress";
 import { productsOrder } from "@/db/schema";
-import { Product } from "@/types";
+import { Product2 } from "@/types"; // Fixed import
 import { SummaryComponent } from "./summary";
 import { ProductLineClient } from "./productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
-  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   credito: boolean | null;
@@ -28,36 +28,34 @@ export const LastWindow = ({
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
   if (totalPrice !== 0) {
-    totalPrice =
-      totalPrice - Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
+    totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
   }
+
+  const handleBack = () => {
+    setPosition(totalPrice !== 0 ? position - 1 : position - 2);
+  };
+
   return (
     <div className="w-full h-full flex flex-col mb-3">
       <Progress value={100} />
       <FaArrowAltCircleLeft
         size={25}
         className="mt-4 cursor-pointer"
-        onClick={() => {
-          if (totalPrice !== 0) {
-            setPosition(position - 1);
-          } else {
-            setPosition(position - 2);
-          }
-        }}
+        onClick={handleBack}
       />
       <h3 className="font-bold text-2xl text-left mt-1">Resumen final</h3>
       <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer flex flex-col gap-4">
-        {items.map((product) => {
-          if (product.newp && product.action) {
-            return (
+        {items.map(
+          (product) =>
+            product.newp &&
+            product.action && (
               <ProductLineClient
                 key={product.id}
                 orderProduct={product}
-                product={product.newp.product}
+                product={product.newp}
               />
-            );
-          }
-        })}
+            )
+        )}
       </div>
       <span className="border-b border-slate-200 w-full" />
       <div className="w-full mt-2 flex flex-col">
@@ -76,7 +74,7 @@ export const LastWindow = ({
             <p className="text-black text-sm mt-2">
               <span className="font-bold">
                 Una vez devuelvas tus productos,
-              </span>
+              </span>{" "}
               recibirás los nuevos que has seleccionado.
             </p>
           </div>

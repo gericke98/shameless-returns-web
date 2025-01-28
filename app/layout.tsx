@@ -3,22 +3,29 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+});
 
-export const metadata: Metadata = {
-  title: "Shameless Collective | Returns & Exchanges",
-  description: "Shameless Collective | Returns & Exchanges",
+const siteConfig = {
+  name: "Shameless Collective",
+  description: "Returns & Exchanges",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
+export const metadata: Metadata = {
+  title: `${siteConfig.name} | ${siteConfig.description}`,
+  description: `${siteConfig.name} | ${siteConfig.description}`,
+};
+
+interface RootLayoutProps {
   children: React.ReactNode;
-}>) {
+}
+
+export default function RootLayout({ children }: Readonly<RootLayoutProps>) {
   return (
     <html lang="en">
       <body className={inter.className}>
-        {children}
+        <main>{children}</main>
         <Toaster />
       </body>
     </html>

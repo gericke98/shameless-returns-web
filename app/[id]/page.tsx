@@ -2,39 +2,53 @@ import { getOrderById, getProduct } from "@/db/queries";
 import { ClientOrder } from "./clientOrder";
 import { redirect } from "next/navigation";
 
-type Props = {
+interface OrderPageProps {
   params: {
     id: string;
   };
-};
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default async function OrderPage({ params }: Props) {
-  // Le doy a la base de datos tiempo a cargarse
-  await delay(3000);
-  // Get order
-  const order = await getOrderById(params.id);
-  order.products = await Promise.all(
+const LOADING_DELAY = 3000;
+
+async function fetchOrderWithProducts(orderId: string) {
+  const order = await getOrderById(orderId);
+
+  if (!order) {
+    return null;
+  }
+
+  const productsWithDetails = await Promise.all(
     order.products.map(async (product) => {
-      const newp = await getProduct(product.productId.toString());
+      const productDetails = await getProduct(product.productId.toString());
       return {
         ...product,
-        newp,
+        newp: productDetails,
       };
     })
   );
 
-  if (!order) {
+  return {
+    ...order,
+    products: productsWithDetails,
+  };
+}
+
+export default async function OrderPage({ params }: OrderPageProps) {
+  // Allow time for database to load
+  await new Promise((resolve) => setTimeout(resolve, LOADING_DELAY));
+
+  const orderData = await fetchOrderWithProducts(params.id);
+
+  if (!orderData) {
     redirect("/");
   }
+
   return (
     <ClientOrder
-      name={order.orderNumber}
-      items={order.products}
-      order={order}
-      id={order.id}
+      name={orderData.orderNumber}
+      items={orderData.products}
+      order={orderData}
+      id={orderData.id}
     />
   );
 }

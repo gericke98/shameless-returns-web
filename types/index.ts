@@ -1,26 +1,29 @@
-export type Product = {
-  product: Product2;
-};
-
 export type Product2 = {
-  id: number;
+  id: string;
   title: string;
+  handle: string;
+  description: string;
+  images: {
+    edges: {
+      node: {
+        url: string;
+        src: string;
+      };
+    }[];
+  };
+  variants: {
+    edges: {
+      node: {
+        id: string;
+        price: string;
+        title: string;
+        inventoryQuantity: number;
+      };
+    }[];
+  };
   image: {
-    id: number;
-    product_id: number;
     src: string;
   };
-  variants: ProductVariant[];
-};
-
-export type ProductVariant = {
-  product_id: number;
-  id: number;
-  title: string;
-  name: string;
-  inventory_quantity: number;
-  variant_id: number;
-  variant_title: string;
 };
 
 export type OrderContextType = {
@@ -28,25 +31,27 @@ export type OrderContextType = {
   addProductOrder: (item: OrderLineItem) => void;
   updateProductOrder: (
     orderProduct: OrderLineItem,
-    newProduct: ProductVariant,
+    newProduct: Product2,
     action: string,
     motivo: string
   ) => void;
 };
 
 export type OrderLineItem = {
-  id: number;
-  name: string;
-  price: string;
-  product_id: number;
-  quantity: number;
+  id: string;
   title: string;
-  variant_id: number;
+  price: string;
+  variant_id: string;
   variant_title: string;
-  action: string;
-  motivo: string;
-  current_quantity: number;
-  discount_allocations: DiscountAllocation[];
+  quantity: number;
+  action: string | null;
+  reason?: string;
+  confirmed?: boolean;
+  changed?: boolean;
+  new_variant_id?: string;
+  new_variant_title?: string;
+  discount_allocations?: DiscountAllocation[];
+  product_id: number;
 };
 
 export type DiscountAllocation = {
@@ -55,4 +60,11 @@ export type DiscountAllocation = {
 
 export type Warning = {
   message: string;
+};
+
+export type FormInputProps = {
+  name: string;
+  title: string;
+  icon: boolean;
+  valueini?: string;
 };

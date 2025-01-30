@@ -21,7 +21,6 @@ const createSession = (): RequestInit => {
   };
 };
 
-// MUNDO SHOPIFY
 export const getOrderById = cache(async (id: string) => {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, id),
@@ -30,6 +29,17 @@ export const getOrderById = cache(async (id: string) => {
     },
   });
   return order;
+});
+
+export const getReturns = cache(async () => {
+  const returns = await db.query.orders.findMany({
+    with: {
+      products: {
+        where: eq(productsOrder.confirmed, true),
+      },
+    },
+  });
+  return returns;
 });
 
 export const getOrderProductsById = cache(async (id: string) => {

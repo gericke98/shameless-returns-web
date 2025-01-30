@@ -201,29 +201,34 @@ async function processProductReturn(
     const adjustedProduct = { ...product };
     let result;
 
-    if (isCredit) {
-      result = await processGiftCardReturn(
-        totalOrder,
-        lineitem,
-        fulfillmentsProduct,
-        adjustedProduct,
-        product.variant_id
-      );
-      console.log(result);
-    } else {
-      result = await createReturn(
-        totalOrder.id,
-        fulfillmentsProduct.node.id,
-        adjustedProduct,
-        lineitem.discount_allocations[0]
-      );
-    }
+    // result = await processGiftCardReturn(
+    //   totalOrder,
+    //   lineitem,
+    //   fulfillmentsProduct,
+    //   adjustedProduct,
+    //   product.variant_id
+    // );
+    // Creo la return
 
+    result = await createReturn(
+      totalOrder.id,
+      fulfillmentsProduct.node.id,
+      adjustedProduct,
+      lineitem.discount_allocations[0]
+    );
+
+    // Si la return se creo correctamente, actualizo el producto
     if (result?.success) {
       await db
         .update(productsOrder)
         .set({ confirmed: true, return_id: result.data.id })
         .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+      if (isCredit) {
+        await db
+          .update(productsOrder)
+          .set({ credit: true })
+          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+      }
 
       revalidatePath("/", "layout");
     }

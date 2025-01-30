@@ -1,7 +1,10 @@
 "use server";
+import db from "@/db/drizzle";
 import { getOrderById } from "@/db/queries";
+import { orders } from "@/db/schema";
 import { base64img } from "@/placeholder";
 import axios from "axios";
+import { eq } from "drizzle-orm";
 
 // Types
 type ShippingResponse = {
@@ -246,6 +249,22 @@ export async function createShippingLabel(id: string): Promise<number> {
 
   const shippingResponse = await sendShippingLabel(soapBody);
   if (shippingResponse.status !== 200) return shippingResponse.status;
+  console.log("shippingResponse", shippingResponse);
+  // Extraigo el tracking number
+  const trackingMatch = shippingResponse.data.match(
+    /<CodExpedicion>(.*?)<\/CodExpedicion>/
+  );
+  const trackingNumber = trackingMatch ? trackingMatch[1] : null;
+
+  if (!trackingNumber) {
+    console.error("Failed to extract tracking number from response");
+    return 500;
+  }
+  // Lo añado a la base de datos
+  await db
+    .update(orders)
+    .set({ locator: trackingNumber })
+    .where(eq(orders.id, id));
 
   const emailResponse = await sendEmail(
     shippingResponse.data,
@@ -253,4 +272,40 @@ export async function createShippingLabel(id: string): Promise<number> {
     name
   );
   return emailResponse.status;
+}
+interface TrackingEvent {
+  codigoEvento: string;
+  descripcionEvento: string;
+  fecha: string;
+  ubicacion: string;
+}
+
+interface TrackingResponse {
+  envios: {
+    numeroEnvio: string;
+    eventos: TrackingEvent[];
+  }[];
+}
+export async function obtainLastStatus(trackingNumber: string | null) {
+  // Encode authentication (replace with your credentials)
+  const username = process.env.USERNAME_CORREOS;
+  const password = process.env.PASSWORD_CORREOS;
+  const authToken = Buffer.from(`${username}:${password}`).toString("base64");
+
+  // Construct request URL
+  const url = `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${trackingNumber}?codIdioma=ES&indUltEvento=S`;
+  // Make API request
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Basic ${authToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+    // Return the tracking data
+    return response.data[0].resumen_ultimo;
+  } catch (error) {
+    console.error("Error fetching tracking data:", error);
+    return null;
+  }
 }

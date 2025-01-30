@@ -15,6 +15,7 @@ export const orders = pgTable("orders", {
   shippingProvince: text("shipping_province").notNull(),
   shippingCountry: text("shipping_country").notNull(),
   shippingPhone: text("shipping_phone").notNull(),
+  locator: text("locator"),
 });
 
 export const ordersRelations = relations(orders, ({ many }) => ({
@@ -52,4 +53,11 @@ export const productsOrderRelations = relations(productsOrder, ({ one }) => ({
     references: [orders.id],
   }),
 }));
+
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  username: text("username").notNull().unique(),
+  hashedPassword: text("hashed_password").notNull(),
+});
+
 // CODE TO UPDATE TABLA SCHEMA  npx drizzle-kit push:pg

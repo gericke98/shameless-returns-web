@@ -15,7 +15,7 @@ type Props = {
   shipping: boolean;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
+  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
 };
 
 const StoreCredit = ({

@@ -2,6 +2,7 @@
 
 import db from "@/db/drizzle";
 import {
+  createGiftCard,
   createReturn,
   getFulfillmentLineItems,
   getOrderProductsById,
@@ -125,48 +126,158 @@ export async function updateData(prevState: number, formData: FormData) {
   return prevState + 1;
 }
 
-async function processProductReturn(product: any, totalOrder: any) {
-  if (!product.action) return;
+interface LineItem {
+  variant_id: string | number;
+  price: string;
+  discount_allocations: any[];
+}
 
-  const fulfillment = totalOrder.fulfillments.find((f: any) =>
-    f.line_items.some(
-      (item: any) => Number(item.variant_id) === Number(product.variant_id)
-    )
-  );
+interface FulfillmentLineItem {
+  node: {
+    id: string;
+    lineItem: {
+      variant: {
+        id: string;
+      };
+    };
+  };
+}
 
-  const lineitem = totalOrder.line_items.find(
-    (item: any) => Number(item.variant_id) === Number(product.variant_id)
-  );
+interface OrderData {
+  id: string;
+  customer: {
+    id: string;
+  };
+  fulfillments: Array<{
+    admin_graphql_api_id: string;
+    line_items: LineItem[];
+  }>;
+  line_items: LineItem[];
+}
 
-  const fulfillmentResponse = await getFulfillmentLineItems(
-    fulfillment.admin_graphql_api_id
-  );
+async function processProductReturn(
+  product: { action?: string; variant_id: string; [key: string]: any },
+  totalOrder: OrderData,
+  isCredit: boolean
+) {
+  try {
+    if (!product.action) return;
 
-  const fulfillmentsProduct =
-    fulfillmentResponse.data.fulfillmentLineItems.edges.find(
-      (e: any) =>
-        e.node.lineItem.variant.id ===
-        `gid://shopify/ProductVariant/${product.variant_id}`
+    const fulfillment = totalOrder.fulfillments.find((f) =>
+      f.line_items.some(
+        (item) => Number(item.variant_id) === Number(product.variant_id)
+      )
     );
+
+    if (!fulfillment) {
+      throw new Error(`No fulfillment found for variant ${product.variant_id}`);
+    }
+
+    const lineitem = totalOrder.line_items.find(
+      (item) => Number(item.variant_id) === Number(product.variant_id)
+    );
+
+    if (!lineitem) {
+      throw new Error(`No line item found for variant ${product.variant_id}`);
+    }
+
+    const fulfillmentResponse = await getFulfillmentLineItems(
+      fulfillment.admin_graphql_api_id
+    );
+
+    const fulfillmentsProduct =
+      fulfillmentResponse.data.fulfillmentLineItems.edges.find(
+        (e: FulfillmentLineItem) =>
+          e.node.lineItem.variant.id ===
+          `gid://shopify/ProductVariant/${product.variant_id}`
+      );
+
+    if (!fulfillmentsProduct) {
+      throw new Error(
+        `No fulfillment product found for variant ${product.variant_id}`
+      );
+    }
+
+    const adjustedProduct = { ...product };
+    let result;
+
+    if (isCredit) {
+      result = await processGiftCardReturn(
+        totalOrder,
+        lineitem,
+        fulfillmentsProduct,
+        adjustedProduct,
+        product.variant_id
+      );
+      console.log(result);
+    } else {
+      result = await createReturn(
+        totalOrder.id,
+        fulfillmentsProduct.node.id,
+        adjustedProduct,
+        lineitem.discount_allocations[0]
+      );
+    }
+
+    if (result?.success) {
+      await db
+        .update(productsOrder)
+        .set({ confirmed: true, return_id: result.data.id })
+        .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+
+      revalidatePath("/", "layout");
+    }
+  } catch (error) {
+    console.error("Error processing product return:", error);
+    throw error;
+  }
+}
+
+async function processGiftCardReturn(
+  totalOrder: OrderData,
+  lineitem: LineItem,
+  fulfillmentsProduct: FulfillmentLineItem,
+  adjustedProduct: any,
+  variantId: string
+) {
+  const price = Number(lineitem.price);
+  const increasedPrice = price * 1.15;
+  adjustedProduct.price = increasedPrice.toString();
+
+  const giftCardResult = await createGiftCard(
+    totalOrder.customer.id,
+    increasedPrice
+  );
+
+  if (!giftCardResult.success) {
+    throw new Error("Failed to create gift card");
+  }
 
   const result = await createReturn(
     totalOrder.id,
     fulfillmentsProduct.node.id,
-    product,
+    adjustedProduct,
     lineitem.discount_allocations[0]
   );
 
-  if (result.success) {
+  if (result?.success) {
     await db
       .update(productsOrder)
-      .set({ confirmed: true, return_id: result.data.id })
-      .where(eq(productsOrder.variant_id, product.variant_id.toString()));
-
-    revalidatePath("/", "layout");
+      .set({
+        credit: true,
+        gift_card_id: giftCardResult.data.id,
+      })
+      .where(eq(productsOrder.variant_id, variantId.toString()));
   }
+
+  return result;
 }
 
-export async function updateFinalOrder(id: string, revert: boolean = false) {
+export async function updateFinalOrder(
+  id: string,
+  revert: boolean = false,
+  isCredit: boolean
+) {
   if (revert) {
     const products = await getOrderProductsById(id);
     await Promise.all(
@@ -185,8 +296,13 @@ export async function updateFinalOrder(id: string, revert: boolean = false) {
 
   const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
-
   await Promise.all(
-    products.map((product) => processProductReturn(product, totalOrder))
+    products.map((product) =>
+      processProductReturn(
+        { ...product, action: product.action || undefined },
+        totalOrder,
+        isCredit
+      )
+    )
   );
 }

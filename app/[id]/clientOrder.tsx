@@ -65,9 +65,9 @@ const OrderWindowContent = ({
   items: OrderItem[];
   order: OrderData;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
+  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
   totalPrice: number;
-  credito: boolean | null;
+  credito: boolean;
 }) => {
   const windows = {
     1: <FirstWindow name={name} items={items} />,
@@ -109,7 +109,7 @@ const OrderWindow = ({
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
 } & Omit<ClientOrderProps, "setPosition">) => {
-  const [credito, setCredito] = useState<boolean | null>(null);
+  const [credito, setCredito] = useState<boolean>(true);
   const { totalPrice } = calculatePrices(props.items);
 
   return (
@@ -158,7 +158,7 @@ const ContinueButton = ({
 
 export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
-  const [credito, setCredito] = useState<boolean | null>(null);
+  const [credito, setCredito] = useState<boolean>(true);
   const hasChanges = items.some((item) => item.action);
 
   return (

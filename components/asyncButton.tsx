@@ -10,7 +10,7 @@ export const AsyncButton = ({
 }: {
   text: string;
   id: string;
-  isCredit: boolean | null;
+  isCredit: boolean;
 }) => {
   return (
     <button
@@ -21,24 +21,24 @@ export const AsyncButton = ({
       onClick={async () => {
         try {
           // First update the database
-          await updateFinalOrder(id);
+          await updateFinalOrder(id, false, isCredit);
 
           // Then create shipping label and send email
-          const statusLabel = await createShippingLabel(id);
+          // const statusLabel = await createShippingLabel(id);
 
-          if (statusLabel !== 200) {
-            // If label creation fails, undo database changes
-            await updateFinalOrder(id, true); // Assuming we add a revert parameter
-            console.error("Failed to create shipping label");
-          }
+          // if (statusLabel !== 200) {
+          //   // If label creation fails, undo database changes
+          //   await updateFinalOrder(id, true); // Assuming we add a revert parameter
+          //   console.error("Failed to create shipping label");
+          // }
         } catch (error) {
           console.error("Error in order processing:", error);
           // Attempt to undo database changes if there was an error
-          try {
-            await updateFinalOrder(id, true);
-          } catch (undoError) {
-            console.error("Failed to revert database changes:", undoError);
-          }
+          // try {
+          //   await updateFinalOrder(id, true);
+          // } catch (undoError) {
+          //   console.error("Failed to revert database changes:", undoError);
+          // }
         }
       }}
     >

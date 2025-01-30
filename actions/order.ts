@@ -47,8 +47,12 @@ export async function getOrder(prevState: any, formData: FormData) {
     where: eq(orders.id, order.id),
   });
 
-  if (orderDB || !order.id) {
-    redirect(`/${order.id}`);
+  if (orderDB) {
+    return redirect(`/${order.id}`);
+  }
+
+  if (!order.id) {
+    return { message: "Invalid order ID" };
   }
 
   // Extract exchanged/returned products from order note
@@ -112,6 +116,8 @@ export async function getOrder(prevState: any, formData: FormData) {
           quantity: item.quantity || 0,
           changed: false,
           confirmed: wasChanged,
+          credit: false,
+          gift_card_id: null,
         });
       })
     );

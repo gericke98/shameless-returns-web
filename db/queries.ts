@@ -176,6 +176,50 @@ export async function createReturn(
   }
 }
 
+export async function createGiftCard(customerId: string, amount: number) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+
+  const query = `
+    mutation {
+      giftCardCreate(input: {
+        customerId: "gid://shopify/Customer/${customerId}",
+        initialValue: ${amount}
+      }) {
+        giftCard {
+          id
+        }
+      }
+    }
+  `;
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query }),
+    });
+
+    const data = await response.json();
+    console.log("Creating gift card in Shopify", data);
+
+    if (data.errors || data.data.returnCreate.userErrors.length > 0) {
+      console.error(
+        "Error creating gift card:",
+        data.errors || data.data.returnCreate.userErrors
+      );
+      return {
+        success: false,
+        errors: data.errors || data.data.returnCreate.userErrors,
+      };
+    }
+
+    return { success: true, data: data.data.giftCardCreate.giftCard };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
 export async function getFulfillmentLineItems(fulfillmentId: string) {
   const session = createSession(); // Replace with your session creation logic
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;

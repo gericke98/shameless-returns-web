@@ -65,10 +65,10 @@ export const SummaryComponent = ({
 
       <div className="w-full h-full flex flex-col mt-4">
         <div className="w-full h-full flex flex-row justify-between">
-          <h5 className="font-semibold text-sm">Productos a devolver</h5>
-          <h5 className="font-semibold text-sm">
+          <span className="font-semibold text-sm">Productos a devolver</span>
+          <span className="font-semibold text-sm">
             {totalPriceDevolver.toFixed(2)} €
-          </h5>
+          </span>
         </div>
 
         {itemsToDevolver.map((item) => (
@@ -76,16 +76,16 @@ export const SummaryComponent = ({
         ))}
 
         <div className="w-full h-full flex flex-row justify-between mt-5">
-          <h5 className="font-semibold text-sm">
+          <span className="font-semibold text-sm">
             Nuevos productos {shipping && totalPrice !== 0 && "& Logística"}
-          </h5>
-          <h5 className="font-semibold text-sm">
+          </span>
+          <span className="font-semibold text-sm">
             {(totalPriceCambio > 0 || shipping) && "-"}
             {shipping && totalPrice !== 0
               ? (totalPriceCambio + shippingCost).toFixed(2)
               : totalPriceCambio.toFixed(2)}
             {" €"}
-          </h5>
+          </span>
         </div>
 
         {itemsToCambio.map((item) => (
@@ -96,25 +96,25 @@ export const SummaryComponent = ({
 
         {credito && (
           <div className="w-full h-full flex flex-row justify-between mt-5">
-            <h5 className="font-semibold text-sm">
+            <span className="font-semibold text-sm">
               Bonificaciones - Crédito en tienda
-            </h5>
-            <h5 className="font-semibold text-sm">
+            </span>
+            <span className="font-semibold text-sm">
               {creditBonus.toFixed(2)} €
-            </h5>
+            </span>
           </div>
         )}
       </div>
 
       <div className="bg-gray-300 flex flex-row justify-between px-2 py-3 my-4 rounded-sm mt-4">
-        <h6 className="pl-5 font-semibold">Total reembolso</h6>
-        <h6 className="pr-1 font-semibold">{finalTotal.toFixed(2)} €</h6>
+        <span className="pl-5 font-semibold">Total reembolso</span>
+        <span className="pr-1 font-semibold">{finalTotal.toFixed(2)} €</span>
       </div>
 
       {!final && (
-        <h5 className="text-xs mt-0 mb-4 font-light">
+        <span className="text-xs mt-0 mb-4 font-light">
           Resumen provisional. Puede cambiar a lo largo del proceso
-        </h5>
+        </span>
       )}
 
       <span className="border w-full border-gray-300 my-3" />

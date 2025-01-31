@@ -19,6 +19,7 @@ export const FormInput = ({ name, title, icon, valueini }: FormInputProps) => {
       alt={`${name} icon`}
       width={15}
       height={15}
+      className="w-auto h-auto max-w-4"
     />
   );
 

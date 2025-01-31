@@ -1,7 +1,7 @@
 import { Progress } from "@/components/ui/progress";
 import { productsOrder } from "@/db/schema";
 import { Product2 } from "@/types"; // Fixed import
-import { SummaryComponent } from "../components/summary";
+import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 
@@ -48,7 +48,8 @@ export const LastWindow = ({
         {items.map(
           (product) =>
             product.newp &&
-            product.action && (
+            product.action &&
+            !product.confirmed && (
               <ProductLineClient
                 key={product.id}
                 orderProduct={product}

@@ -252,7 +252,7 @@ export async function createShippingLabel(id: string): Promise<number> {
   console.log("shippingResponse", shippingResponse);
   // Extraigo el tracking number
   const trackingMatch = shippingResponse.data.match(
-    /<CodExpedicion>(.*?)<\/CodExpedicion>/
+    /<CodEnvio>(.*?)<\/CodEnvio>/
   );
   const trackingNumber = trackingMatch ? trackingMatch[1] : null;
 
@@ -261,6 +261,7 @@ export async function createShippingLabel(id: string): Promise<number> {
     return 500;
   }
   // Lo añado a la base de datos
+  // TO DO: Hacerlo por producto no por pedido --> Check de que el pedido actualice los productos correctos
   await db
     .update(orders)
     .set({ locator: trackingNumber })
@@ -273,6 +274,7 @@ export async function createShippingLabel(id: string): Promise<number> {
   );
   return emailResponse.status;
 }
+
 interface TrackingEvent {
   codigoEvento: string;
   descripcionEvento: string;
@@ -286,6 +288,7 @@ interface TrackingResponse {
     eventos: TrackingEvent[];
   }[];
 }
+
 export async function obtainLastStatus(trackingNumber: string | null) {
   // Encode authentication (replace with your credentials)
   const username = process.env.USERNAME_CORREOS;
@@ -302,6 +305,10 @@ export async function obtainLastStatus(trackingNumber: string | null) {
         "Content-Type": "application/json",
       },
     });
+    // Caso de error
+    if (!response.data[0].resumen_ultimo) {
+      return "Prerregistrado";
+    }
     // Return the tracking data
     return response.data[0].resumen_ultimo;
   } catch (error) {

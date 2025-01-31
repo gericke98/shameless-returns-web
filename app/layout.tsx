@@ -17,11 +17,11 @@ export const metadata: Metadata = {
   description: `${siteConfig.name} | ${siteConfig.description}`,
 };
 
-interface RootLayoutProps {
+export default function RootLayout({
+  children,
+}: {
   children: React.ReactNode;
-}
-
-export default function RootLayout({ children }: Readonly<RootLayoutProps>) {
+}) {
   return (
     <html lang="en">
       <body className={inter.className}>

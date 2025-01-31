@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import LogoutButton from "./LogoutButton";
 import { checkAuth } from "@/actions/authentication";
 import { getReturns } from "@/db/queries";
 import { obtainLastStatus } from "@/actions/shipping";
@@ -11,7 +10,7 @@ export default async function DashboardPage() {
   const isAuthenticated = await checkAuth();
 
   if (!isAuthenticated) {
-    redirect("/auth");
+    redirect("/login");
   }
 
   const returns = await getReturns();

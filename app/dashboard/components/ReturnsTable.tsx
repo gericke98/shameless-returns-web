@@ -1,3 +1,7 @@
+"use client";
+
+import { validateReturn } from "@/actions/refund";
+
 interface ReturnTableProps {
   returns: Array<{
     order: any; // Replace with proper type
@@ -8,8 +12,8 @@ interface ReturnTableProps {
 
 export default function ReturnsTable({ returns }: ReturnTableProps) {
   return (
-    <div className="bg-white shadow-sm rounded-lg overflow-hidden">
-      <table className="min-w-full divide-y divide-gray-200">
+    <div className="bg-white shadow-sm rounded-lg overflow-x-auto">
+      <table className="min-w-full divide-y divide-gray-200 table-auto">
         <TableHeader />
         <tbody className="bg-white divide-y divide-gray-200">
           {returns.map(({ order, product, status }) => (
@@ -77,7 +81,7 @@ function TableRow({ order, product, status }: TableRowProps) {
         {product.quantity}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        ${product.price}
+        {product.price} €
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.action}
@@ -92,7 +96,10 @@ function TableRow({ order, product, status }: TableRowProps) {
         {product.refunded ? (
           <h5>Refunded</h5>
         ) : (
-          <button className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm">
+          <button
+            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm"
+            onClick={() => validateReturn(product, status)}
+          >
             Refund
           </button>
         )}

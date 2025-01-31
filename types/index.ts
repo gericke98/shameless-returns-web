@@ -1,3 +1,5 @@
+import { productsOrder } from "@/db/schema";
+
 export type Product2 = {
   id: string;
   title: string;
@@ -67,4 +69,26 @@ export type FormInputProps = {
   title: string;
   icon: boolean;
   valueini?: string;
+};
+
+export type OrderItem = typeof productsOrder.$inferSelect & {
+  newp?: Product2;
+};
+
+export type ProductImageProps = {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+};
+
+export type ProductInfoProps = {
+  title: string;
+  variant: string;
+  price: string;
+  action: string | null;
+  reason: string | null;
+  confirmed: boolean;
+  changed: boolean;
+  newVariant?: string;
 };

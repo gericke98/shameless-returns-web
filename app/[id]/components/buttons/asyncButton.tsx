@@ -28,14 +28,14 @@ export const AsyncButton = ({
 
           if (statusLabel !== 200) {
             // If label creation fails, undo database changes
-            await updateFinalOrder(id, true, false); // Assuming we add a revert parameter
+            await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter
             console.error("Failed to create shipping label");
           }
         } catch (error) {
           console.error("Error in order processing:", error);
           // Attempt to undo database changes if there was an error
           try {
-            await updateFinalOrder(id, true, false);
+            await updateFinalOrder(id, true, isCredit);
           } catch (undoError) {
             console.error("Failed to revert database changes:", undoError);
           }

@@ -1,8 +1,8 @@
 "use client";
 import Image from "next/image";
-import { FormInput } from "../../components/formInput";
-import { FormSelect } from "../../components/formSelect";
-import { FormSelectSize } from "../../components/formSelectSize";
+import { FormInput } from "../../../components/formInput";
+import { FormSelect } from "../../../components/formSelect";
+import { FormSelectSize } from "../../../components/formSelectSize";
 import { useState } from "react";
 import { DialogFooter } from "@/components/ui/dialog";
 import { DialogClose } from "@radix-ui/react-dialog";
@@ -61,9 +61,14 @@ export const FormProduct = ({
   return (
     <>
       <form className="mt-10 w-full flex flex-col gap-5" action={updateOrder}>
-        <input hidden name="oldVariantId" value={orderProduct.variant_id} />
-        <input hidden name="id" value={orderProduct.id} />
-        <input hidden name="variantId" value={variantId} />
+        <input
+          hidden
+          name="oldVariantId"
+          value={orderProduct.variant_id}
+          readOnly
+        />
+        <input hidden name="id" value={orderProduct.id} readOnly />
+        <input hidden name="variantId" value={variantId} readOnly />
 
         <FormSelect
           name="accion"

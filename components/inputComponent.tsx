@@ -31,24 +31,30 @@ export const InputComponent = () => {
     <h6 className="text-xxs text-black mt-5">
       Al continuar, confirmas que aceptas los{" "}
       {PRIVACY_LINKS.map((link, index) => (
-        <>
-          <span key={link.text}>
-            <Link
-              href={link.href}
-              className="text-blue-400 border-b border-blue-400 font-bold"
-            >
-              {link.text}
-            </Link>
-          </span>
+        <span key={link.text}>
+          <Link
+            href={link.href}
+            key={link.text}
+            className="text-blue-400 border-b border-blue-400 font-bold"
+          >
+            {link.text}
+          </Link>
           {index < PRIVACY_LINKS.length - 1 && ", "}
-        </>
+        </span>
       ))}
     </h6>
   );
 
   return (
     <div className="flex flex-col items-center">
-      <Image src={Logo} alt="Logo" width={150} height={150} />
+      <Image
+        src={Logo}
+        alt="Logo"
+        width={150}
+        height={150}
+        className="h-auto w-auto"
+        priority
+      />
       <span className="border w-full border-slate-100 mt-5" />
       <h3 className="text-xs mt-2 mb-10 text-slate-500">
         CAMBIOS Y DEVOLUCIONES

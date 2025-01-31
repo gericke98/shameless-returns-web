@@ -3,7 +3,7 @@ import { FormInput } from "@/components/formInput";
 import { orders, productsOrder } from "@/db/schema";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
-import { SummaryComponent } from "./summary";
+import { SummaryComponent } from "./summary/summary";
 import { Product2 } from "@/types";
 
 type Props = {
@@ -39,7 +39,7 @@ export const SecondWindowForm = ({
 
   return (
     <form className="mt-10 w-full flex flex-col gap-8" action={formAction}>
-      <input hidden name="id" value={order.id} />
+      <input hidden name="id" value={order.id} readOnly />
       <FormInput
         name="name"
         title="Nombre"

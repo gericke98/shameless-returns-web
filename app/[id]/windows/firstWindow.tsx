@@ -1,12 +1,7 @@
 import { Progress } from "@/components/ui/progress";
-import { SummaryComponent } from "../components/summary";
-import { productsOrder } from "@/db/schema";
+import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
-import { Product2 } from "@/types";
-
-type OrderItem = typeof productsOrder.$inferSelect & {
-  newp?: Product2;
-};
+import { OrderItem } from "@/types";
 
 interface FirstWindowProps {
   name: string;

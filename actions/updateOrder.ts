@@ -11,7 +11,6 @@ import {
 import { orders, productsOrder } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 
 type FormDataFields = {
   orderId?: string;
@@ -217,11 +216,17 @@ async function processProductReturn(
       lineitem.discount_allocations[0]
     );
 
+    console.log("result", result);
+
     // Si la return se creo correctamente, actualizo el producto
     if (result?.success) {
       await db
         .update(productsOrder)
-        .set({ confirmed: true, return_id: result.data.id })
+        .set({
+          confirmed: true,
+          return_id: result.data.id,
+          return_line_item_id: result.data.returnLineItems.nodes[0].id,
+        })
         .where(eq(productsOrder.variant_id, product.variant_id.toString()));
       if (isCredit) {
         await db

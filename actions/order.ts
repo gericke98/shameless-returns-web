@@ -43,12 +43,13 @@ export async function getOrder(prevState: any, formData: FormData) {
     };
   }
 
+  // Hago check de si la orden existe en la base de datos ya
   const orderDB = await db.query.orders.findFirst({
     where: eq(orders.id, order.id),
   });
 
   if (orderDB) {
-    return redirect(`/${order.id}`);
+    redirect(`/${order.id}`);
   }
 
   if (!order.id) {
@@ -105,7 +106,7 @@ export async function getOrder(prevState: any, formData: FormData) {
         const priceWithDiscount =
           Number(item.price) - (item.discount_allocations?.[0]?.amount ?? 0);
 
-        await db.insert(productsOrder).values({
+        return db.insert(productsOrder).values({
           lineItemId: item.id.toString() || "No information provided",
           orderId: order.id.toString() || "No information provided",
           productId: item.product_id.toString() || "No information provided",
@@ -121,13 +122,11 @@ export async function getOrder(prevState: any, formData: FormData) {
         });
       })
     );
-
-    redirect(`/${order.id}`);
   } catch (error) {
-    console.log(error);
     return {
       message:
         "Error while trying to connect with database. Please try again later",
     };
   }
+  redirect(`/${order.id}`);
 }

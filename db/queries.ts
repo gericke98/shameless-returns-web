@@ -85,6 +85,107 @@ export async function getOrderTotal(orderId: string) {
   }
 }
 
+export async function createRefund(returnId: string, returnLineItemId: string) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  let query = `
+      mutation {
+        returnRefund(returnRefundInput: 
+          {
+            notifyCustomer: true,
+            returnId: "${returnId}",
+            returnRefundLineItems: [
+              {
+                quantity: 1,
+                returnLineItemId: "${returnLineItemId}"
+              }
+            ]
+          }) 
+        {
+          refund {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query }),
+    });
+
+    const data = await response.json();
+    console.log("Creating refund in Shopify", data.data);
+
+    if (data.errors || data.data.returnRefund.userErrors.length > 0) {
+      console.error(
+        "Error creating refund:",
+        data.errors || data.data.returnRefund.userErrors
+      );
+      return {
+        success: false,
+        errors: data.errors || data.data.returnRefund.userErrors,
+      };
+    }
+
+    return { success: true, data: data.data.returnRefund.refund };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
+export async function closeReturn(returnId: string) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+
+  const query = `
+      mutation {
+        returnClose(id: "${returnId}") 
+        {
+          return {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query }),
+    });
+
+    const data = await response.json();
+    console.log("Closing return in Shopify", data.data);
+
+    if (data.errors || data.data.returnClose.userErrors.length > 0) {
+      console.error(
+        "Error closing return:",
+        data.errors || data.data.returnClose.userErrors
+      );
+      return {
+        success: false,
+        errors: data.errors || data.data.returnClose.userErrors,
+      };
+    }
+
+    return { success: true, data: data.data.returnClose.return };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
 export async function createReturn(
   orderId: string,
   fulfillmentLineItem: string,
@@ -110,6 +211,11 @@ export async function createReturn(
         {
           return {
             id
+            returnLineItems(first: 10){
+              nodes{
+                id
+              }
+            }
           }
           userErrors {
             field
@@ -118,6 +224,7 @@ export async function createReturn(
         }
       }
     `;
+
   // Aqui tengo que diferenciar si es una devolucion directa o un cambio
   if (product.action === "CAMBIO") {
     query = `
@@ -149,6 +256,11 @@ export async function createReturn(
         }) {
           return {
             id
+            returnLineItems(first: 10){
+              nodes{
+                id
+              }
+            }
           }
           userErrors {
             field
@@ -166,7 +278,7 @@ export async function createReturn(
     });
 
     const data = await response.json();
-    console.log("Creating return in Shopify", data);
+    console.log("Creating return in Shopify", data.data);
 
     if (data.errors || data.data.returnCreate.userErrors.length > 0) {
       console.error(

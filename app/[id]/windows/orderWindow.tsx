@@ -7,19 +7,20 @@ import { FirstWindow } from "./firstWindow";
 import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 
-interface ClientOrderProps {
+type ClientOrderProps = {
   name: string;
   items: OrderItem[];
   order: typeof orders.$inferSelect;
   id: string;
   setPosition?: React.Dispatch<React.SetStateAction<number>>;
-}
+};
 
-interface Prices {
+type Prices = {
   returnPrice: number;
   exchangePrice: number;
   totalPrice: number;
-}
+};
+
 // Helper functions
 const calculatePrices = (items: OrderItem[]): Prices => {
   const returnPrice = items

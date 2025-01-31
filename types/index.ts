@@ -92,3 +92,46 @@ export type ProductInfoProps = {
   changed: boolean;
   newVariant?: string;
 };
+
+export type OrderData = {
+  id: string;
+  customer: {
+    id: string;
+  };
+  fulfillments: Array<{
+    admin_graphql_api_id: string;
+    line_items: LineItem[];
+  }>;
+  line_items: LineItem[];
+};
+
+export type LineItem = {
+  variant_id: string | number;
+  price: string;
+  discount_allocations: any[];
+};
+
+export type FulfillmentLineItem = {
+  node: {
+    id: string;
+    lineItem: {
+      variant: {
+        id: string;
+      };
+    };
+  };
+};
+
+export type TrackingEvent = {
+  codigoEvento: string;
+  descripcionEvento: string;
+  fecha: string;
+  ubicacion: string;
+};
+
+export type TrackingResponse = {
+  envios: {
+    numeroEnvio: string;
+    eventos: TrackingEvent[];
+  }[];
+};

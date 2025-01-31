@@ -4,6 +4,8 @@ import { cache } from "react";
 import db from "./drizzle";
 import { eq } from "drizzle-orm";
 import { orders, productsOrder } from "./schema";
+import { OrderData } from "@/types";
+import { LineItem } from "@/types";
 
 const createSession = (): RequestInit => {
   if (
@@ -120,7 +122,6 @@ export async function createRefund(returnId: string, returnLineItemId: string) {
     });
 
     const data = await response.json();
-    console.log("Creating refund in Shopify", data.data);
 
     if (data.errors || data.data.returnRefund.userErrors.length > 0) {
       console.error(
@@ -166,7 +167,6 @@ export async function closeReturn(returnId: string) {
     });
 
     const data = await response.json();
-    console.log("Closing return in Shopify", data.data);
 
     if (data.errors || data.data.returnClose.userErrors.length > 0) {
       console.error(
@@ -206,7 +206,13 @@ export async function createReturn(
                 quantity: 1,
                 returnReason: COLOR
               }
-            ]
+            ],
+            returnShippingFee: {
+              amount: {
+                amount: ${process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST}.00,
+                currencyCode: EUR
+              }
+            }
           }) 
         {
           return {
@@ -225,7 +231,6 @@ export async function createReturn(
       }
     `;
 
-  // Aqui tengo que diferenciar si es una devolucion directa o un cambio
   if (product.action === "CAMBIO") {
     query = `
       mutation {
@@ -278,7 +283,6 @@ export async function createReturn(
     });
 
     const data = await response.json();
-    console.log("Creating return in Shopify", data.data);
 
     if (data.errors || data.data.returnCreate.userErrors.length > 0) {
       console.error(
@@ -297,8 +301,32 @@ export async function createReturn(
     return { success: false, error: error };
   }
 }
+export async function processGiftCardReturn(
+  customerId: string,
+  price: number,
+  variantId: string
+) {
+  const increasedPrice = price.toString();
 
-export async function createGiftCard(customerId: string, amount: number) {
+  const giftCardResult = await createGiftCard(customerId, increasedPrice);
+
+  if (!giftCardResult.success) {
+    throw new Error("Failed to create gift card");
+  }
+
+  if (giftCardResult?.success) {
+    await db
+      .update(productsOrder)
+      .set({
+        gift_card_id: giftCardResult.data.id,
+      })
+      .where(eq(productsOrder.variant_id, variantId.toString()));
+  }
+
+  return giftCardResult;
+}
+
+export async function createGiftCard(customerId: string, amount: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
@@ -322,16 +350,15 @@ export async function createGiftCard(customerId: string, amount: number) {
     });
 
     const data = await response.json();
-    console.log("Creating gift card in Shopify", data);
 
-    if (data.errors || data.data.returnCreate.userErrors.length > 0) {
+    if (data.errors || data.data.giftCardCreate.userErrors.length > 0) {
       console.error(
         "Error creating gift card:",
-        data.errors || data.data.returnCreate.userErrors
+        data.errors || data.data.giftCardCreate.userErrors
       );
       return {
         success: false,
-        errors: data.errors || data.data.returnCreate.userErrors,
+        errors: data.errors || data.data.giftCardCreate.userErrors,
       };
     }
 
@@ -414,7 +441,6 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
       return { success: false, errors: data.errors };
     }
 
-    console.log("Fulfillment Data:", data.data.fulfillment);
     return { success: true, data: data.data.fulfillment };
   } catch (error) {
     console.error("Error:", error);

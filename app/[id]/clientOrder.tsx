@@ -8,13 +8,13 @@ import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
 
-interface ClientOrderProps {
+type ClientOrderProps = {
   name: string;
   items: OrderItem[];
   order: typeof orders.$inferSelect;
   id: string;
   setPosition?: React.Dispatch<React.SetStateAction<number>>;
-}
+};
 
 export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);

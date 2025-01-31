@@ -1,9 +1,9 @@
 import { productsOrder } from "@/db/schema";
 
-interface SummaryLineProps {
+type SummaryLineProps = {
   item: typeof productsOrder.$inferSelect;
   newAction: boolean;
-}
+};
 
 const ProductTitle = ({ title }: { title: string }) => (
   <h6 className="text-sm tracking-wide font-light">{title}</h6>

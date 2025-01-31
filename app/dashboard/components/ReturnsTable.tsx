@@ -1,31 +1,126 @@
 "use client";
 
 import { validateReturn } from "@/actions/refund";
+import { useEffect, useState } from "react";
 
-interface ReturnTableProps {
+type ReturnTableProps = {
   returns: Array<{
     order: any; // Replace with proper type
     product: any; // Replace with proper type
     status: string;
   }>;
-}
+};
 
 export default function ReturnsTable({ returns }: ReturnTableProps) {
+  // State for search, filter, and pagination
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatusRefunded, setFilterStatusRefunded] = useState("all");
+  const [filterStatusShipping, setFilterStatusShipping] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const resultsPerPage = 15;
+
+  // Filtering the returns
+  const filteredReturns = returns.filter(({ order, product, status }) => {
+    const searchMatch =
+      order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.email.toLowerCase().includes(searchTerm.toLowerCase());
+    const filterMatchRef =
+      filterStatusRefunded === "all" ||
+      (filterStatusRefunded === "refunded" && product.refunded) ||
+      (filterStatusRefunded === "not_refunded" && !product.refunded);
+    const filterMatchShip =
+      filterStatusShipping === "all" || filterStatusShipping === status;
+
+    return searchMatch && filterMatchRef && filterMatchShip;
+  });
+  // Pagination Logic
+  const totalPages = Math.ceil(filteredReturns.length / resultsPerPage);
+  const paginatedReturns = filteredReturns.slice(
+    (currentPage - 1) * resultsPerPage,
+    currentPage * resultsPerPage
+  );
+
   return (
-    <div className="bg-white shadow-sm rounded-lg overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 table-auto">
-        <TableHeader />
-        <tbody className="bg-white divide-y divide-gray-200">
-          {returns.map(({ order, product, status }) => (
-            <TableRow
-              key={`${order.id}-${product.id}`}
-              order={order}
-              product={product}
-              status={status}
-            />
-          ))}
-        </tbody>
-      </table>
+    <div className="bg-white shadow-sm rounded-lg p-4">
+      {/* Search & Filter Section */}
+      <div className="flex justify-between items-center mb-4">
+        <input
+          type="text"
+          placeholder="Search by Order or Email..."
+          className="p-2 border rounded-md w-1/3"
+          value={searchTerm}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+          }}
+        />
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Refunded</span>
+          <select
+            className="p-2 border rounded-md"
+            value={filterStatusRefunded}
+            onChange={(e) => setFilterStatusRefunded(e.target.value)}
+          >
+            <option value="all">All</option>
+            <option value="refunded">Refunded</option>
+            <option value="not_refunded">Not Refunded</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Shipping Status</span>
+          <select
+            className="p-2 border rounded-md"
+            value={filterStatusShipping}
+            onChange={(e) => setFilterStatusShipping(e.target.value)}
+          >
+            <option value="all">All</option>
+            <option value="prerregistrado">Prerregistrado</option>
+            <option value="admitido">Admitido</option>
+            <option value="clasificado">Clasificado</option>
+            <option value="en tránsito">En tránsito</option>
+            <option value="en tránsito">En tránsito</option>
+            <option value="en reparto">En reparto</option>
+            <option value="entregado">Entregado</option>
+          </select>
+        </div>
+      </div>
+      {/* Table */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200 table-auto">
+          <TableHeader />
+          <tbody className="bg-white divide-y divide-gray-200">
+            {paginatedReturns.map(({ order, product, status }) => (
+              <TableRow
+                key={`${order.id}-${product.id}`}
+                order={order}
+                product={product}
+                status={status}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {/* Pagination Controls */}
+      <div className="flex justify-between items-center mt-4">
+        <button
+          className="px-4 py-2 bg-gray-300 rounded-md disabled:opacity-50"
+          disabled={currentPage === 1}
+          onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+        >
+          Previous
+        </button>
+        <span>
+          Page {currentPage} of {totalPages}
+        </span>
+        <button
+          className="px-4 py-2 bg-gray-300 rounded-md disabled:opacity-50"
+          disabled={currentPage === totalPages}
+          onClick={() =>
+            setCurrentPage((prev) => Math.min(prev + 1, totalPages))
+          }
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -98,7 +193,7 @@ function TableRow({ order, product, status }: TableRowProps) {
         ) : (
           <button
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm"
-            onClick={() => validateReturn(product, status)}
+            onClick={() => validateReturn(product, status, order)}
           >
             Refund
           </button>

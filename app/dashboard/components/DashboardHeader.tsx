@@ -1,8 +1,8 @@
 import LogoutButton from "../LogoutButton";
 
-interface DashboardHeaderProps {
+type DashboardHeaderProps = {
   username: string;
-}
+};
 
 export default function DashboardHeader({ username }: DashboardHeaderProps) {
   return (

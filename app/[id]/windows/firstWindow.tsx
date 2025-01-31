@@ -3,10 +3,10 @@ import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { OrderItem } from "@/types";
 
-interface FirstWindowProps {
+type FirstWindowProps = {
   name: string;
   items: OrderItem[];
-}
+};
 
 export const FirstWindow = ({ name, items }: FirstWindowProps) => {
   const hasSelectedItems = items.some((item) => item.action !== null);

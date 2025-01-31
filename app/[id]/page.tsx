@@ -2,11 +2,11 @@ import { getOrderById, getProduct } from "@/db/queries";
 import { ClientOrder } from "./clientOrder";
 import { redirect } from "next/navigation";
 
-interface OrderPageProps {
+type OrderPageProps = {
   params: {
     id: string;
   };
-}
+};
 
 const LOADING_DELAY = 3000;
 

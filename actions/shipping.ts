@@ -199,7 +199,6 @@ async function sendEmail(
 ): Promise<ShippingResponse> {
   const base64Match = base64Pdf.match(/<Fichero>(.*?)<\/Fichero>/);
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
-
   if (!postmarkToken || !base64Match) {
     return { status: 500, error: "Missing required data" };
   }
@@ -225,15 +224,14 @@ async function sendEmail(
       ],
     };
 
-    await axios.post(POSTMARK_API_URL, emailData, {
+    const result = await axios.post(POSTMARK_API_URL, emailData, {
       headers: {
         Accept: "application/json",
         "Content-Type": "application/json",
         "X-Postmark-Server-Token": postmarkToken,
       },
     });
-
-    return { status: 200 };
+    return { status: result.status };
   } catch (error: any) {
     console.error("Email error:", error.response?.data || error.message);
     return { status: 500, error: "Failed to send email" };
@@ -249,7 +247,6 @@ export async function createShippingLabel(id: string): Promise<number> {
 
   const shippingResponse = await sendShippingLabel(soapBody);
   if (shippingResponse.status !== 200) return shippingResponse.status;
-  console.log("shippingResponse", shippingResponse);
   // Extraigo el tracking number
   const trackingMatch = shippingResponse.data.match(
     /<CodEnvio>(.*?)<\/CodEnvio>/
@@ -273,20 +270,6 @@ export async function createShippingLabel(id: string): Promise<number> {
     name
   );
   return emailResponse.status;
-}
-
-interface TrackingEvent {
-  codigoEvento: string;
-  descripcionEvento: string;
-  fecha: string;
-  ubicacion: string;
-}
-
-interface TrackingResponse {
-  envios: {
-    numeroEnvio: string;
-    eventos: TrackingEvent[];
-  }[];
 }
 
 export async function obtainLastStatus(trackingNumber: string | null) {

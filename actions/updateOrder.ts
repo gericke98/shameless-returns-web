@@ -2,13 +2,13 @@
 
 import db from "@/db/drizzle";
 import {
-  createGiftCard,
   createReturn,
   getFulfillmentLineItems,
   getOrderProductsById,
   getOrderTotal,
 } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
+import { FulfillmentLineItem, OrderData } from "@/types";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -125,35 +125,6 @@ export async function updateData(prevState: number, formData: FormData) {
   return prevState + 1;
 }
 
-interface LineItem {
-  variant_id: string | number;
-  price: string;
-  discount_allocations: any[];
-}
-
-interface FulfillmentLineItem {
-  node: {
-    id: string;
-    lineItem: {
-      variant: {
-        id: string;
-      };
-    };
-  };
-}
-
-interface OrderData {
-  id: string;
-  customer: {
-    id: string;
-  };
-  fulfillments: Array<{
-    admin_graphql_api_id: string;
-    line_items: LineItem[];
-  }>;
-  line_items: LineItem[];
-}
-
 async function processProductReturn(
   product: { action?: string; variant_id: string; [key: string]: any },
   totalOrder: OrderData,
@@ -200,13 +171,6 @@ async function processProductReturn(
     const adjustedProduct = { ...product };
     let result;
 
-    // result = await processGiftCardReturn(
-    //   totalOrder,
-    //   lineitem,
-    //   fulfillmentsProduct,
-    //   adjustedProduct,
-    //   product.variant_id
-    // );
     // Creo la return
 
     result = await createReturn(
@@ -215,8 +179,6 @@ async function processProductReturn(
       adjustedProduct,
       lineitem.discount_allocations[0]
     );
-
-    console.log("result", result);
 
     // Si la return se creo correctamente, actualizo el producto
     if (result?.success) {
@@ -241,46 +203,6 @@ async function processProductReturn(
     console.error("Error processing product return:", error);
     throw error;
   }
-}
-
-async function processGiftCardReturn(
-  totalOrder: OrderData,
-  lineitem: LineItem,
-  fulfillmentsProduct: FulfillmentLineItem,
-  adjustedProduct: any,
-  variantId: string
-) {
-  const price = Number(lineitem.price);
-  const increasedPrice = price * 1.15;
-  adjustedProduct.price = increasedPrice.toString();
-
-  const giftCardResult = await createGiftCard(
-    totalOrder.customer.id,
-    increasedPrice
-  );
-
-  if (!giftCardResult.success) {
-    throw new Error("Failed to create gift card");
-  }
-
-  const result = await createReturn(
-    totalOrder.id,
-    fulfillmentsProduct.node.id,
-    adjustedProduct,
-    lineitem.discount_allocations[0]
-  );
-
-  if (result?.success) {
-    await db
-      .update(productsOrder)
-      .set({
-        credit: true,
-        gift_card_id: giftCardResult.data.id,
-      })
-      .where(eq(productsOrder.variant_id, variantId.toString()));
-  }
-
-  return result;
 }
 
 export async function updateFinalOrder(

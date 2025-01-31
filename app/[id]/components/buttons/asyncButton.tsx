@@ -1,6 +1,5 @@
 "use client";
-import { createShippingLabel } from "@/actions/shipping";
-import { updateFinalOrder } from "@/actions/updateOrder";
+import { returnFunction } from "@/actions/return";
 import { cn } from "@/lib/utils";
 
 export const AsyncButton = ({
@@ -19,27 +18,7 @@ export const AsyncButton = ({
       )}
       type="submit"
       onClick={async () => {
-        try {
-          // First update the database
-          await updateFinalOrder(id, false, isCredit);
-
-          // Then create shipping label and send email
-          const statusLabel = await createShippingLabel(id);
-
-          if (statusLabel !== 200) {
-            // If label creation fails, undo database changes
-            await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter
-            console.error("Failed to create shipping label");
-          }
-        } catch (error) {
-          console.error("Error in order processing:", error);
-          // Attempt to undo database changes if there was an error
-          try {
-            await updateFinalOrder(id, true, isCredit);
-          } catch (undoError) {
-            console.error("Failed to revert database changes:", undoError);
-          }
-        }
+        await returnFunction(id, isCredit);
       }}
     >
       {text}

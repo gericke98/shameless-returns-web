@@ -222,6 +222,33 @@ export async function createReturn(
                 id
               }
             }
+            refunds(first: 10) {
+              nodes{
+                id
+                duties{
+                  amountSet{
+                    presentmentMoney{
+                      amount
+                      currencyCode
+                    }
+                    shopMoney{
+                      amount
+                      currencyCode
+                    }
+                  }
+                  originalDuty{
+                    id
+                    price{
+                      shopMoney{
+                        amount
+                        currencyCode
+                      }
+                    }
+                  }
+                }
+              }
+
+            }
           }
           userErrors {
             field
@@ -231,50 +258,55 @@ export async function createReturn(
       }
     `;
 
-  if (product.action === "CAMBIO") {
-    query = `
-      mutation {
-        returnCreate(returnInput: {
-          exchangeLineItems: [
-            {
-              appliedDiscount: {
-                description: "RETURN_DISCOUNT",
-                value: {
-                  amount: {
-                    amount: ${discount.amount_set.shop_money.amount},
-                    currencyCode: ${discount.amount_set.shop_money.currency_code}
-                  }
-                }
-              },
-              quantity: 1,
-              variantId: "gid://shopify/ProductVariant/${product.new_variant_id}"
-            }
-          ],
-          orderId: "gid://shopify/Order/${orderId}",
-          returnLineItems: [
-            {
-              fulfillmentLineItemId: "${fulfillmentLineItem}",
-              quantity: 1,
-              returnReason: COLOR
-            }
-          ]
-        }) {
-          return {
-            id
-            returnLineItems(first: 10){
-              nodes{
-                id
-              }
-            }
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `;
-  }
+  // TO DO: CREAR UN ORDER DE CAMBIO QUE SE QUEDE EN HOLD
+  // if (product.action === "CAMBIO") {
+  //   query = `
+  //     mutation {
+  //       returnCreate(returnInput: {
+  //         exchangeLineItems: [
+  //           {
+  //             appliedDiscount: {
+  //               description: "RETURN_DISCOUNT",
+  //               value: {
+  //                 amount: {
+  //                   amount: ${discount?.amount_set.shop_money.amount || 0},
+  //                   currencyCode: ${
+  //                     discount?.amount_set.shop_money.currency_code || "EUR"
+  //                   }
+  //                 }
+  //               }
+  //             },
+  //             quantity: 1,
+  //             variantId: "gid://shopify/ProductVariant/${
+  //               product.new_variant_id
+  //             }"
+  //           }
+  //         ],
+  //         orderId: "gid://shopify/Order/${orderId}",
+  //         returnLineItems: [
+  //           {
+  //             fulfillmentLineItemId: "${fulfillmentLineItem}",
+  //             quantity: 1,
+  //             returnReason: COLOR
+  //           }
+  //         ]
+  //       }) {
+  //         return {
+  //           id
+  //           returnLineItems(first: 10){
+  //             nodes{
+  //               id
+  //             }
+  //           }
+  //         }
+  //         userErrors {
+  //           field
+  //           message
+  //         }
+  //       }
+  //     }
+  //   `;
+  // }
   try {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",

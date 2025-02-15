@@ -18,7 +18,7 @@ const ProductPrice = ({
 }) => (
   <h6 className="text-sm font-light">
     {newAction && "- "}
-    {price} €
+    {Number(price).toFixed(2)} €
   </h6>
 );
 

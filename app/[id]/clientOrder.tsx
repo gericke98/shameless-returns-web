@@ -38,7 +38,8 @@ export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
         />
         {position >= 4 ? (
           <AsyncButton
-            text={credito ? "Solicitar crédito" : "Actualizar pedido"}
+            // text={credito ? "Solicitar crédito" : "Actualizar pedido"}
+            text="Actualizar pedido"
             id={id}
             isCredit={credito}
           />

@@ -212,6 +212,7 @@ export async function updateFinalOrder(
 ) {
   if (revert) {
     const products = await getOrderProductsById(id);
+    console.log(products);
     await Promise.all(
       products.map(async (product) => {
         if (product.confirmed) {
@@ -225,7 +226,6 @@ export async function updateFinalOrder(
     revalidatePath("/", "layout");
     return;
   }
-
   const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
   await Promise.all(

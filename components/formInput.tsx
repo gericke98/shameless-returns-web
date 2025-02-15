@@ -19,7 +19,7 @@ export const FormInput = ({ name, title, icon, valueini }: FormInputProps) => {
       alt={`${name} icon`}
       width={15}
       height={15}
-      className="w-auto h-auto max-w-4"
+      className="w-auto h-auto max-w-4 pt-1"
     />
   );
 
@@ -31,11 +31,11 @@ export const FormInput = ({ name, title, icon, valueini }: FormInputProps) => {
         </h6>
         <div
           className={cn(
-            "w-full h-full pl-4 flex bg-slate-100 border-b-2 border-[#868687] focus-within:border-[#383839]",
+            "w-full h-full pl-4 pt-1 flex bg-slate-100 border-b-2 border-[#868687] focus-within:border-[#383839]",
             icon ? "flex-row" : "flex-col"
           )}
         >
-          {inputIcon}
+          {icon && inputIcon}
           <input
             type="text"
             name={name}

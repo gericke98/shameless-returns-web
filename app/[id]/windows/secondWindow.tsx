@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
 import Image from "next/image";
 import { IoLocationSharp } from "react-icons/io5";
@@ -13,21 +14,27 @@ type Props = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
+  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+  id: string;
 };
 
-export const SecondWindow = ({
+const SecondWindowBase = ({
   order,
   position,
   setPosition,
   items,
+  onItemChange,
+  id,
 }: Props) => {
-  const totalPriceDevolver = items
-    .filter((item) => item.action && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-  const totalPriceCambio = items
-    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const { totalPriceDevolver, totalPriceCambio } = useMemo(() => {
+    const totalPriceDevolver = items
+      .filter((item) => item.action && !item.confirmed)
+      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+    const totalPriceCambio = items
+      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+    return { totalPriceDevolver, totalPriceCambio };
+  }, [items]);
 
   const totalPrice = totalPriceDevolver - totalPriceCambio;
   const shippingCost = process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST;
@@ -94,8 +101,11 @@ export const SecondWindow = ({
           position={position}
           setPosition={setPosition}
           items={items}
+          onItemChange={onItemChange}
         />
       </div>
     </div>
   );
 };
+
+export const SecondWindow = memo(SecondWindowBase);

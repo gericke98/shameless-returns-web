@@ -1,14 +1,14 @@
+import { memo, useMemo, useState } from "react";
 import { Progress } from "@/components/ui/progress";
+import { FaArrowAltCircleLeft } from "react-icons/fa";
+import Image from "next/image";
 import { productsOrder } from "@/db/schema";
+import { Product2 } from "@/types";
 import { cn } from "@/lib/utils";
 import RegaloWhite from "@/public/giftWhite.svg";
 import RegaloBlack from "@/public/giftBlack.svg";
 import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
-import { Product2 } from "@/types";
-import Image from "next/image";
-import { useState } from "react";
-import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
@@ -16,6 +16,8 @@ type Props = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   setCredito: React.Dispatch<React.SetStateAction<boolean>>;
+  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+  id: string;
 };
 
 const StoreCredit = ({
@@ -140,34 +142,30 @@ const OriginalPayment = ({
   </div>
 );
 
-export const ThirdWindow = ({
+const ThirdWindowBase = ({
   items,
   shipping,
   position,
   setPosition,
   setCredito,
+  onItemChange,
+  id,
 }: Props) => {
   const [selected, setSelected] = useState<number>(0);
 
-  const calculateTotalPrice = () => {
+  const totalPrice = useMemo(() => {
     const totalPriceDevolver = items
       .filter((item) => item.action && !item.confirmed)
       .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
     const totalPriceCambio = items
       .filter((item) => item.action === "CAMBIO" && !item.confirmed)
       .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
     let totalPrice = totalPriceDevolver - totalPriceCambio;
-
     if (shipping && totalPrice !== 0) {
       totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
     }
-
     return totalPrice;
-  };
-
-  const totalPrice = calculateTotalPrice();
+  }, [items, shipping]);
 
   return (
     <div className="w-full h-full flex flex-col mb-3">
@@ -199,3 +197,5 @@ export const ThirdWindow = ({
     </div>
   );
 };
+
+export const ThirdWindow = memo(ThirdWindowBase);

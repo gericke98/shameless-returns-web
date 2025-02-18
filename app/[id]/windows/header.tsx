@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Logo from "@/public/LOGO_black.png";
+
 export const Header = () => {
   return (
     <div className="bg-white flex flex-col lg:w-[30%] w-[85%] rounded-b-3xl items-center py-3 px-4 lg:px-6">

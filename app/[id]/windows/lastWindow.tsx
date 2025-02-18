@@ -1,6 +1,7 @@
+import { memo, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
 import { productsOrder } from "@/db/schema";
-import { Product2 } from "@/types"; // Fixed import
+import { Product2 } from "@/types";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
@@ -10,26 +11,31 @@ type Props = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   credito: boolean | null;
+  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+  id: string;
 };
 
-export const LastWindow = ({
+const LastWindowBase = ({
   items,
   position,
   setPosition,
   credito,
+  onItemChange,
+  id,
 }: Props) => {
-  const totalPriceDevolver = items
-    .filter((item) => item.action && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-  const totalPriceCambio = items
-    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-  let totalPrice = totalPriceDevolver - totalPriceCambio;
-  if (totalPrice !== 0) {
-    totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
-  }
+  const { totalPriceDevolver, totalPriceCambio, totalPrice } = useMemo(() => {
+    const totalPriceDevolver = items
+      .filter((item) => item.action && !item.confirmed)
+      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+    const totalPriceCambio = items
+      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+    let totalPrice = totalPriceDevolver - totalPriceCambio;
+    if (totalPrice !== 0) {
+      totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
+    }
+    return { totalPriceDevolver, totalPriceCambio, totalPrice };
+  }, [items]);
 
   const handleBack = () => {
     setPosition(totalPrice !== 0 ? position - 1 : position - 2);
@@ -54,6 +60,7 @@ export const LastWindow = ({
                 key={product.id}
                 orderProduct={product}
                 product={product.newp}
+                onItemChange={onItemChange}
               />
             )
         )}
@@ -68,7 +75,6 @@ export const LastWindow = ({
             credito={credito || false}
           />
         )}
-
         {totalPrice === 0 ? (
           <div className="w-full flex flex-col">
             <h3 className="font-bold text-base">Cambio de productos</h3>
@@ -112,3 +118,5 @@ export const LastWindow = ({
     </div>
   );
 };
+
+export const LastWindow = memo(LastWindowBase);

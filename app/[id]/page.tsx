@@ -8,8 +8,6 @@ type OrderPageProps = {
   };
 };
 
-const LOADING_DELAY = 3000;
-
 async function fetchOrderWithProducts(orderId: string) {
   const order = await getOrderById(orderId);
 
@@ -26,6 +24,7 @@ async function fetchOrderWithProducts(orderId: string) {
       };
     })
   );
+  console.log("Paso por server");
 
   return {
     ...order,
@@ -34,8 +33,8 @@ async function fetchOrderWithProducts(orderId: string) {
 }
 
 export default async function OrderPage({ params }: OrderPageProps) {
-  // Allow time for database to load
-  await new Promise((resolve) => setTimeout(resolve, LOADING_DELAY));
+  // Remove the artificial delay for immediate responsiveness.
+  // await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const orderData = await fetchOrderWithProducts(params.id);
 

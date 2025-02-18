@@ -3,7 +3,7 @@ import { FormInput } from "@/components/formInput";
 import { orders, productsOrder } from "@/db/schema";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
-import { SummaryComponent } from "./summary/summary";
+import { SummaryComponent } from "../components/summary/summary";
 import { Product2 } from "@/types";
 
 type Props = {
@@ -11,6 +11,7 @@ type Props = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
+  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
 };
 
 export const SecondWindowForm = ({
@@ -18,7 +19,9 @@ export const SecondWindowForm = ({
   position,
   setPosition,
   items,
+  onItemChange,
 }: Props) => {
+  // useFormState returns [state, formAction]
   const [state, formAction] = useFormState(updateData, position);
 
   const totalPriceDevolver = items
@@ -37,8 +40,18 @@ export const SecondWindowForm = ({
     }
   }, [state, totalPrice, setPosition]);
 
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    formAction(formData);
+    if (onItemChange) {
+      // Cast the order to the expected type.
+      onItemChange(order as unknown as typeof productsOrder.$inferSelect);
+    }
+  };
+
   return (
-    <form className="mt-10 w-full flex flex-col gap-8" action={formAction}>
+    <form className="mt-10 w-full flex flex-col gap-8" onSubmit={handleSubmit}>
       <input hidden name="id" value={order.id} readOnly />
       <FormInput
         name="name"

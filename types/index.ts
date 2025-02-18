@@ -1,4 +1,4 @@
-import { productsOrder } from "@/db/schema";
+import { orders, productsOrder } from "@/db/schema";
 
 export type Product2 = {
   id: string;
@@ -134,4 +134,38 @@ export type TrackingResponse = {
     numeroEnvio: string;
     eventos: TrackingEvent[];
   }[];
+};
+
+export type ClientOrderProps = {
+  name: string;
+  items: OrderItem[];
+  order: typeof orders.$inferSelect;
+  id: string;
+};
+
+export type ClientOrderWindowContentProps = {
+  name: string;
+  items: OrderItem[];
+  order: typeof orders.$inferSelect;
+  id: string;
+  setPosition: React.Dispatch<React.SetStateAction<number>>;
+  credito: boolean;
+  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
+};
+
+export type Prices = {
+  returnPrice: number;
+  exchangePrice: number;
+  totalPrice: number;
+};
+
+export type OrderWindowContentProps = {
+  position: number;
+  name: string;
+  items: OrderItem[];
+  order: typeof orders.$inferSelect;
+  id: string;
+  setPosition: React.Dispatch<React.SetStateAction<number>>;
+  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
+  credito: boolean;
 };

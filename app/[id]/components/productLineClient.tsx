@@ -1,4 +1,5 @@
 "use client";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -15,15 +16,13 @@ import { productsOrder } from "@/db/schema";
 import { cn } from "@/lib/utils";
 import { LiaExchangeAltSolid } from "react-icons/lia";
 import { IoIosReturnLeft } from "react-icons/io";
-import { useState } from "react";
 
-// Types
 type Props = {
   orderProduct: typeof productsOrder.$inferSelect;
   product: Product2;
+  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
 };
 
-// Components
 const ProductImage = ({ src, alt, width, height }: ProductImageProps) => (
   <Image
     alt={alt}
@@ -88,7 +87,7 @@ const ProductInfo = ({
     </span>
     <VariantInfo variant={variant} changed={changed} newVariant={newVariant} />
     <span className="text-sm text-left font-bold leading-tight text-black">
-      {price} €
+      {Number(price).toFixed(2)} €
     </span>
     {action && (
       <div className="flex flex-col justify-center gap-1 w-full">
@@ -108,6 +107,15 @@ const ProductInfo = ({
   </div>
 );
 
+interface ProductDialogProps extends Props {
+  changed: boolean;
+  setChanged: React.Dispatch<React.SetStateAction<boolean>>;
+  imageSrc: string;
+  imageAlt: string;
+  onSuccess: () => void;
+  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+}
+
 const ProductDialog = ({
   product,
   orderProduct,
@@ -115,12 +123,9 @@ const ProductDialog = ({
   setChanged,
   imageSrc,
   imageAlt,
-}: Props & {
-  changed: boolean;
-  setChanged: React.Dispatch<React.SetStateAction<boolean>>;
-  imageSrc: string;
-  imageAlt: string;
-}) => (
+  onSuccess,
+  onItemChange,
+}: ProductDialogProps) => (
   <DialogContent className="my-10 max-w-96 max-h-screen overflow-scroll lg:mx-0 mx-2">
     <DialogHeader>
       <DialogTitle>
@@ -144,6 +149,7 @@ const ProductDialog = ({
             reason={orderProduct.reason}
             confirmed={orderProduct.confirmed ?? false}
             changed={orderProduct.changed}
+            newVariant={orderProduct.new_variant_title ?? undefined}
           />
         </div>
         <div className="w-full mt-2 max-h-full">
@@ -152,6 +158,8 @@ const ProductDialog = ({
             orderProduct={orderProduct}
             changed={changed}
             setChanged={setChanged}
+            onSuccess={onSuccess}
+            onItemChange={onItemChange}
           />
         </div>
       </ScrollArea>
@@ -159,8 +167,13 @@ const ProductDialog = ({
   </DialogContent>
 );
 
-export const ProductLineClient = ({ orderProduct, product }: Props) => {
+export const ProductLineClient = ({
+  orderProduct,
+  product,
+  onItemChange,
+}: Props) => {
   const [changed, setChanged] = useState<boolean>(false);
+  const [open, setOpen] = useState<boolean>(false);
   const imageSrc = product?.image?.src || "/placeholder.jpg";
   const imageAlt = product.title || "Product image";
 
@@ -171,7 +184,7 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
         orderProduct.confirmed && "pointer-events-none cursor-none"
       )}
     >
-      <Dialog>
+      <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger className="w-full flex flex-row flex-nowrap gap-4">
           <ProductImage
             src={imageSrc}
@@ -198,6 +211,14 @@ export const ProductLineClient = ({ orderProduct, product }: Props) => {
           setChanged={setChanged}
           imageSrc={imageSrc}
           imageAlt={imageAlt}
+          onSuccess={() => {
+            setOpen(false);
+            // When the item has been updated, notify the parent.
+            if (onItemChange) {
+              onItemChange(orderProduct);
+            }
+          }}
+          onItemChange={onItemChange}
         />
       </Dialog>
     </div>

@@ -257,8 +257,6 @@ export async function createShippingLabel(id: string): Promise<number> {
     console.error("Failed to extract tracking number from response");
     return 500;
   }
-  // Lo añado a la base de datos
-  // TO DO: Hacerlo por producto no por pedido --> Check de que el pedido actualice los productos correctos
   await db
     .update(orders)
     .set({ locator: trackingNumber })

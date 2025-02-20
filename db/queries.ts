@@ -88,6 +88,7 @@ export async function getOrderTotal(orderId: string) {
 }
 
 export async function createRefund(returnId: string, returnLineItemId: string) {
+  // TO DO: ARREGARLO PORQUE NO FUNCIONA BIEN EL REFUND
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
   let query = `
@@ -141,6 +142,143 @@ export async function createRefund(returnId: string, returnLineItemId: string) {
   }
 }
 
+export async function createOrder(order: any, product: any) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  // Log the query to debug
+  const query = `
+  mutation OrderCreate(
+    $options: OrderCreateOptionsInput, 
+    $order: OrderCreateOrderInput!
+  ) {
+    orderCreate(options: $options, order: $order) {
+      order {
+        id
+        name
+        email
+        createdAt
+        shippingAddress {
+          address1
+          address2
+          city
+          countryCode
+          firstName
+          lastName
+          phone
+          zip
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+  const variables = {
+    options: {
+      inventoryBehaviour: "DECREMENT_OBEYING_POLICY",
+      sendFulfillmentReceipt: true,
+      sendReceipt: true,
+    },
+    order: {
+      billingAddress: {
+        address1: order.shippingAddress1,
+        address2: order.shippingAddress2 || "",
+        city: order.shippingCity,
+        countryCode: "ES",
+        firstName: order.shippingName || "Return",
+        lastName: order.lastName || "Return",
+        phone: order.shippingPhone || "+34608667749",
+        zip: order.shippingZip,
+      },
+      buyerAcceptsMarketing: true,
+      currency: "EUR",
+      email: order.email,
+      financialStatus: "PAID",
+      lineItems: [
+        {
+          variantId: product.new_variant_id,
+          quantity: 1,
+          requiresShipping: true,
+        },
+      ],
+      note: `Exchange order for ${order.orderNumber}`,
+      shippingAddress: {
+        address1: order.shippingAddress1,
+        address2: order.shippingAddress2 || "",
+        city: order.shippingCity,
+        countryCode: "ES",
+        firstName: order.shippingName || "Return",
+        lastName: order.lastName || "Return",
+        phone: order.shippingPhone || "+34608667749",
+        zip: order.shippingZip,
+      },
+      shippingLines: [
+        {
+          priceSet: {
+            shopMoney: {
+              amount: "4.00",
+              currencyCode: "EUR",
+            },
+          },
+          title: "Estándar",
+        },
+      ],
+      tags: ["Change", `Order ${order.orderNumber}`],
+      taxesIncluded: true,
+      test: false,
+      transactions: [
+        {
+          amountSet: {
+            shopMoney: {
+              amount: "0.01",
+              currencyCode: "EUR",
+            },
+          },
+          kind: "SALE",
+          gateway: "manual",
+          status: "SUCCESS",
+        },
+      ],
+    },
+  };
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const data = await response.json();
+
+    // Defensive check: ensure the structure is as expected.
+    const orderResponse = data?.data?.orderCreate;
+    if (!orderResponse) {
+      console.error("No orderCreate found in response:", data);
+      return { success: false, error: "Missing orderCreate field" };
+    }
+
+    // Optionally, check for userErrors.
+    if (orderResponse.userErrors && orderResponse.userErrors.length > 0) {
+      console.error("User errors:", orderResponse.userErrors);
+      return { success: false, error: orderResponse.userErrors };
+    }
+
+    // Ensure order exists.
+    const createdOrder = orderResponse.order;
+    if (!createdOrder) {
+      console.error("Order not found in response:", data);
+      return { success: false, error: "Order not found in response" };
+    }
+    return { success: true, data: createdOrder };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
 export async function closeReturn(returnId: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -185,7 +323,6 @@ export async function closeReturn(returnId: string) {
     return { success: false, error: error };
   }
 }
-
 export async function createReturn(
   orderId: string,
   fulfillmentLineItem: string,
@@ -257,56 +394,6 @@ export async function createReturn(
         }
       }
     `;
-
-  // TO DO: CREAR UN ORDER DE CAMBIO QUE SE QUEDE EN HOLD
-  // if (product.action === "CAMBIO") {
-  //   query = `
-  //     mutation {
-  //       returnCreate(returnInput: {
-  //         exchangeLineItems: [
-  //           {
-  //             appliedDiscount: {
-  //               description: "RETURN_DISCOUNT",
-  //               value: {
-  //                 amount: {
-  //                   amount: ${discount?.amount_set.shop_money.amount || 0},
-  //                   currencyCode: ${
-  //                     discount?.amount_set.shop_money.currency_code || "EUR"
-  //                   }
-  //                 }
-  //               }
-  //             },
-  //             quantity: 1,
-  //             variantId: "gid://shopify/ProductVariant/${
-  //               product.new_variant_id
-  //             }"
-  //           }
-  //         ],
-  //         orderId: "gid://shopify/Order/${orderId}",
-  //         returnLineItems: [
-  //           {
-  //             fulfillmentLineItemId: "${fulfillmentLineItem}",
-  //             quantity: 1,
-  //             returnReason: COLOR
-  //           }
-  //         ]
-  //       }) {
-  //         return {
-  //           id
-  //           returnLineItems(first: 10){
-  //             nodes{
-  //               id
-  //             }
-  //           }
-  //         }
-  //         userErrors {
-  //           field
-  //           message
-  //         }
-  //       }
-  //     }
-  //   `;
-  // }
   try {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",
@@ -357,7 +444,6 @@ export async function processGiftCardReturn(
 
   return giftCardResult;
 }
-
 export async function createGiftCard(customerId: string, amount: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -400,7 +486,6 @@ export async function createGiftCard(customerId: string, amount: string) {
     return { success: false, error: error };
   }
 }
-
 export async function getFulfillmentLineItems(fulfillmentId: string) {
   const session = createSession(); // Replace with your session creation logic
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -479,7 +564,6 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
     return { success: false, error };
   }
 }
-
 export async function getProduct(id: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;

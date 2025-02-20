@@ -3,6 +3,7 @@
 import db from "@/db/drizzle";
 import {
   closeReturn,
+  createOrder,
   createRefund,
   getOrderTotal,
   processGiftCardReturn,
@@ -14,14 +15,11 @@ import { revalidatePath } from "next/cache";
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
   // For debugging purposes
-  status = "Entregado";
-
   let result;
   let result2;
-  // Aqui igual puedo poner si el estado es distinto de preregistrado
+  // Aqui igual puedo poner si el estado es distinto de preregistrado --> Meter aqui modales para avisar ui
   if (status === "Entregado") {
     // En el caso de ser una gift card, se crea una gift card y no reembolso
-
     if (product.credit) {
       // Extraigo la info completa del pedido para saber el customer id
       const totalOrder = await getOrderTotal(order.id);
@@ -45,6 +43,19 @@ export async function validateReturn(product: any, status: string, order: any) {
             refunded: true,
           })
           .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+      }
+    } else if (product.action === "CAMBIO") {
+      result = await createOrder(order, product);
+      if (result?.success) {
+        // Cierro el return
+        result2 = await closeReturn(product.return_id);
+        await db
+          .update(productsOrder)
+          .set({
+            refunded: true,
+          })
+          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+        revalidatePath("/", "layout");
       }
     } else {
       if (product.return_id && product.return_line_item_id) {

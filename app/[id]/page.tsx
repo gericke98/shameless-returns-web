@@ -24,7 +24,6 @@ async function fetchOrderWithProducts(orderId: string) {
       };
     })
   );
-  console.log("Paso por server");
 
   return {
     ...order,

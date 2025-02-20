@@ -20,7 +20,13 @@ export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
   // Parent callback to receive updated items from children
   const handleItemChange = (updatedItem: any) => {
     console.log("Parent received updated item:", updatedItem);
-    // Update parent state as needed
+    const cambioProduct = updatedItem.products.find(
+      (item: any) => item.action === "CAMBIO"
+    );
+    if (cambioProduct) {
+      // Caso de cambio pongo el flag de credito en false
+      setCredito(false);
+    }
   };
 
   const handleContinue = () => {

@@ -172,7 +172,6 @@ async function processProductReturn(
     let result;
 
     // Creo la return
-
     result = await createReturn(
       totalOrder.id,
       fulfillmentsProduct.node.id,
@@ -212,7 +211,6 @@ export async function updateFinalOrder(
 ) {
   if (revert) {
     const products = await getOrderProductsById(id);
-    console.log(products);
     await Promise.all(
       products.map(async (product) => {
         if (product.confirmed) {

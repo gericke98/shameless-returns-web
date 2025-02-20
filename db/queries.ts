@@ -165,6 +165,7 @@ export async function createOrder(order: any, product: any) {
           firstName
           lastName
           phone
+          provinceCode
           zip
         }
       }
@@ -191,6 +192,7 @@ export async function createOrder(order: any, product: any) {
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
+        provinceCode: order.shippingCity,
         zip: order.shippingZip,
       },
       buyerAcceptsMarketing: true,
@@ -213,6 +215,7 @@ export async function createOrder(order: any, product: any) {
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
+        provinceCode: order.shippingCity,
         zip: order.shippingZip,
       },
       shippingLines: [

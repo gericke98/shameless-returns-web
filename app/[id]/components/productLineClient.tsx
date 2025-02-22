@@ -1,4 +1,5 @@
 "use client";
+
 import { useState } from "react";
 import {
   Dialog,
@@ -29,7 +30,7 @@ const ProductImage = ({ src, alt, width, height }: ProductImageProps) => (
     src={src}
     width={width}
     height={height}
-    className="rounded-xl w-auto h-auto"
+    className="rounded-xl w-full sm:w-auto h-auto object-cover"
   />
 );
 
@@ -126,7 +127,7 @@ const ProductDialog = ({
   onSuccess,
   onItemChange,
 }: ProductDialogProps) => (
-  <DialogContent className="my-10 max-w-96 max-h-screen overflow-scroll lg:mx-0 mx-2">
+  <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto">
     <DialogHeader>
       <DialogTitle>
         <span className="text-2xl font-bold mt-8 mb-8">Selección</span>
@@ -134,7 +135,7 @@ const ProductDialog = ({
     </DialogHeader>
     <DialogDescription asChild>
       <ScrollArea className="flex flex-col w-full items-start">
-        <div className="w-full flex flex-row flex-nowrap gap-4">
+        <div className="w-full flex flex-col sm:flex-row flex-nowrap gap-4">
           <ProductImage
             src={imageSrc}
             alt={imageAlt}
@@ -152,7 +153,7 @@ const ProductDialog = ({
             newVariant={orderProduct.new_variant_title ?? undefined}
           />
         </div>
-        <div className="w-full mt-2 max-h-full">
+        <div className="w-full mt-2">
           <FormProduct
             product={product}
             orderProduct={orderProduct}
@@ -174,6 +175,7 @@ export const ProductLineClient = ({
 }: Props) => {
   const [changed, setChanged] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
+
   const imageSrc = product?.image?.src || "/placeholder.jpg";
   const imageAlt = product.title || "Product image";
 
@@ -185,7 +187,7 @@ export const ProductLineClient = ({
       )}
     >
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger className="w-full flex flex-row flex-nowrap gap-4">
+        <DialogTrigger className="w-full flex flex-col sm:flex-row flex-nowrap gap-4">
           <ProductImage
             src={imageSrc}
             alt={imageAlt}
@@ -213,7 +215,6 @@ export const ProductLineClient = ({
           imageAlt={imageAlt}
           onSuccess={() => {
             setOpen(false);
-            // When the item has been updated, notify the parent.
             if (onItemChange) {
               onItemChange(orderProduct);
             }

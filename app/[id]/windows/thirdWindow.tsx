@@ -1,3 +1,5 @@
+"use client";
+
 import { memo, useMemo, useState } from "react";
 import { Progress } from "@/components/ui/progress";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
@@ -20,6 +22,7 @@ type Props = {
   id: string;
 };
 
+// Reusable sub-component for Store Credit
 const StoreCredit = ({
   totalPrice,
   isSelected,
@@ -31,8 +34,8 @@ const StoreCredit = ({
 }) => (
   <div
     className={cn(
-      "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer",
-      isSelected ? "bg-black" : "bg-white"
+      "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer transition-colors",
+      isSelected ? "bg-black" : "bg-white border border-gray-300"
     )}
     onClick={onClick}
   >
@@ -83,6 +86,7 @@ const StoreCredit = ({
   </div>
 );
 
+// Reusable sub-component for Original Payment
 const OriginalPayment = ({
   totalPrice,
   isSelected,
@@ -94,8 +98,8 @@ const OriginalPayment = ({
 }) => (
   <div
     className={cn(
-      "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer",
-      isSelected ? "bg-black" : "bg-white"
+      "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer transition-colors",
+      isSelected ? "bg-black" : "bg-white border border-gray-300"
     )}
     onClick={onClick}
   >
@@ -148,35 +152,48 @@ const ThirdWindowBase = ({
   position,
   setPosition,
   setCredito,
-  onItemChange,
-  id,
 }: Props) => {
   const [selected, setSelected] = useState<number>(0);
 
+  // Compute the total price after subtracting the "CAMBIO" items and shipping
   const totalPrice = useMemo(() => {
     const totalPriceDevolver = items
       .filter((item) => item.action && !item.confirmed)
       .reduce((sum, item) => sum + parseFloat(item.price), 0);
+
     const totalPriceCambio = items
       .filter((item) => item.action === "CAMBIO" && !item.confirmed)
       .reduce((sum, item) => sum + parseFloat(item.price), 0);
-    let totalPrice = totalPriceDevolver - totalPriceCambio;
-    if (shipping && totalPrice !== 0) {
-      totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
+
+    let result = totalPriceDevolver - totalPriceCambio;
+
+    if (shipping && result !== 0) {
+      result -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
     }
-    return totalPrice;
+    return result;
   }, [items, shipping]);
 
   return (
-    <div className="w-full h-full flex flex-col mb-3">
-      <Progress value={75} />
+    // Use a container with max-w to keep things narrow on large screens,
+    // but fill the screen on mobile.
+    <div className="w-full max-w-xl mx-auto flex flex-col p-2 sm:p-4 mb-3">
+      {/* Progress Bar */}
+      <Progress value={75} className="mb-2" />
+
+      {/* Back Arrow */}
       <FaArrowAltCircleLeft
         size={25}
-        className="mt-4 cursor-pointer"
+        className="mt-2 cursor-pointer"
         onClick={() => setPosition(position - 1)}
       />
-      <h3 className="font-bold text-2xl text-left mt-1">Elige tu reembolso</h3>
-      <div className="w-full h-full flex flex-col gap-3">
+
+      {/* Title */}
+      <h3 className="font-bold text-xl sm:text-2xl text-left mt-2 mb-4">
+        Elige tu reembolso
+      </h3>
+
+      {/* Two reembolso options side by side on large screens, stacked on mobile */}
+      <div className="flex flex-col sm:flex-row gap-3 w-full">
         <StoreCredit
           totalPrice={totalPrice}
           isSelected={selected === 0}

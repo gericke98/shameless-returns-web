@@ -3,10 +3,14 @@ import SuccessIcon from "@/public/check_circle.svg";
 import Logo from "@/public/LOGO_black.png";
 import Link from "next/link";
 
-export default async function SuccessPage() {
+export default function SuccessPage() {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern">
-      <div className="bg-white-pattern flex flex-col w-[30%] rounded-3xl items-center py-5 px-10">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern p-4">
+      {/* 
+        Use w-full, plus max-w-md to cap width on larger screens.
+        Add rounded corners on bigger screens (sm:rounded-3xl) or keep them for mobile if desired.
+      */}
+      <div className="bg-white-pattern flex flex-col w-full max-w-md rounded-3xl items-center py-5 px-5 sm:px-10">
         <Link href="https://shamelesscollective.com">
           <Image src={Logo} alt="Logo" width={150} height={150} />
         </Link>
@@ -19,12 +23,12 @@ export default async function SuccessPage() {
             height={100}
             className="mt-5"
           />
-          <h1 className="text-base font-semibold mt-5 mb-2 text-center px-5">
-            Hemos recibido tu solicitud correctamente!
+          <h1 className="text-base sm:text-lg font-semibold mt-5 mb-2 text-center px-5">
+            ¡Hemos recibido tu solicitud correctamente!
           </h1>
-          <h5 className="text-sm text-center">
-            Hemos recibido tu solicitud y se te ha enviado un correo electrónico
-            con los siguientes pasos
+          <h5 className="text-sm sm:text-base text-center">
+            Hemos recibido tu solicitud y te hemos enviado un correo electrónico
+            con los próximos pasos.
           </h5>
         </div>
       </div>

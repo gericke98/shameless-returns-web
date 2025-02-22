@@ -59,7 +59,7 @@ export const InputComponent = () => {
       <h3 className="text-xs mt-2 mb-10 text-slate-500">
         CAMBIOS Y DEVOLUCIONES
       </h3>
-      <h5 className="text-sm text-slate-600">
+      <h5 className="lg:text-sm text-xs text-slate-600">
         Introduce los datos de tu pedido original para iniciar el proceso.{" "}
         <span>
           <Link

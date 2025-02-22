@@ -1,3 +1,5 @@
+"use client";
+
 import { productsOrder } from "@/db/schema";
 
 type SummaryLineProps = {
@@ -39,7 +41,7 @@ const ProductVariant = ({
 export const SummaryLine = ({ item, newAction }: SummaryLineProps) => {
   return (
     <div className="w-full h-full flex flex-col pl-4 mt-4 gap-2">
-      <div className="w-full h-full flex flex-row justify-between items-center">
+      <div className="w-full h-full flex flex-col sm:flex-row sm:justify-between sm:items-center">
         <ProductTitle title={item.title} />
         <ProductPrice price={item.price} newAction={newAction} />
       </div>

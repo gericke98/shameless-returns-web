@@ -8,8 +8,8 @@ import {
   getOrderTotal,
   processGiftCardReturn,
 } from "@/db/queries";
-import { productsOrder } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { orders, productsOrder } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 export async function validateReturn(product: any, status: string, order: any) {
@@ -54,7 +54,12 @@ export async function validateReturn(product: any, status: string, order: any) {
           .set({
             refunded: true,
           })
-          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+          .where(
+            and(
+              eq(productsOrder.variant_id, product.variant_id.toString()),
+              eq(productsOrder.orderId, order.id)
+            )
+          );
         revalidatePath("/", "layout");
       }
     } else {

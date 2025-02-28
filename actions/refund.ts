@@ -66,7 +66,9 @@ export async function validateReturn(product: any, status: string, order: any) {
       if (product.return_id && product.return_line_item_id) {
         result = await createRefund(
           product.return_id,
-          product.return_line_item_id
+          product.return_line_item_id,
+          product.transaction_id,
+          product.transaction_amount
         );
       }
       if (result?.success) {

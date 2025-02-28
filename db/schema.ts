@@ -46,6 +46,8 @@ export const productsOrder = pgTable("productsorder", {
   credit: boolean("credit"),
   gift_card_id: text("gift_card_id"),
   return_line_item_id: text("return_line_item_id"),
+  transaction_id: text("transaction_id"),
+  transaction_amount: text("transaction_amount"),
 });
 
 export const productsOrderRelations = relations(productsOrder, ({ one }) => ({

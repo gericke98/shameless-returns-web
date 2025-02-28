@@ -87,24 +87,17 @@ export async function getOrderTotal(orderId: string) {
   }
 }
 
-export async function createRefund(returnId: string, returnLineItemId: string) {
-  // TO DO: ARREGARLO PORQUE NO FUNCIONA BIEN EL REFUND
+export async function createRefund(
+  returnId: string,
+  returnLineItemId: string,
+  transactionId: string,
+  amount: number
+) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
   let query = `
-      mutation {
-        returnRefund(returnRefundInput: 
-          {
-            notifyCustomer: true,
-            returnId: "${returnId}",
-            returnRefundLineItems: [
-              {
-                quantity: 1,
-                returnLineItemId: "${returnLineItemId}"
-              }
-            ]
-          }) 
-        {
+      mutation returnRefund($input: ReturnRefundInput!) {
+        returnRefund(returnRefundInput: $input) {
           refund {
             id
           }
@@ -115,11 +108,34 @@ export async function createRefund(returnId: string, returnLineItemId: string) {
         }
       }
     `;
+
+  const variables = {
+    input: {
+      notifyCustomer: true,
+      returnId: returnId,
+      orderTransactions: [
+        {
+          parentId: transactionId,
+          transactionAmount: {
+            amount: amount.toString(),
+            currencyCode: "EUR",
+          },
+        },
+      ],
+      returnRefundLineItems: [
+        {
+          quantity: 1,
+          returnLineItemId: returnLineItemId,
+        },
+      ],
+    },
+  };
+
   try {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",
       headers: session.headers,
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, variables }),
     });
 
     const data = await response.json();
@@ -362,32 +378,18 @@ export async function createReturn(
                 id
               }
             }
-            refunds(first: 10) {
-              nodes{
-                id
-                duties{
-                  amountSet{
-                    presentmentMoney{
+            order {
+              transactions(first: 1) {
+                nodes {
+                  id
+                  amountSet {
+                    shopMoney {
                       amount
                       currencyCode
-                    }
-                    shopMoney{
-                      amount
-                      currencyCode
-                    }
-                  }
-                  originalDuty{
-                    id
-                    price{
-                      shopMoney{
-                        amount
-                        currencyCode
-                      }
                     }
                   }
                 }
               }
-
             }
           }
           userErrors {
@@ -417,7 +419,18 @@ export async function createReturn(
       };
     }
 
-    return { success: true, data: data.data.returnCreate.return };
+    // Extract transaction details for refund
+    const returnData = data.data.returnCreate.return;
+    const transactionData = returnData.order.transactions.nodes[0];
+
+    return {
+      success: true,
+      data: {
+        ...returnData,
+        transactionId: transactionData?.id,
+        transactionAmount: transactionData?.amountSet?.shopMoney?.amount,
+      },
+    };
   } catch (error) {
     console.error("Fetch error:", error);
     return { success: false, error: error };

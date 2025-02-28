@@ -187,6 +187,8 @@ async function processProductReturn(
           confirmed: true,
           return_id: result.data.id,
           return_line_item_id: result.data.returnLineItems.nodes[0].id,
+          transaction_id: result.data.transactionId,
+          transaction_amount: result.data.transactionAmount,
         })
         .where(eq(productsOrder.variant_id, product.variant_id.toString()));
       if (isCredit) {

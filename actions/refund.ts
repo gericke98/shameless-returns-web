@@ -42,7 +42,12 @@ export async function validateReturn(product: any, status: string, order: any) {
           .set({
             refunded: true,
           })
-          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+          .where(
+            and(
+              eq(productsOrder.variant_id, product.variant_id.toString()),
+              eq(productsOrder.orderId, totalOrder.id)
+            )
+          );
       }
     } else if (product.action === "CAMBIO") {
       result = await createOrder(order, product);
@@ -79,7 +84,12 @@ export async function validateReturn(product: any, status: string, order: any) {
           .set({
             refunded: true,
           })
-          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+          .where(
+            and(
+              eq(productsOrder.variant_id, product.variant_id.toString()),
+              eq(productsOrder.orderId, order.id)
+            )
+          );
         revalidatePath("/", "layout");
       }
     }

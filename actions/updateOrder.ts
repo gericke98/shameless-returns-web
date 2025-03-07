@@ -9,7 +9,7 @@ import {
 } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
 import { FulfillmentLineItem, OrderData } from "@/types";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 type FormDataFields = {
@@ -66,7 +66,12 @@ async function updateProductOrder(
   await db
     .update(productsOrder)
     .set(updates)
-    .where(eq(productsOrder.variant_id, data.oldVariantId!));
+    .where(
+      and(
+        eq(productsOrder.variant_id, data.oldVariantId!),
+        eq(productsOrder.orderId, data.orderId!)
+      )
+    );
 }
 
 export async function updateOrder(formData: FormData) {
@@ -190,12 +195,22 @@ async function processProductReturn(
           transaction_id: result.data.transactionId,
           transaction_amount: result.data.transactionAmount,
         })
-        .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+        .where(
+          and(
+            eq(productsOrder.variant_id, product.variant_id.toString()),
+            eq(productsOrder.orderId, totalOrder.id)
+          )
+        );
       if (isCredit) {
         await db
           .update(productsOrder)
           .set({ credit: true })
-          .where(eq(productsOrder.variant_id, product.variant_id.toString()));
+          .where(
+            and(
+              eq(productsOrder.variant_id, product.variant_id.toString()),
+              eq(productsOrder.orderId, totalOrder.id)
+            )
+          );
       }
 
       revalidatePath("/", "layout");
@@ -219,7 +234,12 @@ export async function updateFinalOrder(
           await db
             .update(productsOrder)
             .set({ confirmed: false, return_id: null })
-            .where(eq(productsOrder.variant_id, product.variant_id));
+            .where(
+              and(
+                eq(productsOrder.variant_id, product.variant_id),
+                eq(productsOrder.orderId, id)
+              )
+            );
         }
       })
     );

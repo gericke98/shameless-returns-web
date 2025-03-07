@@ -176,7 +176,7 @@ const ThirdWindowBase = ({
   return (
     // Use a container with max-w to keep things narrow on large screens,
     // but fill the screen on mobile.
-    <div className="w-full max-w-xl mx-auto flex flex-col p-2 sm:p-4 mb-3">
+    <div className="w-full mx-auto flex flex-col p-2 sm:p-4 mb-3">
       {/* Progress Bar */}
       <Progress value={75} className="mb-2" />
 
@@ -193,7 +193,7 @@ const ThirdWindowBase = ({
       </h3>
 
       {/* Two reembolso options side by side on large screens, stacked on mobile */}
-      <div className="flex flex-col sm:flex-row gap-3 w-full">
+      <div className="flex flex-col gap-3 w-full">
         <StoreCredit
           totalPrice={totalPrice}
           isSelected={selected === 0}

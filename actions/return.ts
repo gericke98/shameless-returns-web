@@ -9,7 +9,7 @@ export async function returnFunction(id: string, isCredit: boolean) {
     // First update the database
     await updateFinalOrder(id, false, isCredit);
 
-    // Then create shipping label and send email
+    // // Then create shipping label and send email
     const statusLabel = await createShippingLabel(id);
 
     if (statusLabel !== 200) {

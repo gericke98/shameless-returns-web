@@ -379,14 +379,12 @@ export async function createReturn(
               }
             }
             order {
-              transactions(first: 1) {
-                nodes {
-                  id
-                  amountSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
+              transactions(first: 10) {
+                id
+                amountSet {
+                  shopMoney {
+                    amount
+                    currencyCode
                   }
                 }
               }
@@ -421,7 +419,7 @@ export async function createReturn(
 
     // Extract transaction details for refund
     const returnData = data.data.returnCreate.return;
-    const transactionData = returnData.order.transactions.nodes[0];
+    const transactionData = returnData.order.transactions[0];
 
     return {
       success: true,

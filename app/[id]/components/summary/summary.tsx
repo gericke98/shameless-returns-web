@@ -69,13 +69,16 @@ export const SummaryComponent = ({
     <div className="w-full h-full flex flex-col mt-2 p-1 sm:mt-5 sm:p-2">
       <h3 className="text-sm tracking-wider">DESGLOSE DE TU SOLICITUD</h3>
 
-      <Accordion type="multiple" className="w-full mt-2 sm:mt-4 space-y-2">
+      <Accordion type="multiple" className="w-full mt-2 sm:mt-4 space-y-3">
         {/* Productos a devolver */}
-        <AccordionItem value="productos_devolver" className="border-b">
+        <AccordionItem
+          value="productos_devolver"
+          className="border-b rounded-lg"
+        >
           <AccordionTrigger className="w-full px-2 py-1 sm:py-2">
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
-              <span className="font-semibold text-sm sm:text-xs text-left sm:flex-1 w-full">
+              <span className="font-medium text-left w-full">
                 Productos a devolver <br />
                 <span className="font-normal text-xs text-gray-600"></span>
               </span>
@@ -98,7 +101,7 @@ export const SummaryComponent = ({
           <AccordionTrigger className="w-full px-2 py-1 sm:py-2">
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
-              <span className="font-semibold text-sm sm:text-xs text-left sm:flex-1 w-full">
+              <span className="font-medium text-left w-full">
                 Nuevos productos {shipping && totalPrice !== 0 && "& Logística"}
                 <span className="font-normal text-xs text-gray-600"></span>
               </span>

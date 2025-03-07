@@ -38,29 +38,35 @@ export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">
       <Header />
-      <div className="bg-white-pattern flex flex-col lg:w-[30%] w-[85%] rounded-3xl items-center py-10 px-4 lg:px-6">
-        <OrderWindow
-          position={position}
-          name={name}
-          items={items}
-          order={order}
-          id={id}
-          setPosition={setPosition}
-          credito={credito}
-          setCredito={setCredito}
-          onItemChange={handleItemChange}
-        />
-        <div className="w-full mt-4">
-          {position >= 4 ? (
-            <AsyncButton text="Actualizar pedido" id={id} isCredit={credito} />
-          ) : (
-            <ContinueButton
-              position={position}
-              hasChanges={hasSelectedItems}
-              onClick={handleContinue}
-              isPending={isPending}
-            />
-          )}
+      <div className="flex-1 flex items-center justify-center w-full">
+        <div className="bg-white-pattern flex flex-col lg:w-[30%] w-[85%] rounded-3xl items-center py-10 px-4 lg:px-6 min-h-[500px]">
+          <OrderWindow
+            position={position}
+            name={name}
+            items={items}
+            order={order}
+            id={id}
+            setPosition={setPosition}
+            credito={credito}
+            setCredito={setCredito}
+            onItemChange={handleItemChange}
+          />
+          <div className="w-full mt-4">
+            {position >= 4 ? (
+              <AsyncButton
+                text="Actualizar pedido"
+                id={id}
+                isCredit={credito}
+              />
+            ) : (
+              <ContinueButton
+                position={position}
+                hasChanges={hasSelectedItems}
+                onClick={handleContinue}
+                isPending={isPending}
+              />
+            )}
+          </div>
         </div>
       </div>
     </div>

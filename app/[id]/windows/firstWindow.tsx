@@ -15,7 +15,6 @@ const FirstWindowBase = ({ name, items, onItemChange }: FirstWindowProps) => {
     () => items.some((item) => item.action !== null),
     [items]
   );
-  console.log(items);
 
   return (
     <div className="w-full h-full p-6">

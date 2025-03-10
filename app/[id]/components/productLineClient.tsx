@@ -178,7 +178,6 @@ export const ProductLineClient = ({
 
   const imageSrc = product?.image?.src || "/placeholder.jpg";
   const imageAlt = product.title || "Product image";
-  console.log(orderProduct);
   return (
     <div
       className={cn(

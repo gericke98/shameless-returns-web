@@ -84,7 +84,6 @@ export async function updateOrder(formData: FormData) {
   const actionType =
     data.action === "Quiero cambiar este producto" ? "CAMBIO" : "DEVOLUCIÓN";
 
-  console.log(data);
   if (!data.orderId || !data.oldVariantId) return;
 
   if (actionType === "CAMBIO" && !data.newSize) return;

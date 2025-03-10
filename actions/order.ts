@@ -43,6 +43,15 @@ export async function getOrder(prevState: any, formData: FormData) {
     };
   }
 
+  if (
+    order.fulfillments[0].updated_at <
+    new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
+  ) {
+    return {
+      message:
+        "Returns and exchanges can only be processed within 15 days of delivery and your order was delivered more than 15 days ago!",
+    };
+  }
   // Hago check de si la orden existe en la base de datos ya
   const orderDB = await db.query.orders.findFirst({
     where: eq(orders.id, order.id),

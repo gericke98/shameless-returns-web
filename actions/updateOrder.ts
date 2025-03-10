@@ -55,23 +55,28 @@ async function updateProductOrder(
   actionType: "CAMBIO" | "DEVOLUCIÓN"
 ) {
   const updates = {
-    changed: actionType === "CAMBIO",
+    changed: actionType === "CAMBIO" ? true : false,
     action: actionType,
-    reason: data.motivo,
-    notes: data.notas,
+    reason: data.motivo || "",
+    notes: data.notas || "",
     new_variant_title: actionType === "CAMBIO" ? data.newSize : null,
     new_variant_id: actionType === "CAMBIO" ? data.variantId : null,
   };
 
-  await db
-    .update(productsOrder)
-    .set(updates)
-    .where(
-      and(
-        eq(productsOrder.variant_id, data.oldVariantId!),
-        eq(productsOrder.orderId, data.orderId!)
-      )
-    );
+  try {
+    await db
+      .update(productsOrder)
+      .set(updates)
+      .where(
+        and(
+          eq(productsOrder.variant_id, data.oldVariantId!),
+          eq(productsOrder.id, parseInt(data.orderId!))
+        )
+      );
+  } catch (error) {
+    console.error("Error updating product order:", error);
+    throw error;
+  }
 }
 
 export async function updateOrder(formData: FormData) {
@@ -79,6 +84,7 @@ export async function updateOrder(formData: FormData) {
   const actionType =
     data.action === "Quiero cambiar este producto" ? "CAMBIO" : "DEVOLUCIÓN";
 
+  console.log(data);
   if (!data.orderId || !data.oldVariantId) return;
 
   if (actionType === "CAMBIO" && !data.newSize) return;

@@ -15,13 +15,14 @@ const FirstWindowBase = ({ name, items, onItemChange }: FirstWindowProps) => {
     () => items.some((item) => item.action !== null),
     [items]
   );
+  console.log(items);
 
   return (
     <div className="w-full h-full p-6">
       <Progress value={25} className="mb-8" />
       <div className="space-y-8">
         <div className="space-y-2">
-          <h3 className="text-3xl font-bold text-gray-900">Pedido #{name}</h3>
+          <h3 className="text-3xl font-bold text-gray-900">Pedido {name}</h3>
           <h5 className="text-base text-gray-600">
             Selecciona los productos que deseas gestionar:
           </h5>

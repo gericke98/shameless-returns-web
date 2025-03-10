@@ -44,6 +44,8 @@ export const FormProduct = ({
     e.preventDefault();
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
+    console.log(formData);
+    console.log("Entro aqui");
     try {
       await updateOrder(formData);
       setChanged(!changed);

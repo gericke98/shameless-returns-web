@@ -2,26 +2,40 @@
 import BoxIcon from "@/public/package_2_24dp_FILL0_wght400_GRAD0_opsz24.svg";
 import MailIcon from "@/public/mail_24dp_FILL0_wght400_GRAD0_opsz24.svg";
 import Image from "next/image";
-import { useState } from "react";
+import { useState, ChangeEvent } from "react";
 import { cn } from "@/lib/utils";
 import { FormInputProps } from "@/types";
 
-export const FormInput = ({ name, title, icon, valueini }: FormInputProps) => {
-  const [value, setValue] = useState<string>(valueini || "");
+/**
+ * FormInput component for rendering form input fields with optional icons
+ */
+export const FormInput = ({
+  name,
+  title,
+  icon,
+  valueini = "",
+}: FormInputProps) => {
+  const [value, setValue] = useState<string>(valueini);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     setValue(e.target.value);
   };
 
-  const inputIcon = icon && (
-    <Image
-      src={name === "order" ? BoxIcon : MailIcon}
-      alt={`${name} icon`}
-      width={15}
-      height={15}
-      className="w-auto h-auto max-w-4 pt-1"
-    />
-  );
+  const renderIcon = () => {
+    if (!icon) return null;
+
+    const iconSrc = name === "order" ? BoxIcon : MailIcon;
+
+    return (
+      <Image
+        src={iconSrc}
+        alt={`${name} icon`}
+        width={15}
+        height={15}
+        className="w-auto h-auto max-w-4 pt-1"
+      />
+    );
+  };
 
   return (
     <div className="w-full h-8">
@@ -35,7 +49,7 @@ export const FormInput = ({ name, title, icon, valueini }: FormInputProps) => {
             icon ? "flex-row" : "flex-col"
           )}
         >
-          {icon && inputIcon}
+          {renderIcon()}
           <input
             type="text"
             name={name}

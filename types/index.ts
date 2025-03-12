@@ -1,6 +1,40 @@
 import { orders, productsOrder } from "@/db/schema";
+import { Dispatch, SetStateAction } from "react";
 
-export type Product2 = {
+// ==========================================
+// UI Component Types
+// ==========================================
+
+export type FormInputProps = {
+  name: string;
+  title: string;
+  icon: boolean;
+  valueini?: string;
+};
+
+export type ProductImageProps = {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+};
+
+export type ProductInfoProps = {
+  title: string;
+  variant: string;
+  price: string;
+  action: string | null;
+  reason: string | null;
+  confirmed: boolean;
+  changed: boolean;
+  newVariant?: string;
+};
+
+// ==========================================
+// Domain Types
+// ==========================================
+
+export type Product = {
   id: string;
   title: string;
   handle: string;
@@ -28,15 +62,11 @@ export type Product2 = {
   };
 };
 
-export type OrderContextType = {
-  orderItems: OrderLineItem[];
-  addProductOrder: (item: OrderLineItem) => void;
-  updateProductOrder: (
-    orderProduct: OrderLineItem,
-    newProduct: Product2,
-    action: string,
-    motivo: string
-  ) => void;
+// Alias for backward compatibility
+export type Product2 = Product;
+
+export type DiscountAllocation = {
+  amount: number;
 };
 
 export type OrderLineItem = {
@@ -56,41 +86,19 @@ export type OrderLineItem = {
   product_id: number;
 };
 
-export type DiscountAllocation = {
-  amount: number;
-};
-
-export type Warning = {
-  message: string;
-};
-
-export type FormInputProps = {
-  name: string;
+export type LineItem = {
+  id: number;
+  product_id: number;
   title: string;
-  icon: boolean;
-  valueini?: string;
+  variant_title: string | null;
+  variant_id: number | string;
+  price: string;
+  quantity: number;
+  discount_allocations: DiscountAllocation[];
 };
 
 export type OrderItem = typeof productsOrder.$inferSelect & {
-  newp?: Product2;
-};
-
-export type ProductImageProps = {
-  src: string;
-  alt: string;
-  width: number;
-  height: number;
-};
-
-export type ProductInfoProps = {
-  title: string;
-  variant: string;
-  price: string;
-  action: string | null;
-  reason: string | null;
-  confirmed: boolean;
-  changed: boolean;
-  newVariant?: string;
+  newp?: Product;
 };
 
 export type OrderData = {
@@ -98,17 +106,28 @@ export type OrderData = {
   customer: {
     id: string;
   };
+  fulfillment_status: string | null;
   fulfillments: Array<{
     admin_graphql_api_id: string;
+    shipment_status: string;
+    updated_at: string;
     line_items: LineItem[];
   }>;
   line_items: LineItem[];
-};
-
-export type LineItem = {
-  variant_id: string | number;
-  price: string;
-  discount_allocations: any[];
+  note?: string;
+  name: string;
+  contact_email: string;
+  subtotal_price: string;
+  shipping_address: {
+    name: string;
+    address1: string;
+    address2?: string;
+    zip: string;
+    city: string;
+    province: string;
+    country: string;
+    phone?: string;
+  };
 };
 
 export type FulfillmentLineItem = {
@@ -120,6 +139,14 @@ export type FulfillmentLineItem = {
       };
     };
   };
+};
+
+// ==========================================
+// API Response Types
+// ==========================================
+
+export type Warning = {
+  message: string;
 };
 
 export type TrackingEvent = {
@@ -136,6 +163,25 @@ export type TrackingResponse = {
   }[];
 };
 
+// ==========================================
+// Context Types
+// ==========================================
+
+export type OrderContextType = {
+  orderItems: OrderLineItem[];
+  addProductOrder: (item: OrderLineItem) => void;
+  updateProductOrder: (
+    orderProduct: OrderLineItem,
+    newProduct: Product,
+    action: string,
+    motivo: string
+  ) => void;
+};
+
+// ==========================================
+// Component Props Types
+// ==========================================
+
 export type ClientOrderProps = {
   name: string;
   items: OrderItem[];
@@ -148,15 +194,9 @@ export type ClientOrderWindowContentProps = {
   items: OrderItem[];
   order: typeof orders.$inferSelect;
   id: string;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
+  setPosition: Dispatch<SetStateAction<number>>;
   credito: boolean;
-  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
-};
-
-export type Prices = {
-  returnPrice: number;
-  exchangePrice: number;
-  totalPrice: number;
+  setCredito: Dispatch<SetStateAction<boolean>>;
 };
 
 export type OrderWindowContentProps = {
@@ -165,7 +205,24 @@ export type OrderWindowContentProps = {
   items: OrderItem[];
   order: typeof orders.$inferSelect;
   id: string;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
+  setPosition: Dispatch<SetStateAction<number>>;
+  setCredito: Dispatch<SetStateAction<boolean>>;
   credito: boolean;
 };
+
+export type Prices = {
+  returnPrice: number;
+  exchangePrice: number;
+  totalPrice: number;
+};
+
+// ==========================================
+// Constants
+// ==========================================
+
+export const ACTION_TYPES = {
+  CHANGE: "CAMBIO",
+  RETURN: "DEVOLUCIÓN",
+} as const;
+
+export type ActionType = (typeof ACTION_TYPES)[keyof typeof ACTION_TYPES];

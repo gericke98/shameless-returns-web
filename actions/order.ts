@@ -1,31 +1,92 @@
 "use server";
 
-import db from "@/db/drizzle";
 import { getOrderQuery } from "@/db/queries";
-import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { orders, productsOrder } from "../db/schema";
-import { OrderLineItem } from "@/types";
+import { OrderData, Warning, LineItem } from "@/types";
+import {
+  extractOrderNoteInfo,
+  calculatePriceWithDiscount,
+  isWithinReturnPeriod,
+  wasItemExchanged,
+  wasItemReturned,
+} from "@/utils/order-utils";
+import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
 
-export async function getOrder(prevState: any, formData: FormData) {
-  const orderNumber = formData.get("order")?.toString();
-  const email = formData.get("email")?.toString();
-
+/**
+ * Processes an order form submission, validates the order details,
+ * and saves the order to the database if valid
+ *
+ * @param prevState Previous state (warning message)
+ * @param formData Form data containing order number and email
+ * @returns Warning message or redirects to order page
+ */
+export async function getOrder(
+  prevState: Warning,
+  formData: FormData
+): Promise<Warning> {
+  // 1. Validate form input
+  const { orderNumber, email } = validateFormInput(formData);
   if (!orderNumber) {
     return { message: "Please enter a valid order number" };
   }
 
-  const cleanOrderNumber = orderNumber.replace(/#/g, "");
-  const order = await getOrderQuery(cleanOrderNumber);
-
+  // 2. Fetch order data
+  const order = await getOrderQuery(orderNumber);
   if (!order) {
     return { message: "Please enter a valid order" };
   }
 
+  // 3. Validate order details
+  const validationError = validateOrderDetails(order, email);
+  if (validationError) {
+    return validationError;
+  }
+
+  // 4. Check if order exists in database
+  const exists = await orderExists(order.id);
+  if (exists) {
+    // Use redirect directly
+    redirect(`/${order.id}`);
+  }
+
+  // 5. Save order to database
+  await saveOrderToDatabase(order);
+
+  // 6. Use redirect directly
+  redirect(`/${order.id}`);
+}
+/**
+ * Validates and extracts form input data
+ *
+ * @param formData Form data to validate
+ * @returns Extracted and cleaned order number and email
+ */
+function validateFormInput(formData: FormData): {
+  orderNumber: string | undefined;
+  email: string | undefined;
+} {
+  const orderNumber = formData.get("order")?.toString().replace(/#/g, "");
+  const email = formData.get("email")?.toString();
+  return { orderNumber, email };
+}
+
+/**
+ * Validates order details to ensure it can be processed for returns/exchanges
+ *
+ * @param order Order data to validate
+ * @param email Customer email to verify
+ * @returns Warning message if validation fails, null if valid
+ */
+function validateOrderDetails(
+  order: OrderData,
+  email?: string
+): Warning | null {
+  // Validate email
   if (email !== order.contact_email) {
     return { message: "Please enter a valid mail address" };
   }
 
+  // Validate fulfillment status
   if (order.fulfillment_status === null) {
     return {
       message:
@@ -33,9 +94,10 @@ export async function getOrder(prevState: any, formData: FormData) {
     };
   }
 
+  // Validate delivery status
   if (
-    order.fulfillments[0].shipment_status !== "delivered" &&
-    !order.fulfillments
+    !order.fulfillments ||
+    order.fulfillments[0]?.shipment_status !== "delivered"
   ) {
     return {
       message:
@@ -43,99 +105,71 @@ export async function getOrder(prevState: any, formData: FormData) {
     };
   }
 
-  if (
-    order.fulfillments[0].updated_at <
-    new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString()
-  ) {
+  // Validate delivery date
+  const deliveryDate = new Date(order.fulfillments[0].updated_at);
+  if (!isWithinReturnPeriod(deliveryDate)) {
     return {
       message:
         "Returns and exchanges can only be processed within 15 days of delivery and your order was delivered more than 15 days ago!",
     };
   }
-  // Hago check de si la orden existe en la base de datos ya
-  const orderDB = await db.query.orders.findFirst({
-    where: eq(orders.id, order.id),
-  });
 
-  if (orderDB) {
-    redirect(`/${order.id}`);
-  }
-
+  // Validate order ID
   if (!order.id) {
     return { message: "Invalid order ID" };
   }
 
-  // Extract exchanged/returned products from order note
-  const exchangeRegex = /(\d+\s+x\s+.+?)\s+-\s+EXCHANGE/gi;
-  const returnRegex = /(\d+\s+x\s+.+?)\s+-\s+REFUND/gi;
-  const exchanges = Array.from(
-    (order.note ?? "").matchAll(
-      exchangeRegex
-    ) as IterableIterator<RegExpMatchArray>
-  ).map((m) => m[1].trim());
-  const returns = Array.from(
-    (order.note ?? "").matchAll(
-      returnRegex
-    ) as IterableIterator<RegExpMatchArray>
-  ).map((m) => m[1].trim());
+  return null;
+}
 
+/**
+ * Saves order data to the database
+ *
+ * @param order Order data to save
+ */
+async function saveOrderToDatabase(order: OrderData): Promise<void> {
   try {
-    // Insert order into database
-    await db.insert(orders).values({
-      id: order.id.toString() || "No information provided",
-      orderNumber: order.name || "No information provided",
-      subtotal: Math.round(Number(order.subtotal_price) * 100) || 0,
-      email: order.contact_email || "No information provided",
-      shippingName: order.shipping_address.name || "No information provided",
-      shippingAddress1:
-        order.shipping_address.address1 || "No information provided",
-      shippingAddress2:
-        order.shipping_address.address2 || "No information provided",
-      shippingZip: order.shipping_address.zip || "No information provided",
-      shippingCity: order.shipping_address.city || "No information provided",
-      shippingProvince:
-        order.shipping_address.province || "No information provided",
-      shippingCountry:
-        order.shipping_address.country || "No information provided",
-      shippingPhone: order.shipping_address.phone || "No information provided",
-    });
+    // 1. Extract exchanged/returned products from order note
+    const { exchanges, returns } = extractOrderNoteInfo(order.note || "");
 
-    // Insert order items
-    await Promise.all(
-      order.line_items.map(async (item: OrderLineItem) => {
-        if (item.quantity <= 0) return;
+    // 2. Insert order into database
+    await saveOrderDetails(order);
 
-        const wasExchanged = exchanges.some((exchange) =>
-          exchange.includes(item.title)
-        );
-        const wasReturned = returns.some((returnItem) =>
-          returnItem.includes(item.title)
-        );
-        const wasChanged = wasExchanged || wasReturned;
-        const priceWithDiscount =
-          Number(item.price) - (item.discount_allocations?.[0]?.amount ?? 0);
-
-        return db.insert(productsOrder).values({
-          lineItemId: item.id.toString() || "No information provided",
-          orderId: order.id.toString() || "No information provided",
-          productId: item.product_id.toString() || "No information provided",
-          title: item.title || "No information provided",
-          variant_title: item.variant_title || "No information provided",
-          variant_id: item.variant_id.toString() || "No information provided",
-          price: priceWithDiscount.toString() || "No information provided",
-          quantity: item.quantity || 0,
-          changed: false,
-          confirmed: wasChanged,
-          credit: false,
-          gift_card_id: null,
-        });
-      })
-    );
+    // 3. Process and insert order items
+    const orderItems = order.line_items.filter((item) => item.quantity > 0);
+    await insertOrderItems(orderItems, order.id, exchanges, returns);
   } catch (error) {
-    return {
-      message:
-        "Error while trying to connect with database. Please try again later",
-    };
+    console.error("Error saving order to database:", error);
+    throw new Error("Failed to save order data");
   }
-  redirect(`/${order.id}`);
+}
+
+/**
+ * Inserts order items into the database
+ *
+ * @param items Line items to insert
+ * @param orderId Order ID to associate with items
+ * @param exchanges List of exchanged product descriptions
+ * @param returns List of returned product descriptions
+ */
+async function insertOrderItems(
+  items: LineItem[],
+  orderId: string,
+  exchanges: string[],
+  returns: string[]
+): Promise<void> {
+  await Promise.all(
+    items.map(async (item) => {
+      // Check if item was exchanged or returned
+      const wasExchanged = wasItemExchanged(item, exchanges);
+      const wasReturned = wasItemReturned(item, returns);
+      const wasChanged = wasExchanged || wasReturned;
+
+      // Calculate price with discount
+      const priceWithDiscount = calculatePriceWithDiscount(item);
+
+      // Insert item into database
+      return saveOrderItem(item, orderId, wasChanged, priceWithDiscount);
+    })
+  );
 }

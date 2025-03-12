@@ -1,7 +1,7 @@
 "use client";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useFormState } from "react-dom";
 
 import Logo from "@/public/LOGO_black.png";
@@ -12,21 +12,31 @@ import { getOrder } from "@/actions/order";
 import { Warning } from "@/types";
 import { PRIVACY_LINKS } from "@/placeholder";
 
+/**
+ * Main input component for the order search form
+ */
 export const InputComponent = () => {
-  const [warning, setWarning] = useState<Warning>({ message: "" });
   const { toast } = useToast();
-  const [state, formAction] = useFormState(getOrder, warning);
 
+  // Initialize with an empty warning as the initial state
+  const initialState: Warning = { message: "" };
+  const [state, formAction] = useFormState(getOrder, initialState);
+
+  // Handle server action response
   useEffect(() => {
-    if (!state?.message) return;
-
-    toast({
-      variant: "destructive",
-      title: "There was an error in your request",
-      description: state.message,
-    });
+    // Only show toast notification when there's an error
+    if (state && state.message) {
+      toast({
+        variant: "destructive",
+        title: "There was an error in your request",
+        description: state.message,
+      });
+    }
   }, [toast, state]);
 
+  /**
+   * Renders the privacy policy links
+   */
   const renderPrivacyLinks = () => (
     <h6 className="text-xxs text-black mt-5">
       Al continuar, confirmas que aceptas los{" "}
@@ -34,7 +44,6 @@ export const InputComponent = () => {
         <span key={link.text}>
           <Link
             href={link.href}
-            key={link.text}
             className="text-blue-400 border-b border-blue-400 font-bold"
           >
             {link.text}

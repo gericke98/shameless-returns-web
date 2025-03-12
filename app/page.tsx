@@ -1,5 +1,9 @@
 import { InputComponent } from "@/components/inputComponent";
 
+/**
+ * Home page component
+ * Displays the order search form in a centered layout
+ */
 const Home = () => {
   return (
     <main className="min-h-screen grid place-items-center bg-black-pattern">

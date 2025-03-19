@@ -1,4 +1,4 @@
-import LogoutButton from "../LogoutButton";
+import { LogoutButton } from "../LogoutButton";
 
 type DashboardHeaderProps = {
   username: string;

@@ -1,73 +1,100 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { login } from "@/actions/authentication";
-import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
 
 export default function LoginPage() {
-  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setIsLoading(true);
+    setError(null);
+
     const formData = new FormData(event.currentTarget);
+    const username = formData.get("username") as string;
+    const password = formData.get("password") as string;
+
+    console.log("Attempting login with username:", username);
+    console.log(
+      "Callback URL:",
+      searchParams.get("callbackUrl") || "/dashboard"
+    );
+
     try {
-      const result = await login(formData);
-      if (result.error) {
-        setError(result.error);
-      } else if (result.success) {
-        router.push("/dashboard");
+      console.log("Calling signIn...");
+      const result = await signIn("credentials", {
+        email: username,
+        password,
+        redirect: false,
+        callbackUrl: searchParams.get("callbackUrl") || "/dashboard",
+      });
+      console.log("Sign in result:", result);
+
+      if (result?.error) {
+        console.log("Login error:", result.error);
+        setError("Invalid credentials");
+      } else {
+        console.log("Login successful, redirecting...");
+        // Force a hard refresh to ensure session is updated
+        window.location.href = searchParams.get("callbackUrl") || "/dashboard";
       }
-    } catch (err) {
+    } catch (error) {
+      console.error("Sign in error:", error);
       setError("An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
     }
   }
 
   return (
-    <div className="min-h-screen grid place-items-center bg-black-pattern">
-      <div className="bg-white rounded-3xl py-5 px-4 lg:px-6 w-[85%] lg:w-[30%] flex flex-col items-center">
-        <h1 className="text-2xl font-bold mb-6">Login</h1>
-
-        {error && <div className="text-red-500 mb-4">{error}</div>}
-
-        <form onSubmit={handleSubmit} className="w-full space-y-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="max-w-md w-full space-y-8 p-8 bg-white rounded-lg shadow">
+        <h2 className="text-center text-3xl font-extrabold text-gray-900">
+          Admin Login
+        </h2>
+        {error && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+            {error}
+          </div>
+        )}
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div>
-            <label
-              htmlFor="username"
-              className="block text-sm font-medium text-gray-700"
-            >
+            <label htmlFor="username" className="sr-only">
               Username
             </label>
             <input
-              type="text"
               id="username"
               name="username"
+              type="text"
               required
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300"
+              placeholder="Username"
             />
           </div>
-
           <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-700"
-            >
+            <label htmlFor="password" className="sr-only">
               Password
             </label>
             <input
-              type="password"
               id="password"
               name="password"
+              type="password"
               required
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+              className="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300"
+              placeholder="Password"
             />
           </div>
-
           <button
             type="submit"
-            className="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            disabled={isLoading}
+            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
           >
-            Sign In
+            {isLoading ? "Signing in..." : "Sign in"}
           </button>
         </form>
       </div>

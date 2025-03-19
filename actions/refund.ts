@@ -8,7 +8,7 @@ import {
   getOrderTotal,
   processGiftCardReturn,
 } from "@/db/queries";
-import { orders, productsOrder } from "@/db/schema";
+import { productsOrder } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -69,11 +69,12 @@ export async function validateReturn(product: any, status: string, order: any) {
       }
     } else {
       if (product.return_id && product.return_line_item_id) {
+        let amountToRefund = Number(product.price) - 5;
         result = await createRefund(
           product.return_id,
           product.return_line_item_id,
           product.transaction_id,
-          product.transaction_amount
+          amountToRefund
         );
       }
       if (result?.success) {

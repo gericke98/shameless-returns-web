@@ -12,8 +12,8 @@ const sql = neon(process.env.DATABASE_URL!);
 const db = drizzle(sql);
 
 async function createAdminUser() {
-  const username = "hello@shamelesscollective.com";
-  const password = "Shameless1998-";
+  const username = process.env.ADMIN_USERNAME || "";
+  const password = process.env.ADMIN_PASSWORD || "";
 
   const hashedPassword = await hash(password, 12);
 

@@ -5,7 +5,7 @@ import { Progress } from "@/components/ui/progress";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import Image from "next/image";
 import { productsOrder } from "@/db/schema";
-import { Product2 } from "@/types";
+import { Product } from "@/types";
 import { cn } from "@/lib/utils";
 import RegaloWhite from "@/public/giftWhite.svg";
 import RegaloBlack from "@/public/giftBlack.svg";
@@ -13,7 +13,7 @@ import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
 
 type Props = {
-  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   shipping: boolean;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;

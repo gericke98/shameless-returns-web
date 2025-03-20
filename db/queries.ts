@@ -4,8 +4,7 @@ import { cache } from "react";
 import db from "./drizzle";
 import { eq } from "drizzle-orm";
 import { orders, productsOrder } from "./schema";
-import { OrderData } from "@/types";
-import { LineItem } from "@/types";
+import { OrderData, OrderLineItem } from "@/types";
 
 const createSession = (): RequestInit => {
   if (

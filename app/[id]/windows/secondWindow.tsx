@@ -7,7 +7,7 @@ import { IoLocationSharp } from "react-icons/io5";
 import Link from "next/link";
 import { SecondWindowForm } from "../components/secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
-import { Product2 } from "@/types";
+import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import CorreosLogo from "@/public/correos.webp";
 
@@ -15,7 +15,7 @@ type Props = {
   order: typeof orders.$inferSelect;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
 };

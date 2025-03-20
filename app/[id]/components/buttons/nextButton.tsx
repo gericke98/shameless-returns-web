@@ -1,11 +1,5 @@
 import { cn } from "@/lib/utils";
-
-type ContinueButtonProps = {
-  position: number;
-  hasChanges: boolean;
-  onClick: () => void;
-  isPending: boolean;
-};
+import { ContinueButtonProps } from "@/types";
 
 export const ContinueButton = ({
   position,

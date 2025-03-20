@@ -1,8 +1,5 @@
 import { LogoutButton } from "../LogoutButton";
-
-type DashboardHeaderProps = {
-  username: string;
-};
+import { DashboardHeaderProps } from "@/types";
 
 export default function DashboardHeader({ username }: DashboardHeaderProps) {
   return (

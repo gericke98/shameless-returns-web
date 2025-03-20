@@ -1,21 +1,21 @@
 "use client";
 
 import { validateReturn } from "@/actions/refund";
-import { useEffect, useState } from "react";
-
-type ReturnTableProps = {
-  returns: Array<{
-    order: any; // Replace with proper type
-    product: any; // Replace with proper type
-    status: string;
-  }>;
-};
+import { useState } from "react";
+import {
+  ReturnTableProps,
+  RefundFilter,
+  ShippingStatus,
+  TableRowProps,
+} from "@/types";
 
 export default function ReturnsTable({ returns }: ReturnTableProps) {
   // State for search, filter, and pagination
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterStatusRefunded, setFilterStatusRefunded] = useState("all");
-  const [filterStatusShipping, setFilterStatusShipping] = useState("all");
+  const [filterStatusRefunded, setFilterStatusRefunded] =
+    useState<RefundFilter>("all");
+  const [filterStatusShipping, setFilterStatusShipping] =
+    useState<ShippingStatus>("all");
   const [currentPage, setCurrentPage] = useState(1);
   const resultsPerPage = 15;
 
@@ -33,6 +33,7 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
 
     return searchMatch && filterMatchRef && filterMatchShip;
   });
+
   // Pagination Logic
   const totalPages = Math.ceil(filteredReturns.length / resultsPerPage);
   const paginatedReturns = filteredReturns.slice(
@@ -49,16 +50,18 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
           placeholder="Search by Order or Email..."
           className="p-2 border rounded-md w-1/3"
           value={searchTerm}
-          onChange={(e) => {
-            setSearchTerm(e.target.value);
-          }}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          aria-label="Search returns"
         />
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">Refunded</span>
           <select
             className="p-2 border rounded-md"
             value={filterStatusRefunded}
-            onChange={(e) => setFilterStatusRefunded(e.target.value)}
+            onChange={(e) =>
+              setFilterStatusRefunded(e.target.value as RefundFilter)
+            }
+            aria-label="Filter by refund status"
           >
             <option value="all">All</option>
             <option value="refunded">Refunded</option>
@@ -70,13 +73,15 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
           <select
             className="p-2 border rounded-md"
             value={filterStatusShipping}
-            onChange={(e) => setFilterStatusShipping(e.target.value)}
+            onChange={(e) =>
+              setFilterStatusShipping(e.target.value as ShippingStatus)
+            }
+            aria-label="Filter by shipping status"
           >
             <option value="all">All</option>
             <option value="prerregistrado">Prerregistrado</option>
             <option value="admitido">Admitido</option>
             <option value="clasificado">Clasificado</option>
-            <option value="en tránsito">En tránsito</option>
             <option value="en tránsito">En tránsito</option>
             <option value="en reparto">En reparto</option>
             <option value="entregado">Entregado</option>
@@ -154,15 +159,9 @@ function TableHeader() {
   );
 }
 
-interface TableRowProps {
-  order: any; // Replace with proper type when available
-  product: any; // Replace with proper type when available
-  status: string;
-}
-
 function TableRow({ order, product, status }: TableRowProps) {
   return (
-    <tr>
+    <tr className="hover:bg-gray-50">
       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
         {order.orderNumber}
       </td>
@@ -179,21 +178,22 @@ function TableRow({ order, product, status }: TableRowProps) {
         {product.price} €
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {product.action}
+        {product.action || "No action"}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.refunded ? "Yes" : "No"}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {status ? status : order.locator}
+        {status || "No tracking number"}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.refunded ? (
-          <h5>Refunded</h5>
+          <span className="text-green-600">Refunded</span>
         ) : (
           <button
-            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm"
+            className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm transition-colors"
             onClick={() => validateReturn(product, status, order)}
+            aria-label={`Refund ${product.title}`}
           >
             Refund
           </button>

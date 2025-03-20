@@ -8,7 +8,7 @@ import {
   getOrderTotal,
 } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
-import { FulfillmentLineItem, OrderData } from "@/types";
+import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -186,7 +186,7 @@ async function processProductReturn(
       totalOrder.id,
       fulfillmentsProduct.node.id,
       adjustedProduct,
-      lineitem.discount_allocations[0]
+      lineitem.discount_allocations?.[0]
     );
 
     // Si la return se creo correctamente, actualizo el producto

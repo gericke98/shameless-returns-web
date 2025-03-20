@@ -7,11 +7,73 @@ import { obtainLastStatus } from "@/actions/shipping";
 import DashboardHeader from "./components/DashboardHeader";
 import ReturnsTable from "./components/ReturnsTable";
 import EmptyState from "./components/EmptyState";
+import { Suspense } from "react";
+import { Metadata } from "next";
+import { ErrorBoundary } from "react-error-boundary";
 
-export default async function DashboardPage() {
-  console.log("DashboardPage");
+export const metadata: Metadata = {
+  title: "Admin Dashboard | Shameless Returns",
+  description: "Manage returns and refunds for Shameless Returns",
+};
+
+function LoadingSpinner() {
+  return (
+    <div className="bg-white shadow-sm rounded-lg p-6 text-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+      <p className="mt-4 text-gray-500">Loading returns...</p>
+    </div>
+  );
+}
+
+function ErrorMessage({ error }: { error: Error }) {
+  return (
+    <div className="bg-white shadow-sm rounded-lg p-6 text-center">
+      <div className="text-red-600 mb-2">Error loading returns</div>
+      <p className="text-gray-500">
+        {error.message || "Please try again later"}
+      </p>
+    </div>
+  );
+}
+
+async function ReturnsList() {
+  try {
+    const returns = await getReturns();
+    const flattenedReturns = await Promise.all(
+      returns.map(async (order) => {
+        let status = order.locator || "No tracking number";
+        if (order.locator) {
+          try {
+            status = (await obtainLastStatus(order.locator)) ?? order.locator;
+          } catch (error) {
+            console.error(
+              `Error fetching status for order ${order.id}:`,
+              error
+            );
+            status = order.locator;
+          }
+        }
+        return order.products.map((product) => ({
+          order,
+          product,
+          status,
+        }));
+      })
+    ).then((arrays) => arrays.flat());
+
+    return flattenedReturns.length === 0 ? (
+      <EmptyState />
+    ) : (
+      <ReturnsTable returns={flattenedReturns} />
+    );
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("Failed to load returns");
+  }
+}
+
+async function validateSession() {
   const session = await getServerSession(authOptions);
-  console.log("DashboardPage2");
+
   if (!session?.user) {
     redirect("/login");
   }
@@ -20,50 +82,35 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const returns = await getReturns();
-  const flattenedReturns = await Promise.all(
-    returns.map(async (order) => {
-      // Only fetch status if there's a tracking number
-      let status = order.locator || "No tracking number";
-      if (order.locator) {
-        try {
-          status = (await obtainLastStatus(order.locator)) ?? order.locator;
-        } catch (error) {
-          console.error(`Error fetching status for order ${order.id}:`, error);
-          status = order.locator;
-        }
-      }
-      return order.products.map((product) => ({
-        order,
-        product,
-        status,
-      }));
-    })
-  ).then((arrays) => arrays.flat());
+  return session;
+}
+
+export default async function DashboardPage() {
+  const session = await validateSession();
 
   return (
     <div className="min-h-screen bg-gray-100">
-      <nav className="bg-white shadow-sm">
+      <nav className="bg-white shadow-sm sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center">
               <h1 className="text-xl font-semibold">Admin Dashboard</h1>
             </div>
             <div className="flex items-center">
-              <span className="mr-4">{session.user.email}</span>
+              <span className="mr-4 text-gray-700">{session.user.email}</span>
               <LogoutButton />
             </div>
           </div>
         </div>
       </nav>
-      <div className="max-w-7xl mx-auto">
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <DashboardHeader username={session.user.username} />
-        {flattenedReturns.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <ReturnsTable returns={flattenedReturns} />
-        )}
-      </div>
+        <ErrorBoundary FallbackComponent={ErrorMessage}>
+          <Suspense fallback={<LoadingSpinner />}>
+            <ReturnsList />
+          </Suspense>
+        </ErrorBoundary>
+      </main>
     </div>
   );
 }

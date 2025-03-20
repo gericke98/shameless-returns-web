@@ -12,17 +12,15 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import Image from "next/image";
 import { FormProduct } from "./dialogForm";
-import { Product2, ProductImageProps, ProductInfoProps } from "@/types";
-import { productsOrder } from "@/db/schema";
+import {
+  ProductImageProps,
+  ProductInfoProps,
+  ProductLineProps,
+  ProductDialogProps,
+} from "@/types";
 import { cn } from "@/lib/utils";
 import { LiaExchangeAltSolid } from "react-icons/lia";
 import { IoIosReturnLeft } from "react-icons/io";
-
-type Props = {
-  orderProduct: typeof productsOrder.$inferSelect;
-  product: Product2;
-  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
-};
 
 const ProductImage = ({ src, alt, width, height }: ProductImageProps) => (
   <Image
@@ -108,15 +106,6 @@ const ProductInfo = ({
   </div>
 );
 
-interface ProductDialogProps extends Props {
-  changed: boolean;
-  setChanged: React.Dispatch<React.SetStateAction<boolean>>;
-  imageSrc: string;
-  imageAlt: string;
-  onSuccess: () => void;
-  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
-}
-
 const ProductDialog = ({
   product,
   orderProduct,
@@ -172,7 +161,7 @@ export const ProductLineClient = ({
   orderProduct,
   product,
   onItemChange,
-}: Props) => {
+}: ProductLineProps) => {
   const [changed, setChanged] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
 

@@ -1,4 +1,4 @@
-import { LineItem, OrderData } from "@/types";
+import { OrderLineItem, OrderData } from "@/types";
 
 /**
  * Constants for order processing
@@ -37,7 +37,7 @@ export function extractOrderNoteInfo(note: string): {
  * @param item Line item to calculate price for
  * @returns Price with discount applied
  */
-export function calculatePriceWithDiscount(item: LineItem): number {
+export function calculatePriceWithDiscount(item: OrderLineItem): number {
   return Number(item.price) - (item.discount_allocations?.[0]?.amount ?? 0);
 }
 
@@ -72,7 +72,10 @@ export function formatOrderId(orderId: string | number): string {
  * @param exchanges List of exchange descriptions
  * @returns Boolean indicating if the item was exchanged
  */
-export function wasItemExchanged(item: LineItem, exchanges: string[]): boolean {
+export function wasItemExchanged(
+  item: OrderLineItem,
+  exchanges: string[]
+): boolean {
   return exchanges.some((exchange) => exchange.includes(item.title));
 }
 
@@ -83,6 +86,9 @@ export function wasItemExchanged(item: LineItem, exchanges: string[]): boolean {
  * @param returns List of return descriptions
  * @returns Boolean indicating if the item was returned
  */
-export function wasItemReturned(item: LineItem, returns: string[]): boolean {
+export function wasItemReturned(
+  item: OrderLineItem,
+  returns: string[]
+): boolean {
   return returns.some((returnItem) => returnItem.includes(item.title));
 }

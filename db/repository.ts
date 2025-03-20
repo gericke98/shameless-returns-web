@@ -2,7 +2,7 @@
 
 import db from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
-import { OrderData, LineItem } from "@/types";
+import { OrderData, OrderLineItem } from "@/types";
 import { eq, and } from "drizzle-orm";
 import { formatOrderId } from "@/utils/order-utils";
 
@@ -51,7 +51,7 @@ export async function saveOrderDetails(order: OrderData): Promise<void> {
  * @param priceWithDiscount Price with discount applied
  */
 export async function saveOrderItem(
-  item: LineItem,
+  item: OrderLineItem,
   orderId: string,
   wasChanged: boolean,
   priceWithDiscount: number

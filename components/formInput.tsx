@@ -4,7 +4,19 @@ import MailIcon from "@/public/mail_24dp_FILL0_wght400_GRAD0_opsz24.svg";
 import Image from "next/image";
 import { useState, ChangeEvent } from "react";
 import { cn } from "@/lib/utils";
-import { FormInputProps } from "@/types";
+
+interface FormInputProps {
+  name: string;
+  title: string;
+  icon?: boolean;
+  valueini?: string;
+  required?: boolean;
+  type?: string;
+  pattern?: string;
+  minLength?: number;
+  maxLength?: number;
+  placeholder?: string;
+}
 
 /**
  * FormInput component for rendering form input fields with optional icons
@@ -13,56 +25,97 @@ export const FormInput = ({
   name,
   title,
   icon,
-  valueini = "",
+  valueini,
+  required,
+  type = "text",
+  pattern,
+  minLength,
+  maxLength,
+  placeholder,
 }: FormInputProps) => {
-  const [value, setValue] = useState<string>(valueini);
+  const [value, setValue] = useState<string>(valueini || "");
+  const [error, setError] = useState<string>("");
 
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setValue(e.target.value);
+    const newValue = e.target.value;
+    setValue(newValue);
+    validateInput(newValue);
   };
 
-  const renderIcon = () => {
+  const validateInput = (inputValue: string) => {
+    if (required && !inputValue) {
+      setError("This field is required");
+      return false;
+    }
+
+    if (pattern && !new RegExp(pattern).test(inputValue)) {
+      setError("Invalid format");
+      return false;
+    }
+
+    if (minLength && inputValue.length < minLength) {
+      setError(`Minimum ${minLength} characters required`);
+      return false;
+    }
+
+    if (maxLength && inputValue.length > maxLength) {
+      setError(`Maximum ${maxLength} characters allowed`);
+      return false;
+    }
+
+    setError("");
+    return true;
+  };
+
+  const getIcon = () => {
     if (!icon) return null;
-
-    const iconSrc = name === "order" ? BoxIcon : MailIcon;
-
-    return (
-      <Image
-        src={iconSrc}
-        alt={`${name} icon`}
-        width={15}
-        height={15}
-        className="w-auto h-auto max-w-4 pt-1"
-      />
-    );
+    return name === "order" ? BoxIcon : MailIcon;
   };
 
   return (
-    <div className="w-full h-8">
-      <div className="w-full h-full">
-        <h6 className="bg-slate-100 rounded-t-lg text-xxs pl-4 pt-2 text-slate-400">
-          {title}
-        </h6>
-        <div
+    <div className="flex flex-col gap-2">
+      <label htmlFor={name} className="text-xs text-slate-600">
+        {title}
+      </label>
+      <div className="relative">
+        <input
+          type={type}
+          id={name}
+          name={name}
+          value={value}
           className={cn(
-            "w-full h-full pl-4 pt-1 flex bg-slate-100 border-b-2 border-[#868687] focus-within:border-[#383839]",
-            icon ? "flex-row" : "flex-col"
+            "w-full p-2 border rounded-md focus:outline-none focus:ring-2",
+            error
+              ? "border-red-500 focus:ring-red-500"
+              : "border-slate-200 focus:ring-blue-500"
           )}
-        >
-          {renderIcon()}
-          <input
-            type="text"
-            name={name}
-            className={cn(
-              "h-full w-full bg-slate-100 text-base lg:text-sm text-black font-light focus:outline-none",
-              icon && "pl-4"
-            )}
-            placeholder=""
-            value={value}
-            onChange={handleChange}
-          />
-        </div>
+          required={required}
+          aria-required={required}
+          onChange={handleChange}
+          placeholder={placeholder}
+          minLength={minLength}
+          maxLength={maxLength}
+          pattern={pattern}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${name}-error` : undefined}
+        />
+        {icon && (
+          <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+            <Image
+              src={getIcon()}
+              alt={`${name} icon`}
+              width={20}
+              height={20}
+              className="w-5 h-5 text-gray-400"
+            />
+          </div>
+        )}
       </div>
+      {error && (
+        <p id={`${name}-error`} className="text-xs text-red-500" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 };

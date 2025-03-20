@@ -4,13 +4,13 @@ import { orders, productsOrder } from "@/db/schema";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
-import { Product2 } from "@/types";
+import { Product } from "@/types";
 
 type Props = {
   order: typeof orders.$inferSelect;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
 };
 

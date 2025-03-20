@@ -5,13 +5,13 @@ import { FormSelect } from "../../../components/formSelect";
 import { FormSelectSize } from "../../../components/formSelectSize";
 import { useState, useTransition } from "react";
 import { DialogFooter } from "@/components/ui/dialog";
-import { Product2 } from "@/types";
+import { Product } from "@/types";
 import { productsOrder } from "@/db/schema";
 import { anularOrder, updateOrder } from "@/actions/updateOrder";
 import { ACTIONS, REASONS } from "@/placeholder";
 
 type Props = {
-  product: Product2;
+  product: Product;
   orderProduct: typeof productsOrder.$inferSelect;
   changed: boolean;
   setChanged: React.Dispatch<React.SetStateAction<boolean>>;
@@ -85,8 +85,9 @@ export const FormProduct = ({
   };
 
   const sizeStock = product.variants.edges.map((variant) => ({
-    title: variant.node.title,
-    quantity: variant.node.inventoryQuantity,
+    value: variant.node.title,
+    label: variant.node.title,
+    disabled: variant.node.inventoryQuantity === 0,
   }));
 
   const showNewProduct = action === ACTIONS.CHANGE && motivo !== "";
@@ -109,8 +110,11 @@ export const FormProduct = ({
         <FormSelect
           name="accion"
           title="Acción a realizar"
-          options={[ACTIONS.CHANGE, ACTIONS.RETURN]}
-          value={action || "CAMBIO"}
+          options={[
+            { value: ACTIONS.CHANGE, label: "Cambio" },
+            { value: ACTIONS.RETURN, label: "Devolución" },
+          ]}
+          valueini={action || "CAMBIO"}
           onChange={setAction}
         />
 
@@ -121,8 +125,8 @@ export const FormProduct = ({
               ? "Motivo del cambio"
               : "Motivo de la devolución"
           }
-          options={REASONS}
-          value={motivo}
+          options={REASONS.map((reason) => ({ value: reason, label: reason }))}
+          valueini={motivo}
           onChange={setMotivo}
         />
 
@@ -155,7 +159,7 @@ export const FormProduct = ({
               name="newSize"
               title="Nueva talla"
               options={sizeStock}
-              value={size}
+              valueini={size}
               onChange={handleSizeChange}
             />
           </div>

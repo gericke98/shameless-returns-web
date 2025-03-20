@@ -1,13 +1,13 @@
 import { memo, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
 import { productsOrder } from "@/db/schema";
-import { Product2 } from "@/types";
+import { Product } from "@/types";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 
 type Props = {
-  items: (typeof productsOrder.$inferSelect & { newp?: Product2 })[];
+  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   credito: boolean | null;

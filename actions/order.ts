@@ -2,7 +2,7 @@
 
 import { getOrderQuery } from "@/db/queries";
 import { redirect } from "next/navigation";
-import { OrderData, Warning, LineItem } from "@/types";
+import { OrderData, Warning, OrderLineItem } from "@/types";
 import {
   extractOrderNoteInfo,
   calculatePriceWithDiscount,
@@ -153,7 +153,7 @@ async function saveOrderToDatabase(order: OrderData): Promise<void> {
  * @param returns List of returned product descriptions
  */
 async function insertOrderItems(
-  items: LineItem[],
+  items: OrderLineItem[],
   orderId: string,
   exchanges: string[],
   returns: string[]

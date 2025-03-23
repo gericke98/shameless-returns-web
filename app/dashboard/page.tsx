@@ -10,6 +10,7 @@ import EmptyState from "./components/EmptyState";
 import { Suspense } from "react";
 import { Metadata } from "next";
 import { ErrorBoundary } from "react-error-boundary";
+import ErrorMessage from "./components/ErrorMessage";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard | Shameless Returns",
@@ -21,17 +22,6 @@ function LoadingSpinner() {
     <div className="bg-white shadow-sm rounded-lg p-6 text-center">
       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
       <p className="mt-4 text-gray-500">Loading returns...</p>
-    </div>
-  );
-}
-
-function ErrorMessage({ error }: { error: Error }) {
-  return (
-    <div className="bg-white shadow-sm rounded-lg p-6 text-center">
-      <div className="text-red-600 mb-2">Error loading returns</div>
-      <p className="text-gray-500">
-        {error.message || "Please try again later"}
-      </p>
     </div>
   );
 }

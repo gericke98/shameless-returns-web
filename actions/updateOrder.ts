@@ -56,7 +56,7 @@ async function updateProductOrder(
 ) {
   const updates = {
     changed: actionType === "CAMBIO" ? true : false,
-    action: actionType,
+    action: actionType || "DEVOLUCIÓN",
     reason: data.motivo || "",
     notes: data.notas || "",
     new_variant_title: actionType === "CAMBIO" ? data.newSize : null,

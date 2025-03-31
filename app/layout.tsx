@@ -3,15 +3,11 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
+import { siteConfig } from "@/lib/config";
 
 const inter = Inter({
   subsets: ["latin"],
 });
-
-const siteConfig = {
-  name: "Shameless Collective",
-  description: "Returns & Exchanges",
-};
 
 export const metadata: Metadata = {
   title: `${siteConfig.name} | ${siteConfig.description}`,

@@ -24,6 +24,8 @@ export async function validateReturn(product: any, status: string, order: any) {
       // Extraigo la info completa del pedido para saber el customer id
       const totalOrder = await getOrderTotal(order.id);
       const customerId = totalOrder.customer.id;
+      console.log("customerId", customerId);
+      console.log("total order", totalOrder);
 
       // Extraigo el valor del gift card
       const giftCardValue =

@@ -2,6 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import db from "@/db/drizzle";
+import { getBaseUrl } from "./config";
 
 export const authOptions: NextAuthOptions = {
   session: {
@@ -62,6 +63,6 @@ export const authOptions: NextAuthOptions = {
   },
   pages: {
     signIn: "/login",
-    error: "/login",
   },
+  secret: process.env.NEXTAUTH_SECRET,
 };

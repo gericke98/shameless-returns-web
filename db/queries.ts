@@ -461,6 +461,8 @@ export async function createGiftCard(customerId: string, amount: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
+  console.log("customerId", customerId);
+  console.log("amount", amount);
   const query = `
     mutation {
       giftCardCreate(input: {
@@ -469,6 +471,11 @@ export async function createGiftCard(customerId: string, amount: string) {
       }) {
         giftCard {
           id
+        }
+        userErrors {
+          message
+          field
+          code
         }
       }
     }
@@ -482,14 +489,14 @@ export async function createGiftCard(customerId: string, amount: string) {
 
     const data = await response.json();
 
-    if (data.errors || data.data.giftCardCreate.userErrors.length > 0) {
+    if (data.data.giftCardCreate.userErrors.length > 0) {
       console.error(
         "Error creating gift card:",
-        data.errors || data.data.giftCardCreate.userErrors
+        data.data.giftCardCreate.userErrors
       );
       return {
         success: false,
-        errors: data.errors || data.data.giftCardCreate.userErrors,
+        errors: data.data.giftCardCreate.userErrors,
       };
     }
 

@@ -50,6 +50,7 @@ export async function validateReturn(product: any, status: string, order: any) {
               eq(productsOrder.orderId, totalOrder.id)
             )
           );
+        revalidatePath("/", "layout");
       }
     } else if (product.action === "CAMBIO") {
       result = await createOrder(order, product);

@@ -237,39 +237,49 @@ export async function createOrder(order: any, product: any) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  const provinceCode = getProvinceCode(order.shippingCity);
+  // Get province code from the province field if available, otherwise try to derive it from city
+  const provinceCode = order.shippingProvince
+    ? getProvinceCode(order.shippingProvince)
+    : getProvinceCode(order.shippingCity);
 
-  // Log the query to debug
+  // Log the values for debugging
+  console.log("Order creation details:", {
+    city: order.shippingCity,
+    province: order.shippingProvince,
+    provinceCode,
+    address: order.shippingAddress1,
+  });
+
   const query = `
-  mutation OrderCreate(
-    $options: OrderCreateOptionsInput, 
-    $order: OrderCreateOrderInput!
-  ) {
-    orderCreate(options: $options, order: $order) {
-      order {
-        id
-        name
-        email
-        createdAt
-        shippingAddress {
-          address1
-          address2
-          city
-          countryCode
-          firstName
-          lastName
-          phone
-          provinceCode
-          zip
+    mutation OrderCreate(
+      $options: OrderCreateOptionsInput, 
+      $order: OrderCreateOrderInput!
+    ) {
+      orderCreate(options: $options, order: $order) {
+        order {
+          id
+          name
+          email
+          createdAt
+          shippingAddress {
+            address1
+            address2
+            city
+            countryCode
+            firstName
+            lastName
+            phone
+            provinceCode
+            zip
+          }
+        }
+        userErrors {
+          field
+          message
         }
       }
-      userErrors {
-        field
-        message
-      }
     }
-  }
-`;
+  `;
 
   const variables = {
     options: {
@@ -351,6 +361,20 @@ export async function createOrder(order: any, product: any) {
 
     const data = await response.json();
 
+    // Enhanced error logging
+    if (data.errors || data.data?.orderCreate?.userErrors?.length > 0) {
+      console.error("Order creation failed:", {
+        errors: data.errors,
+        userErrors: data.data?.orderCreate?.userErrors,
+        input: {
+          city: order.shippingCity,
+          province: order.shippingProvince,
+          provinceCode,
+          address: order.shippingAddress1,
+        },
+      });
+    }
+
     // Defensive check: ensure the structure is as expected.
     const orderResponse = data?.data?.orderCreate;
     if (!orderResponse) {
@@ -376,6 +400,7 @@ export async function createOrder(order: any, product: any) {
     return { success: false, error: error };
   }
 }
+
 export async function closeReturn(returnId: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -420,6 +445,7 @@ export async function closeReturn(returnId: string) {
     return { success: false, error: error };
   }
 }
+
 export async function createReturn(
   orderId: string,
   fulfillmentLineItem: string,
@@ -512,6 +538,7 @@ export async function createReturn(
     return { success: false, error: error };
   }
 }
+
 export async function processGiftCardReturn(
   customerId: string,
   price: number,
@@ -536,6 +563,7 @@ export async function processGiftCardReturn(
 
   return giftCardResult;
 }
+
 export async function createGiftCard(customerId: string, amount: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -585,6 +613,7 @@ export async function createGiftCard(customerId: string, amount: string) {
     return { success: false, error: error };
   }
 }
+
 export async function getFulfillmentLineItems(fulfillmentId: string) {
   const session = createSession(); // Replace with your session creation logic
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -663,6 +692,7 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
     return { success: false, error };
   }
 }
+
 export async function getProduct(id: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;

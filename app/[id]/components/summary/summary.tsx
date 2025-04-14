@@ -10,12 +10,14 @@ import {
   AccordionTrigger,
   AccordionContent,
 } from "@/components/ui/accordion";
+import { Product } from "@/types";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect)[];
   shipping: boolean;
   final: boolean;
   credito?: boolean;
+  allProducts?: Product[];
 };
 
 export const SummaryComponent = ({
@@ -23,12 +25,14 @@ export const SummaryComponent = ({
   shipping,
   final,
   credito,
+  allProducts = [],
 }: Props) => {
   const {
     totalPriceDevolver,
     itemsToDevolver,
     totalPriceCambio,
     itemsToCambio,
+    itemsToDev,
   } = useMemo(() => {
     const totalPriceDevolver = items
       .filter((item) => Boolean(item.action) && !item.confirmed)
@@ -38,12 +42,35 @@ export const SummaryComponent = ({
       (item) => Boolean(item.action) && !item.confirmed
     );
 
+    // Calculate total price for changes, using the new product's price if available
     const totalPriceCambio = items
       .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+      .reduce((sum, item) => {
+        // If there's a new variant ID, find the corresponding product and use its price
+        if (item.new_variant_id) {
+          const newProduct = allProducts.find((p) =>
+            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
+          );
+          if (newProduct) {
+            // Find the specific variant that matches the new_variant_id
+            const newVariant = newProduct.variants.edges.find(
+              (v) => v.node.id === item.new_variant_id
+            );
+            if (newVariant) {
+              return sum + parseFloat(newVariant.node.price);
+            }
+          }
+        }
+        // Fallback to the original price if no new product is found
+        return sum + parseFloat(item.price);
+      }, 0);
 
     const itemsToCambio = items.filter(
       (item) => item.action === "CAMBIO" && !item.confirmed
+    );
+
+    const itemsToDev = items.filter(
+      (item) => item.action === "DEVOLUCION" && !item.confirmed
     );
 
     return {
@@ -51,18 +78,29 @@ export const SummaryComponent = ({
       itemsToDevolver,
       totalPriceCambio,
       itemsToCambio,
+      itemsToDev,
     };
-  }, [items]);
+  }, [items, allProducts]);
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
   const shippingCost = Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
 
-  if (shipping && totalPrice !== 0) {
+  if (shipping && itemsToDev.length > 0) {
     totalPrice -= shippingCost;
   }
 
   const creditBonus = credito ? totalPrice * 0.15 : 0;
   const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
+
+  // Helper function to find a product by variant ID
+  const findProductByVariantId = (variantId: string | null) => {
+    if (!variantId) return null;
+    return (
+      allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.id === variantId)
+      ) || null
+    );
+  };
 
   return (
     // Reduced top margin & padding on mobile, larger on desktop
@@ -91,7 +129,12 @@ export const SummaryComponent = ({
           </AccordionTrigger>
           <AccordionContent className="mt-1 sm:mt-2">
             {itemsToDevolver.map((item) => (
-              <SummaryLine key={item.id} item={item} newAction={false} />
+              <SummaryLine
+                key={item.id}
+                item={item}
+                newAction={false}
+                newProduct={null}
+              />
             ))}
           </AccordionContent>
         </AccordionItem>
@@ -102,14 +145,15 @@ export const SummaryComponent = ({
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
               <span className="font-medium text-left w-full">
-                Nuevos productos {shipping && totalPrice !== 0 && "& Logística"}
+                Nuevos productos{" "}
+                {shipping && itemsToDev.length > 0 && "& Logística"}
                 <span className="font-normal text-xs text-gray-600"></span>
               </span>
 
               {/* Right side (total, right-aligned) */}
               <span className="font-semibold text-sm text-right mt-1 sm:mt-0 w-full">
                 {(totalPriceCambio > 0 || shipping) && "-"}
-                {shipping && totalPrice !== 0
+                {shipping && itemsToDev.length > 0
                   ? (totalPriceCambio + shippingCost).toFixed(2)
                   : totalPriceCambio.toFixed(2)}
                 {" €"}
@@ -118,9 +162,14 @@ export const SummaryComponent = ({
           </AccordionTrigger>
           <AccordionContent className="mt-1 sm:mt-2">
             {itemsToCambio.map((item) => (
-              <SummaryLine key={item.id} item={item} newAction={true} />
+              <SummaryLine
+                key={item.id}
+                item={item}
+                newAction={true}
+                newProduct={findProductByVariantId(item.new_variant_id)}
+              />
             ))}
-            {shipping && totalPrice !== 0 && <SummaryShipping />}
+            {shipping && itemsToDev.length > 0 && <SummaryShipping />}
           </AccordionContent>
         </AccordionItem>
       </Accordion>
@@ -139,8 +188,12 @@ export const SummaryComponent = ({
 
       {/* Total row */}
       <div className="bg-gray-300 flex flex-row justify-between items-center px-1 py-2 my-3 sm:px-2 sm:py-3 sm:my-4 rounded-sm">
-        <span className="font-semibold">Total reembolso</span>
-        <span className="font-semibold">{finalTotal.toFixed(2)} €</span>
+        <span className="font-semibold">
+          {finalTotal > 0 ? "Total reembolso" : "Total a pagar"}
+        </span>
+        <span className="font-semibold">
+          {Math.abs(finalTotal).toFixed(2)} €
+        </span>
       </div>
 
       {!final && (

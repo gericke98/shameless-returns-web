@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -17,6 +17,7 @@ import {
   ProductInfoProps,
   ProductLineProps,
   ProductDialogProps,
+  Product,
 } from "@/types";
 import { cn } from "@/lib/utils";
 import { LiaExchangeAltSolid } from "react-icons/lia";
@@ -79,7 +80,8 @@ const ProductInfo = ({
   confirmed,
   changed,
   newVariant,
-}: ProductInfoProps) => (
+  newProduct,
+}: ProductInfoProps & { newProduct?: Product | null }) => (
   <div className="flex flex-col w-full gap-1 items-start">
     <span className="lg:text-base text-sm text-left font-bold leading-tight text-black">
       {title}
@@ -103,6 +105,25 @@ const ProductInfo = ({
         El producto ya ha sido modificado
       </span>
     )}
+    {changed && newProduct && (
+      <div className="mt-2 w-full flex items-center gap-2 p-2 bg-gray-50 rounded-md">
+        <div className="relative w-8 h-8">
+          <Image
+            src={newProduct.image?.src || "/placeholder.jpg"}
+            alt={newProduct.title}
+            fill
+            sizes="32px"
+            className="object-cover rounded-sm"
+          />
+        </div>
+        <div className="flex flex-col">
+          <span className="text-xs font-medium">{newProduct.title}</span>
+          <span className="text-xs text-gray-500">
+            {newVariant} - {newProduct.variants.edges[0]?.node.price || ""} €
+          </span>
+        </div>
+      </div>
+    )}
   </div>
 );
 
@@ -115,58 +136,113 @@ const ProductDialog = ({
   imageAlt,
   onSuccess,
   onItemChange,
-}: ProductDialogProps) => (
-  <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto">
-    <DialogHeader>
-      <DialogTitle>
-        <span className="text-2xl font-bold mt-8 mb-8">Selección</span>
-      </DialogTitle>
-    </DialogHeader>
-    <DialogDescription asChild>
-      <ScrollArea className="flex flex-col w-full items-start">
-        <div className="w-full flex flex-col sm:flex-row flex-nowrap gap-4">
-          <ProductImage
-            src={imageSrc}
-            alt={imageAlt}
-            width={100}
-            height={100}
-          />
-          <ProductInfo
-            title={orderProduct.title}
-            variant={orderProduct.variant_title}
-            price={orderProduct.price}
-            action={orderProduct.action}
-            reason={orderProduct.reason}
-            confirmed={orderProduct.confirmed ?? false}
-            changed={orderProduct.changed}
-            newVariant={orderProduct.new_variant_title ?? undefined}
-          />
-        </div>
-        <div className="w-full mt-2">
-          <FormProduct
-            product={product}
-            orderProduct={orderProduct}
-            changed={changed}
-            setChanged={setChanged}
-            onSuccess={onSuccess}
-            onItemChange={onItemChange}
-          />
-        </div>
-      </ScrollArea>
-    </DialogDescription>
-  </DialogContent>
-);
+  allProducts,
+}: ProductDialogProps) => {
+  const [newProduct, setNewProduct] = useState<Product | null>(null);
+
+  // Find the new product if a change has been made
+  useEffect(() => {
+    if (orderProduct.new_variant_id) {
+      // Find the product that matches the new variant ID
+      const foundProduct = allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+      );
+      if (foundProduct) {
+        setNewProduct(foundProduct);
+      }
+    } else {
+      setNewProduct(null);
+    }
+  }, [orderProduct, allProducts]);
+
+  return (
+    <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto">
+      <DialogHeader>
+        <DialogTitle>
+          <span className="text-2xl font-bold mt-8 mb-8">Selección</span>
+        </DialogTitle>
+      </DialogHeader>
+      <DialogDescription asChild>
+        <ScrollArea className="flex flex-col w-full items-start">
+          <div className="w-full flex flex-col sm:flex-row flex-nowrap gap-4">
+            <ProductImage
+              src={imageSrc}
+              alt={imageAlt}
+              width={100}
+              height={100}
+            />
+            <ProductInfo
+              title={orderProduct.title}
+              variant={orderProduct.variant_title}
+              price={orderProduct.price}
+              action={orderProduct.action}
+              reason={orderProduct.reason}
+              confirmed={orderProduct.confirmed ?? false}
+              changed={orderProduct.changed}
+              newVariant={orderProduct.new_variant_title ?? undefined}
+              newProduct={newProduct}
+            />
+          </div>
+          <div className="w-full mt-2">
+            <FormProduct
+              product={product}
+              orderProduct={orderProduct}
+              changed={changed}
+              setChanged={setChanged}
+              onSuccess={onSuccess}
+              onItemChange={(updatedProduct) => {
+                if (onItemChange) {
+                  onItemChange(updatedProduct);
+                }
+                // Update the new product when a change is made
+                if (updatedProduct.new_variant_id) {
+                  const foundProduct = allProducts.find((p) =>
+                    p.variants.edges.some(
+                      (v) => v.node.id === updatedProduct.new_variant_id
+                    )
+                  );
+                  if (foundProduct) {
+                    setNewProduct(foundProduct);
+                  }
+                }
+              }}
+              allProducts={allProducts}
+            />
+          </div>
+        </ScrollArea>
+      </DialogDescription>
+    </DialogContent>
+  );
+};
 
 export const ProductLineClient = ({
   orderProduct,
   product,
   onItemChange,
+  allProducts,
 }: ProductLineProps) => {
   const [changed, setChanged] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
+  const [newProduct, setNewProduct] = useState<Product | null>(null);
+
+  // Find the new product if a change has been made
+  useEffect(() => {
+    if (orderProduct.new_variant_id) {
+      // Find the product that matches the new variant ID
+      const foundProduct = allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+      );
+      if (foundProduct) {
+        setNewProduct(foundProduct);
+      }
+    } else {
+      setNewProduct(null);
+    }
+  }, [orderProduct, allProducts]);
 
   const imageSrc = product?.image?.src || "/placeholder.jpg";
   const imageAlt = product.title || "Product image";
+
   return (
     <div
       className={cn(
@@ -183,7 +259,7 @@ export const ProductLineClient = ({
             height={140}
           />
           <ProductInfo
-            title={orderProduct.title}
+            title={product.title}
             variant={orderProduct.variant_title}
             price={orderProduct.price}
             action={orderProduct.action}
@@ -191,6 +267,7 @@ export const ProductLineClient = ({
             confirmed={orderProduct.confirmed ?? false}
             changed={orderProduct.changed ?? false}
             newVariant={orderProduct.new_variant_title ?? undefined}
+            newProduct={newProduct}
           />
         </DialogTrigger>
 
@@ -204,10 +281,30 @@ export const ProductLineClient = ({
           onSuccess={() => {
             setOpen(false);
             if (onItemChange) {
-              onItemChange(orderProduct);
+              const updatedItem = {
+                ...orderProduct,
+                products: [orderProduct],
+              };
+              onItemChange(updatedItem);
             }
           }}
-          onItemChange={onItemChange}
+          onItemChange={(updatedProduct) => {
+            if (onItemChange) {
+              onItemChange(updatedProduct);
+            }
+            // Update the new product when a change is made
+            if (updatedProduct.new_variant_id) {
+              const foundProduct = allProducts.find((p) =>
+                p.variants.edges.some(
+                  (v) => v.node.id === updatedProduct.new_variant_id
+                )
+              );
+              if (foundProduct) {
+                setNewProduct(foundProduct);
+              }
+            }
+          }}
+          allProducts={allProducts}
         />
       </Dialog>
     </div>

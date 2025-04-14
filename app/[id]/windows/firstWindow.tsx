@@ -2,15 +2,21 @@ import { memo, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
-import { OrderItem } from "@/types";
+import { OrderItem, Product } from "@/types";
 
 type FirstWindowProps = {
   name: string;
   items: OrderItem[];
   onItemChange?: (updatedItem: OrderItem) => void;
+  allProducts: Product[];
 };
 
-const FirstWindowBase = ({ name, items, onItemChange }: FirstWindowProps) => {
+const FirstWindowBase = ({
+  name,
+  items,
+  onItemChange,
+  allProducts,
+}: FirstWindowProps) => {
   const hasSelectedItems = useMemo(
     () => items.some((item) => item.action !== null),
     [items]
@@ -43,6 +49,7 @@ const FirstWindowBase = ({ name, items, onItemChange }: FirstWindowProps) => {
                   image: { src: "/placeholder.jpg" },
                 }
               }
+              allProducts={allProducts}
               onItemChange={onItemChange}
             />
           ))}
@@ -52,7 +59,12 @@ const FirstWindowBase = ({ name, items, onItemChange }: FirstWindowProps) => {
 
         {hasSelectedItems && (
           <div className="rounded-lg p-4">
-            <SummaryComponent items={items} shipping={false} final={false} />
+            <SummaryComponent
+              items={items}
+              shipping={false}
+              final={false}
+              allProducts={allProducts}
+            />
           </div>
         )}
       </div>

@@ -166,6 +166,7 @@ export type ProductLineProps = {
   orderProduct: typeof productsOrder.$inferSelect;
   product: Product;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+  allProducts: Product[];
 };
 
 export type ProductDialogProps = ProductLineProps & {
@@ -175,6 +176,7 @@ export type ProductDialogProps = ProductLineProps & {
   imageAlt: string;
   onSuccess: () => void;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+  allProducts: Product[];
 };
 
 // ==========================================
@@ -276,6 +278,7 @@ export type ClientOrderProps = {
   items: OrderItem[];
   order: typeof orders.$inferSelect;
   id: string;
+  allProducts: Product[];
 };
 
 export type ClientOrderWindowContentProps = {
@@ -297,6 +300,7 @@ export type OrderWindowContentProps = {
   setPosition: Dispatch<SetStateAction<number>>;
   setCredito: Dispatch<SetStateAction<boolean>>;
   credito: boolean;
+  allProducts: Product[];
 };
 
 export type Prices = {

@@ -6,7 +6,13 @@ import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
 
-export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
+export const ClientOrder = ({
+  name,
+  items,
+  order,
+  id,
+  allProducts,
+}: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
   const [isPending, startTransition] = useTransition();
@@ -49,6 +55,7 @@ export const ClientOrder = ({ name, items, order, id }: ClientOrderProps) => {
             credito={credito}
             setCredito={setCredito}
             onItemChange={handleItemChange}
+            allProducts={allProducts}
           />
           <div className="w-full mt-4">
             {position >= 4 ? (

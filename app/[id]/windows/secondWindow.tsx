@@ -18,6 +18,7 @@ type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
+  allProducts: Product[];
 };
 
 const SecondWindowBase = ({
@@ -27,6 +28,7 @@ const SecondWindowBase = ({
   items,
   onItemChange,
   id,
+  allProducts,
 }: Props) => {
   // Calculate totals
   const { totalPriceDevolver, totalPriceCambio } = useMemo(() => {
@@ -133,6 +135,7 @@ const SecondWindowBase = ({
           setPosition={setPosition}
           items={items}
           onItemChange={onItemChange}
+          allProducts={allProducts}
         />
       </div>
     </div>

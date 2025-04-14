@@ -12,6 +12,7 @@ type Props = {
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
+  allProducts: Product[];
 };
 
 export const SecondWindowForm = ({
@@ -20,6 +21,7 @@ export const SecondWindowForm = ({
   setPosition,
   items,
   onItemChange,
+  allProducts,
 }: Props) => {
   // useFormState returns [state, formAction]
   const [state, formAction] = useFormState(updateData, position);
@@ -106,9 +108,14 @@ export const SecondWindowForm = ({
         icon={false}
       />
       <span className="border w-full border-gray-300 mt-2" />
-      {items.some((item) => item.action !== null) && (
-        <SummaryComponent items={items} shipping={true} final={false} />
-      )}
+      <div className="rounded-lg p-4">
+        <SummaryComponent
+          items={items}
+          shipping={true}
+          final={false}
+          allProducts={allProducts}
+        />
+      </div>
       <button
         type="submit"
         className="bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"

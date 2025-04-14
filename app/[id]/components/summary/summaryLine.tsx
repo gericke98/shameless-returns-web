@@ -1,10 +1,13 @@
 "use client";
 
 import { productsOrder } from "@/db/schema";
+import { Product } from "@/types";
+import Image from "next/image";
 
 type SummaryLineProps = {
   item: typeof productsOrder.$inferSelect;
   newAction: boolean;
+  newProduct?: Product | null;
 };
 
 const ProductTitle = ({ title }: { title: string }) => (
@@ -38,12 +41,21 @@ const ProductVariant = ({
   </h6>
 );
 
-export const SummaryLine = ({ item, newAction }: SummaryLineProps) => {
+export const SummaryLine = ({
+  item,
+  newAction,
+  newProduct,
+}: SummaryLineProps) => {
   return (
     <div className="w-full h-full flex flex-col pl-4 mt-4 gap-2">
       <div className="w-full h-full flex flex-col sm:flex-row sm:justify-between sm:items-center">
-        <ProductTitle title={item.title} />
-        <ProductPrice price={item.price} newAction={newAction} />
+        <ProductTitle title={newProduct ? newProduct.title : item.title} />
+        <ProductPrice
+          price={
+            newProduct ? newProduct.variants.edges[0]?.node.price : item.price
+          }
+          newAction={newAction}
+        />
       </div>
       <ProductVariant
         variantTitle={item.variant_title}

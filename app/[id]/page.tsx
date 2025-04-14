@@ -1,6 +1,7 @@
-import { getOrderById, getProduct } from "@/db/queries";
+import { getOrderById, getProduct, getProducts } from "@/db/queries";
 import { ClientOrder } from "./clientOrder";
 import { redirect } from "next/navigation";
+import { Product } from "@/types";
 
 type OrderPageProps = {
   params: {
@@ -36,10 +37,53 @@ export default async function OrderPage({ params }: OrderPageProps) {
   // await new Promise((resolve) => setTimeout(resolve, 3000));
 
   const orderData = await fetchOrderWithProducts(params.id);
+  const allProducts = await getProducts();
 
   if (!orderData) {
     redirect("/");
   }
+
+  // Calculate the discount using the first product
+  const firstProduct = orderData.products[0];
+  const firstProductId = firstProduct.productId.toString();
+  const firstCurrentProduct = allProducts.find((p: Product) => {
+    const shopifyId = p.id.split("/").pop();
+    return shopifyId === firstProductId;
+  });
+
+  // Calculate the global discount ratio
+  let globalDiscountRatio = 1;
+  if (firstCurrentProduct) {
+    const orderPrice = parseFloat(firstProduct.price);
+    const currentPrice = parseFloat(
+      firstCurrentProduct.variants.edges[0].node.price
+    );
+    globalDiscountRatio = orderPrice / currentPrice;
+  }
+
+  // Apply the discount to all products in allProducts
+  const discountedAllProducts = allProducts.map((product: Product) => {
+    // Apply the discount to each variant
+    const discountedVariants = {
+      ...product.variants,
+      edges: product.variants.edges.map(
+        (edge: { node: { price: string } }) => ({
+          ...edge,
+          node: {
+            ...edge.node,
+            price: (parseFloat(edge.node.price) * globalDiscountRatio).toFixed(
+              2
+            ),
+          },
+        })
+      ),
+    };
+
+    return {
+      ...product,
+      variants: discountedVariants,
+    };
+  });
 
   return (
     <ClientOrder
@@ -47,6 +91,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
       items={orderData.products}
       order={orderData}
       id={orderData.id}
+      allProducts={discountedAllProducts}
     />
   );
 }

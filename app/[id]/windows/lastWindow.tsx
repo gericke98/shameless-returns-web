@@ -13,6 +13,7 @@ type Props = {
   credito: boolean | null;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
+  allProducts: Product[];
 };
 
 const LastWindowBase = ({
@@ -22,6 +23,7 @@ const LastWindowBase = ({
   credito,
   onItemChange,
   id,
+  allProducts,
 }: Props) => {
   const { totalPriceDevolver, totalPriceCambio, totalPrice } = useMemo(() => {
     const totalPriceDevolver = items
@@ -61,6 +63,7 @@ const LastWindowBase = ({
                 orderProduct={product}
                 product={product.newp}
                 onItemChange={onItemChange}
+                allProducts={allProducts}
               />
             )
         )}
@@ -73,6 +76,7 @@ const LastWindowBase = ({
             shipping={true}
             final={true}
             credito={credito || false}
+            allProducts={allProducts}
           />
         )}
         {totalPrice === 0 ? (

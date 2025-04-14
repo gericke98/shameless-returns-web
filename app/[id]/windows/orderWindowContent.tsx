@@ -29,6 +29,7 @@ export const OrderWindowContent = ({
   setCredito,
   credito,
   onItemChange,
+  allProducts,
 }: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
   const { totalPrice } = useMemo(() => calculatePrices(items), [items]);
   const itemsToShow = useMemo(
@@ -43,7 +44,14 @@ export const OrderWindowContent = ({
   }, [itemsToShow, position, setPosition]);
 
   const windows = {
-    1: <FirstWindow name={name} items={items} onItemChange={onItemChange} />,
+    1: (
+      <FirstWindow
+        name={name}
+        items={items}
+        onItemChange={onItemChange}
+        allProducts={allProducts}
+      />
+    ),
     2: (
       <SecondWindow
         order={order}
@@ -52,6 +60,7 @@ export const OrderWindowContent = ({
         items={items}
         onItemChange={onItemChange}
         id={id}
+        allProducts={allProducts}
       />
     ),
     3:
@@ -74,6 +83,7 @@ export const OrderWindowContent = ({
         credito={credito}
         onItemChange={onItemChange}
         id={id}
+        allProducts={allProducts}
       />
     ),
   };

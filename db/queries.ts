@@ -22,6 +22,82 @@ const createSession = (): RequestInit => {
   };
 };
 
+const SPANISH_PROVINCE_CODES: { [key: string]: string } = {
+  Álava: "VI",
+  Albacete: "AB",
+  Alicante: "A",
+  Almería: "AL",
+  Asturias: "O",
+  Ávila: "AV",
+  Badajoz: "BA",
+  Barcelona: "B",
+  Burgos: "BU",
+  Cáceres: "CC",
+  Cádiz: "CA",
+  Cantabria: "S",
+  Castellón: "CS",
+  "Ciudad Real": "CR",
+  Córdoba: "CO",
+  "La Coruña": "C",
+  Cuenca: "CU",
+  Gerona: "GI",
+  Granada: "GR",
+  Guadalajara: "GU",
+  Guipúzcoa: "SS",
+  Huelva: "H",
+  Huesca: "HU",
+  "Islas Baleares": "PM",
+  Jaén: "J",
+  León: "LE",
+  Lérida: "L",
+  Lugo: "LU",
+  Madrid: "M",
+  Málaga: "MA",
+  Murcia: "MU",
+  Navarra: "NA",
+  Orense: "OR",
+  Palencia: "P",
+  "Las Palmas": "GC",
+  Pontevedra: "PO",
+  "La Rioja": "LO",
+  Salamanca: "SA",
+  "Santa Cruz de Tenerife": "TF",
+  Segovia: "SG",
+  Sevilla: "SE",
+  Soria: "SO",
+  Tarragona: "T",
+  Teruel: "TE",
+  Toledo: "TO",
+  Valencia: "V",
+  Valladolid: "VA",
+  Vizcaya: "BI",
+  Zamora: "ZA",
+  Zaragoza: "Z",
+};
+
+function getProvinceCode(provinceName: string): string {
+  // Normalize the province name by removing accents and converting to uppercase
+  const normalizedName = provinceName
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+
+  // Find the matching province code
+  for (const [name, code] of Object.entries(SPANISH_PROVINCE_CODES)) {
+    if (
+      name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase() === normalizedName
+    ) {
+      return code;
+    }
+  }
+
+  // If no match found, return the original province name
+  return provinceName;
+}
+
 export const getOrderById = cache(async (id: string) => {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, id),
@@ -160,6 +236,9 @@ export async function createRefund(
 export async function createOrder(order: any, product: any) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+
+  const provinceCode = getProvinceCode(order.shippingCity);
+
   // Log the query to debug
   const query = `
   mutation OrderCreate(
@@ -207,7 +286,7 @@ export async function createOrder(order: any, product: any) {
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
-        provinceCode: order.shippingCity,
+        provinceCode: provinceCode,
         zip: order.shippingZip,
       },
       buyerAcceptsMarketing: true,
@@ -230,7 +309,7 @@ export async function createOrder(order: any, product: any) {
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
-        provinceCode: order.shippingCity,
+        provinceCode: provinceCode,
         zip: order.shippingZip,
       },
       shippingLines: [
@@ -653,6 +732,86 @@ export async function getProduct(id: string) {
     return product;
   } catch (error) {
     console.error("Error fetching product:", error);
+    throw error;
+  }
+}
+
+export async function getProducts() {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
+
+  const query = `
+    query getProducts {
+      products(first: 250, query: "status:ACTIVE") {
+        edges {
+          node {
+            id
+            title
+            handle
+            description
+            images(first: 1) {
+              edges {
+                node {
+                  url
+                  src: url
+                }
+              }
+            }
+            variants(first: 10) {
+              edges {
+                node {
+                  id
+                  price
+                  title
+                  inventoryQuantity
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({
+        query,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const { data, errors } = await response.json();
+
+    if (errors) {
+      console.error("GraphQL Errors:", errors);
+      throw new Error("GraphQL query failed");
+    }
+
+    // Transform the response to include image.src for each product
+    const products = data.products.edges.map(
+      ({ node: product }: { node: any }) => {
+        if (product.images.edges.length > 0) {
+          product.image = {
+            src: product.images.edges[0].node.src,
+          };
+        } else {
+          product.image = {
+            src: "", // Provide a default empty string if no image exists
+          };
+        }
+        return product;
+      }
+    );
+
+    return products;
+  } catch (error) {
+    console.error("Error fetching products:", error);
     throw error;
   }
 }

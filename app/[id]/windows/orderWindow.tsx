@@ -1,12 +1,13 @@
 import { memo } from "react";
 import { OrderWindowContent } from "./orderWindowContent";
-import { ClientOrderWindowContentProps } from "@/types";
+import { ClientOrderWindowContentProps, Product } from "@/types";
 
 type OrderWindowProps = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   setCredito: React.Dispatch<React.SetStateAction<boolean>>;
   credito: boolean;
+  allProducts: Product[];
 } & ClientOrderWindowContentProps & {
     onItemChange?: (updatedItem: any) => void;
   };
@@ -27,6 +28,7 @@ const OrderWindowBase = ({
       setCredito={props.setCredito}
       credito={props.credito}
       onItemChange={onItemChange}
+      allProducts={props.allProducts}
     />
   );
 };

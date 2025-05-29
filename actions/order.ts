@@ -97,7 +97,8 @@ function validateOrderDetails(
   // Validate delivery status
   if (
     !order.fulfillments ||
-    order.fulfillments[0]?.shipment_status !== "delivered"
+    // order.fulfillments[0]?.shipment_status !== "delivered"
+    true
   ) {
     return {
       message:

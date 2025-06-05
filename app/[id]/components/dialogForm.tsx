@@ -49,6 +49,7 @@ export const FormProduct = ({
       variants: { edges: [] },
     }
   );
+
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -150,6 +151,7 @@ export const FormProduct = ({
     const newVariant = new_product_change.variants.edges.find(
       (v) => v.node.title === value
     )?.node;
+
     if (newVariant) {
       setVariantId(newVariant.id);
       setSize(value);

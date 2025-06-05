@@ -242,14 +242,6 @@ export async function createOrder(order: any, product: any) {
     ? getProvinceCode(order.shippingProvince)
     : getProvinceCode(order.shippingCity);
 
-  // Log the values for debugging
-  console.log("Order creation details:", {
-    city: order.shippingCity,
-    province: order.shippingProvince,
-    provinceCode,
-    address: order.shippingAddress1,
-  });
-
   const query = `
     mutation OrderCreate(
       $options: OrderCreateOptionsInput, 
@@ -568,8 +560,6 @@ export async function createGiftCard(customerId: string, amount: string) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  console.log("customerId", customerId);
-  console.log("amount", amount);
   const query = `
     mutation {
       giftCardCreate(input: {

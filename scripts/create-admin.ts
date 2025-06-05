@@ -23,7 +23,6 @@ async function createAdminUser() {
       username,
       hashedPassword,
     });
-    console.log("Admin user created successfully");
   } catch (error) {
     console.error("Error creating admin user:", error);
   }

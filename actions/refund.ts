@@ -18,14 +18,12 @@ export async function validateReturn(product: any, status: string, order: any) {
   let result;
   let result2;
   // Aqui igual puedo poner si el estado es distinto de preregistrado --> Meter aqui modales para avisar ui
-  if (status === "Entregado" || true) {
+  if (status === "Entregado") {
     // En el caso de ser una gift card, se crea una gift card y no reembolso
     if (product.credit) {
       // Extraigo la info completa del pedido para saber el customer id
       const totalOrder = await getOrderTotal(order.id);
       const customerId = totalOrder.customer.id;
-      console.log("customerId", customerId);
-      console.log("total order", totalOrder);
 
       // Extraigo el valor del gift card
       const giftCardValue =

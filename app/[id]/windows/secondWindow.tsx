@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
 import Image from "next/image";
 import { IoLocationSharp } from "react-icons/io5";
@@ -45,6 +45,9 @@ const SecondWindowBase = ({
 
   const totalPrice = totalPriceDevolver - totalPriceCambio;
   const shippingCost = process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST;
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   return (
     <div className="w-full h-full flex flex-col p-2 sm:p-4">
@@ -57,86 +60,83 @@ const SecondWindowBase = ({
         className="mt-2 cursor-pointer"
         onClick={() => setPosition(position - 1)}
       />
+      <div className="space-y-8 p-0">
+        {/* Title */}
+        <h3 className="font-bold text-xl sm:text-2xl text-left mt-2">
+          Método de devolución
+        </h3>
 
-      {/* Title */}
-      <h3 className="font-bold text-xl sm:text-2xl text-left mt-2">
-        Método de devolución
-      </h3>
+        {/* Subtitle */}
+        <p className="mt-3 text-sm sm:text-base text-gray-700">
+          Escoge el método de envío que quieres usar para devolver los productos
+          seleccionados
+        </p>
 
-      {/* Subtitle */}
-      <p className="mt-3 text-sm sm:text-base text-gray-700">
-        Escoge el método de envío que quieres usar para devolver los productos
-        seleccionados
-      </p>
-
-      <span className="border border-gray-300 w-full mt-3" />
-
-      {/*
+        {/*
         On mobile, stack vertically.
         On larger screens, keep the "icon" and "info" side by side.
       */}
-      <div className="w-full flex flex-col sm:flex-row rounded-lg my-5 border-2 border-black hover:cursor-pointer">
-        {/* Black Icon Container */}
-        <div className="bg-black flex flex-row sm:flex-col items-center justify-center p-2 sm:p-3">
-          <IoLocationSharp size={30} color="white" />
+        <div className="w-full flex flex-col sm:flex-row rounded-lg my-5 border-2 border-black hover:cursor-pointer">
+          {/* Black Icon Container */}
+          <div className="bg-black flex flex-row sm:flex-col items-center justify-center p-2 sm:p-3">
+            <IoLocationSharp size={30} color="white" />
+          </div>
+
+          {/* Info Container */}
+          <div className="w-full flex flex-col p-2 sm:p-3">
+            <div className="flex flex-row items-center gap-2">
+              <Image
+                src={CorreosLogo}
+                alt="Logo correos"
+                width={35}
+                height={40}
+                // Show the image on all screens, or hide on small if you want
+                // className="hidden lg:block"
+              />
+              <h5 className="text-xs sm:text-sm font-semibold">
+                Entrega en punto de recogida Correos
+              </h5>
+            </div>
+            <div className="mt-1">
+              <h5 className="text-xxs sm:text-xs">
+                Coste: {totalPrice !== 0 ? `${shippingCost},00 €` : "0,00 €"}
+              </h5>
+            </div>
+          </div>
         </div>
 
-        {/* Info Container */}
-        <div className="w-full flex flex-col p-2 sm:p-3">
+        {/* Secondary Info Section */}
+        <div className="w-full flex flex-col mt-2 p-0">
+          {/* Title row */}
           <div className="flex flex-row items-center gap-2">
-            <Image
-              src={CorreosLogo}
-              alt="Logo correos"
-              width={35}
-              height={40}
-              // Show the image on all screens, or hide on small if you want
-              // className="hidden lg:block"
-            />
-            <h5 className="text-xs sm:text-sm font-semibold">
-              Entrega en punto de recogida Correos
-            </h5>
+            <IoLocationSharp size={30} color="black" />
+            <h3 className="font-bold text-base sm:text-lg">
+              Entrega en punto de recogida
+            </h3>
           </div>
-          <div className="mt-1">
-            <h5 className="text-xxs sm:text-xs">
-              Coste: {totalPrice !== 0 ? `${shippingCost},00 €` : "0,00 €"}
-            </h5>
-          </div>
+
+          <p className="mt-2 text-sm sm:text-base font-light">
+            Valida tu dirección de envío para poder generar la etiqueta de
+            devolución que recibirás en tu email, con la que podrás llevar tu
+            paquete a un punto de recogida de Correos.{" "}
+            <Link
+              href="https://www.correos.es/es/es/herramientas/oficinas-buzones-citypaq/detalle"
+              className="text-blue-500 font-semibold"
+            >
+              Ver listado
+            </Link>
+          </p>
+
+          {/* Form */}
+          <SecondWindowForm
+            order={order}
+            position={position}
+            setPosition={setPosition}
+            items={items}
+            onItemChange={onItemChange}
+            allProducts={allProducts}
+          />
         </div>
-      </div>
-
-      <span className="border border-gray-300 w-full mt-2" />
-
-      {/* Secondary Info Section */}
-      <div className="w-full flex flex-col mt-2">
-        {/* Title row */}
-        <div className="flex flex-row items-center gap-2">
-          <IoLocationSharp size={30} color="black" />
-          <h3 className="font-bold text-base sm:text-lg">
-            Entrega en punto de recogida
-          </h3>
-        </div>
-
-        <p className="mt-2 text-sm sm:text-base font-light">
-          Valida tu dirección de envío para poder generar la etiqueta de
-          devolución que recibirás en tu email, con la que podrás llevar tu
-          paquete a un punto de recogida de Correos.{" "}
-          <Link
-            href="https://www.correos.es/es/es/herramientas/oficinas-buzones-citypaq/detalle"
-            className="text-blue-500 font-semibold"
-          >
-            Ver listado
-          </Link>
-        </p>
-
-        {/* Form */}
-        <SecondWindowForm
-          order={order}
-          position={position}
-          setPosition={setPosition}
-          items={items}
-          onItemChange={onItemChange}
-          allProducts={allProducts}
-        />
       </div>
     </div>
   );

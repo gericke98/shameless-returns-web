@@ -70,7 +70,7 @@ export const SummaryComponent = ({
     );
 
     const itemsToDev = items.filter(
-      (item) => item.action === "DEVOLUCION" && !item.confirmed
+      (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
     );
 
     return {

@@ -73,6 +73,7 @@ export const OrderWindowContent = ({
           setCredito={setCredito}
           onItemChange={onItemChange}
           id={id}
+          credito={credito}
         />
       ) : null,
     4: (

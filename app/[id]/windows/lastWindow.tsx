@@ -25,19 +25,43 @@ const LastWindowBase = ({
   id,
   allProducts,
 }: Props) => {
-  const { totalPriceDevolver, totalPriceCambio, totalPrice } = useMemo(() => {
-    const totalPriceDevolver = items
-      .filter((item) => item.action && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-    const totalPriceCambio = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-    let totalPrice = totalPriceDevolver - totalPriceCambio;
-    if (totalPrice !== 0) {
-      totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
-    }
-    return { totalPriceDevolver, totalPriceCambio, totalPrice };
-  }, [items]);
+  const { totalPriceDevolver, totalPriceCambio, totalPrice, totalPrice2 } =
+    useMemo(() => {
+      const totalPriceDevolver = items
+        .filter((item) => item.action && !item.confirmed)
+        .reduce((sum, item) => sum + parseFloat(item.price), 0);
+      const totalPriceCambio = items
+        .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+        .reduce((sum, item) => sum + parseFloat(item.price), 0);
+      const totalPriceCambio2 = items
+        .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+        .reduce((sum, item) => {
+          // If there's a new variant ID, find the corresponding product and use its price
+          if (item.new_variant_id) {
+            const newProduct = allProducts.find((p) =>
+              p.variants.edges.some((v) => v.node.id === item.new_variant_id)
+            );
+            if (newProduct) {
+              // Find the specific variant that matches the new_variant_id
+              const newVariant = newProduct.variants.edges.find(
+                (v) => v.node.id === item.new_variant_id
+              );
+              if (newVariant) {
+                return sum + parseFloat(newVariant.node.price);
+              }
+            }
+          }
+          // Fallback to the original price if no new product is found
+          return sum + parseFloat(item.price);
+        }, 0);
+
+      let totalPrice = totalPriceDevolver - totalPriceCambio;
+      let totalPrice2 = totalPriceDevolver - totalPriceCambio2;
+      if (totalPrice !== 0) {
+        totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
+      }
+      return { totalPriceDevolver, totalPriceCambio, totalPrice, totalPrice2 };
+    }, [items]);
 
   const handleBack = () => {
     setPosition(totalPrice !== 0 ? position - 1 : position - 2);
@@ -86,7 +110,13 @@ const LastWindowBase = ({
               <span className="font-bold">
                 Una vez devuelvas tus productos,
               </span>{" "}
-              recibirás los nuevos que has seleccionado.
+              recibirás los nuevos que has seleccionado.{" "}
+              {totalPrice2 && (
+                <p className="font-bold">
+                  Recibirás un link para proceder con el pago de{" "}
+                  {-totalPrice2.toFixed(2)} € cuando se acepte tu devolución.
+                </p>
+              )}
             </p>
           </div>
         ) : credito ? (

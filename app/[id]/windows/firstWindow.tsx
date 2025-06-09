@@ -23,7 +23,7 @@ const FirstWindowBase = ({
   );
 
   return (
-    <div className="w-full h-full p-6">
+    <div className="w-full h-full flex flex-col p-2 sm:p-4">
       <Progress value={25} className="mb-8" />
       <div className="space-y-8">
         <div className="space-y-2">
@@ -61,7 +61,7 @@ const FirstWindowBase = ({
           <div className="rounded-lg p-4">
             <SummaryComponent
               items={items}
-              shipping={false}
+              shipping={true}
               final={false}
               allProducts={allProducts}
             />

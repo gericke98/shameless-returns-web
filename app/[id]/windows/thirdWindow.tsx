@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { Progress } from "@/components/ui/progress";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import Image from "next/image";
@@ -20,6 +20,7 @@ type Props = {
   setCredito: React.Dispatch<React.SetStateAction<boolean>>;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
+  credito: boolean;
 };
 
 // Reusable sub-component for Store Credit
@@ -152,6 +153,7 @@ const ThirdWindowBase = ({
   position,
   setPosition,
   setCredito,
+  credito,
 }: Props) => {
   const [selected, setSelected] = useState<number>(0);
 
@@ -172,6 +174,9 @@ const ThirdWindowBase = ({
     }
     return result;
   }, [items, shipping]);
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
 
   return (
     // Use a container with max-w to keep things narrow on large screens,
@@ -196,7 +201,7 @@ const ThirdWindowBase = ({
       <div className="flex flex-col gap-3 w-full">
         <StoreCredit
           totalPrice={totalPrice}
-          isSelected={selected === 0}
+          isSelected={credito}
           onClick={() => {
             setSelected(0);
             setCredito(true);
@@ -204,7 +209,7 @@ const ThirdWindowBase = ({
         />
         <OriginalPayment
           totalPrice={totalPrice}
-          isSelected={selected === 1}
+          isSelected={!credito}
           onClick={() => {
             setSelected(1);
             setCredito(false);

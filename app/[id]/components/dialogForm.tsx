@@ -32,7 +32,9 @@ export const FormProduct = ({
   const [action, setAction] = useState<string | null>(
     orderProduct.action === "CAMBIO" ? ACTIONS.CHANGE : ACTIONS.RETURN
   );
-  const [motivo, setMotivo] = useState<string>(orderProduct.reason || "");
+  const [motivo, setMotivo] = useState<string>(
+    orderProduct.reason || "Me queda pequeño"
+  );
   const [size, setSize] = useState<string>(
     orderProduct.new_variant_title || orderProduct.variant_title
   );
@@ -42,12 +44,13 @@ export const FormProduct = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [new_product_change, setNewProductChange] = useState<Product>(
-    product || {
-      id: "",
-      title: "",
-      image: { src: "" },
-      variants: { edges: [] },
-    }
+    allProducts.find((p) =>
+      p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+    ) ||
+      allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.inventoryQuantity > 0)
+      ) ||
+      allProducts[0]
   );
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -59,6 +62,7 @@ export const FormProduct = ({
       const newProduct = allProducts.find((p) =>
         p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
       );
+
       if (newProduct) {
         setNewProductChange(newProduct);
       }

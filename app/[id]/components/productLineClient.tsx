@@ -53,7 +53,10 @@ const VariantInfo = ({
   variant,
   changed,
   newVariant,
-}: Pick<ProductInfoProps, "variant" | "changed" | "newVariant">) => (
+  isNewProduct,
+}: Pick<ProductInfoProps, "variant" | "changed" | "newVariant"> & {
+  isNewProduct: boolean;
+}) => (
   <div className="w-full flex flex-row gap-3">
     <span
       className={cn(
@@ -63,7 +66,7 @@ const VariantInfo = ({
     >
       {variant}
     </span>
-    {changed && newVariant && (
+    {changed && newVariant && !isNewProduct && (
       <span className="text-xs text-left font-normal text-slate-700">
         {newVariant}
       </span>
@@ -81,12 +84,21 @@ const ProductInfo = ({
   changed,
   newVariant,
   newProduct,
-}: ProductInfoProps & { newProduct?: Product | null }) => (
+  isNewProduct,
+}: ProductInfoProps & {
+  newProduct?: Product | null;
+  isNewProduct: boolean;
+}) => (
   <div className="flex flex-col w-full gap-1 items-start">
     <span className="lg:text-base text-sm text-left font-bold leading-tight text-black">
       {title}
     </span>
-    <VariantInfo variant={variant} changed={changed} newVariant={newVariant} />
+    <VariantInfo
+      variant={variant}
+      changed={changed}
+      newVariant={newVariant}
+      isNewProduct={isNewProduct}
+    />
     <span className="text-sm text-left font-bold leading-tight text-black">
       {Number(price).toFixed(2)} €
     </span>
@@ -105,7 +117,7 @@ const ProductInfo = ({
         El producto ya ha sido modificado
       </span>
     )}
-    {changed && newProduct && (
+    {changed && newProduct && isNewProduct && (
       <div className="mt-2 w-full flex items-center gap-2 p-2 bg-gray-50 rounded-md">
         <div className="relative w-8 h-8">
           <Image
@@ -155,8 +167,11 @@ const ProductDialog = ({
     }
   }, [orderProduct, allProducts]);
 
+  const isNewProduct =
+    newProduct?.id !== `gid://shopify/Product/${orderProduct.productId}`;
+
   return (
-    <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto">
+    <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto lg:pb-14">
       <DialogHeader>
         <DialogTitle>
           <span className="text-2xl font-bold mt-8 mb-8">Selección</span>
@@ -181,6 +196,7 @@ const ProductDialog = ({
               changed={orderProduct.changed}
               newVariant={orderProduct.new_variant_title ?? undefined}
               newProduct={newProduct}
+              isNewProduct={isNewProduct}
             />
           </div>
           <div className="w-full mt-2">
@@ -240,6 +256,8 @@ export const ProductLineClient = ({
     }
   }, [orderProduct, allProducts]);
 
+  const isNewProduct =
+    newProduct?.id !== `gid://shopify/Product/${orderProduct.productId}`;
   const imageSrc = product?.image?.src || "/placeholder.jpg";
   const imageAlt = product.title || "Product image";
 
@@ -268,6 +286,7 @@ export const ProductLineClient = ({
             changed={orderProduct.changed ?? false}
             newVariant={orderProduct.new_variant_title ?? undefined}
             newProduct={newProduct}
+            isNewProduct={isNewProduct}
           />
         </DialogTrigger>
 
@@ -299,6 +318,7 @@ export const ProductLineClient = ({
                   (v) => v.node.id === updatedProduct.new_variant_id
                 )
               );
+
               if (foundProduct) {
                 setNewProduct(foundProduct);
               }

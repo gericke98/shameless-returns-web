@@ -108,7 +108,7 @@ export const SecondWindowForm = ({
         icon={false}
       />
       <span className="border w-full border-gray-300 mt-2" />
-      <div className="rounded-lg p-4">
+      <div className="rounded-lg">
         <SummaryComponent
           items={items}
           shipping={true}
@@ -118,7 +118,7 @@ export const SecondWindowForm = ({
       </div>
       <button
         type="submit"
-        className="bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
+        className="bg-cyan-800 py-4 lg:-my-8 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
       >
         Continuar
       </button>

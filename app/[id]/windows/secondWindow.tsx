@@ -38,7 +38,25 @@ const SecondWindowBase = ({
 
     const totalPriceCambio = items
       .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+      .reduce((sum, item) => {
+        // If there's a new variant ID, find the corresponding product and use its price
+        if (item.new_variant_id) {
+          const newProduct = allProducts.find((p) =>
+            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
+          );
+          if (newProduct) {
+            // Find the specific variant that matches the new_variant_id
+            const newVariant = newProduct.variants.edges.find(
+              (v) => v.node.id === item.new_variant_id
+            );
+            if (newVariant) {
+              return sum + parseFloat(newVariant.node.price);
+            }
+          }
+        }
+        // Fallback to the original price if no new product is found
+        return sum + parseFloat(item.price);
+      }, 0);
 
     return { totalPriceDevolver, totalPriceCambio };
   }, [items]);

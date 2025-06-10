@@ -1,21 +1,48 @@
 import { useEffect, useMemo } from "react";
-import { OrderItem, OrderWindowContentProps, Prices } from "@/types";
+import { OrderItem, OrderWindowContentProps, Prices, Product } from "@/types";
 import { FirstWindow } from "./firstWindow";
 import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 import { LastWindow } from "./lastWindow";
 
-const calculatePrices = (items: OrderItem[]): Prices => {
+const calculatePrices = (
+  items: OrderItem[],
+  allProducts: Product[]
+): Prices => {
   const returnPrice = items
     .filter((item) => item.action && !item.confirmed)
     .reduce((sum, item) => sum + parseFloat(item.price), 0);
   const exchangePrice = items
     .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
+    .reduce((sum, item) => {
+      // If there's a new variant ID, find the corresponding product and use its price
+      if (item.new_variant_id) {
+        const newProduct = allProducts.find((p) =>
+          p.variants.edges.some((v) => v.node.id === item.new_variant_id)
+        );
+        if (newProduct) {
+          // Find the specific variant that matches the new_variant_id
+          const newVariant = newProduct.variants.edges.find(
+            (v) => v.node.id === item.new_variant_id
+          );
+          if (newVariant) {
+            return sum + parseFloat(newVariant.node.price);
+          }
+        }
+      }
+      // Fallback to the original price if no new product is found
+      return sum + parseFloat(item.price);
+    }, 0);
+  let totalPrice = returnPrice - exchangePrice;
+  const shippingCost =
+    totalPrice > 0
+      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
+      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
+  totalPrice -= shippingCost;
   return {
     returnPrice,
     exchangePrice,
-    totalPrice: returnPrice - exchangePrice,
+    totalPrice: totalPrice,
   };
 };
 
@@ -31,7 +58,10 @@ export const OrderWindowContent = ({
   onItemChange,
   allProducts,
 }: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
-  const { totalPrice } = useMemo(() => calculatePrices(items), [items]);
+  const { totalPrice } = useMemo(
+    () => calculatePrices(items, allProducts),
+    [items, allProducts]
+  );
   const itemsToShow = useMemo(
     () => items.filter((item) => item.action && !item.confirmed),
     [items]
@@ -64,7 +94,7 @@ export const OrderWindowContent = ({
       />
     ),
     3:
-      totalPrice !== 0 ? (
+      totalPrice > 0 ? (
         <ThirdWindow
           items={items}
           shipping={true}
@@ -74,6 +104,7 @@ export const OrderWindowContent = ({
           onItemChange={onItemChange}
           id={id}
           credito={credito}
+          allProducts={allProducts}
         />
       ) : null,
     4: (

@@ -7,8 +7,13 @@ function absoluteUrl(path: string) {
 }
 const returnUrl = absoluteUrl("/");
 
-export const createStripeUrl = async (total: number, email: string) => {
-  const total2 = 0.5; // For testing purposes, set a fixed amount
+export const createStripeUrl = async (
+  total: number,
+  email: string,
+  id: string,
+  isCredit: boolean
+) => {
+  const isCreditMeta = isCredit ? "true" : "false";
   const stripeSession = await stripe.checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
@@ -22,11 +27,15 @@ export const createStripeUrl = async (total: number, email: string) => {
             name: "Returns & Exchanges Fee",
             description: "Shameless Collective",
           },
-          unit_amount: Math.round(total2 * 100), // Stripe expects the amount in cents
+          unit_amount: Math.round(total * 100), // Stripe expects the amount in cents
         },
       },
     ],
-    success_url: returnUrl,
+    metadata: {
+      id: id,
+      isCredit: isCreditMeta,
+    },
+    success_url: returnUrl + "/success",
     cancel_url: returnUrl,
   });
   return { data: stripeSession.url };

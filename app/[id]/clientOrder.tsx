@@ -16,7 +16,6 @@ export const ClientOrder = ({
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
   const [isPending, startTransition] = useTransition();
-  console.log("order", order);
 
   // Compute a flag whether any item is selected (memoized)
   const hasSelectedItems = useMemo(

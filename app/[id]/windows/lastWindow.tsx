@@ -57,8 +57,15 @@ const LastWindowBase = ({
 
       let totalPrice = totalPriceDevolver - totalPriceCambio;
       let totalPrice2 = totalPriceDevolver - totalPriceCambio2;
+      const shippingCost =
+        totalPrice2 > 0
+          ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
+          : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
       if (totalPrice !== 0) {
-        totalPrice -= Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
+        totalPrice -= shippingCost;
+      }
+      if (totalPrice2 !== 0) {
+        totalPrice2 -= shippingCost;
       }
       return { totalPriceDevolver, totalPriceCambio, totalPrice, totalPrice2 };
     }, [items]);
@@ -111,11 +118,13 @@ const LastWindowBase = ({
                 Una vez devuelvas tus productos,
               </span>{" "}
               recibirás los nuevos que has seleccionado.{" "}
-              {totalPrice2 && (
+              {totalPrice2 && Number(totalPrice2) > 0 ? (
                 <p className="font-bold">
                   Recibirás un link para proceder con el pago de{" "}
                   {-totalPrice2.toFixed(2)} € cuando se acepte tu devolución.
                 </p>
+              ) : (
+                ""
               )}
             </p>
           </div>

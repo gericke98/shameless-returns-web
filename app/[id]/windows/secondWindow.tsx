@@ -44,7 +44,10 @@ const SecondWindowBase = ({
   }, [items]);
 
   const totalPrice = totalPriceDevolver - totalPriceCambio;
-  const shippingCost = process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST;
+  const shippingCost =
+    totalPrice > 0
+      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
+      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -99,7 +102,7 @@ const SecondWindowBase = ({
             </div>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
-                Coste: {totalPrice !== 0 ? `${shippingCost},00 €` : "0,00 €"}
+                Coste: {shippingCost},00 €
               </h5>
             </div>
           </div>

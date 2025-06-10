@@ -25,7 +25,7 @@ export async function validateReturn(product: any, status: string, order: any) {
       const totalOrder = await getOrderTotal(order.id);
       const customerId = totalOrder.customer.id;
 
-      // Extraigo el valor del gift card
+      // Extraigo el valor del gift card (En este caso siempre será return)
       const giftCardValue =
         (product.price - Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)) *
         1.15;

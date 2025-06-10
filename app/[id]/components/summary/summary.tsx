@@ -83,11 +83,14 @@ export const SummaryComponent = ({
   }, [items, allProducts]);
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
-  const shippingCost = Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST);
+  const shippingCost =
+    itemsToDev.length > 0
+      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
+      : itemsToCambio.length > 0
+      ? Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST)
+      : 0;
 
-  if (shipping && itemsToDev.length > 0) {
-    totalPrice -= shippingCost;
-  }
+  totalPrice -= shippingCost;
 
   const creditBonus = credito ? totalPrice * 0.15 : 0;
   const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
@@ -153,7 +156,7 @@ export const SummaryComponent = ({
               {/* Right side (total, right-aligned) */}
               <span className="font-semibold text-sm text-right mt-1 sm:mt-0 w-full">
                 {(totalPriceCambio > 0 || shipping) && "-"}
-                {shipping && itemsToDev.length > 0
+                {shipping && (itemsToDev.length > 0 || itemsToCambio.length > 0)
                   ? (totalPriceCambio + shippingCost).toFixed(2)
                   : totalPriceCambio.toFixed(2)}
                 {" €"}
@@ -169,7 +172,10 @@ export const SummaryComponent = ({
                 newProduct={findProductByVariantId(item.new_variant_id)}
               />
             ))}
-            {shipping && itemsToDev.length > 0 && <SummaryShipping />}
+            {shipping &&
+              (itemsToDev.length > 0 || itemsToCambio.length > 0) && (
+                <SummaryShipping shippingCost={shippingCost} />
+              )}
           </AccordionContent>
         </AccordionItem>
       </Accordion>

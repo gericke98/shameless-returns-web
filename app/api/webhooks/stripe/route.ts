@@ -4,33 +4,50 @@ import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
-export async function POST(req: NextRequest) {
-  // Extraigo el body
+export async function POST(req: Request) {
   const body = await req.text();
-  const signature = headers().get("Stripe-Signature") as string;
+  const signature = headers().get("stripe-signature");
 
-  let event: Stripe.Event;
+  if (!signature) {
+    return NextResponse.json(
+      { error: "No signature found in request" },
+      { status: 400 }
+    );
+  }
 
   try {
-    event = stripe.webhooks.constructEvent(
+    const event = stripe.webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!
     );
-  } catch (error: any) {
-    return new NextResponse(`Webhook error: ${error.message}`, { status: 400 });
-  }
-  const session = event.data.object as Stripe.Checkout.Session;
-  console.log("Received event:", event.type);
-  console.log("session:", session);
 
-  if (event.type === "checkout.session.completed") {
-    // Elimino el stock de la bbdd
-    // if (!session.metadata?.products) {
-    //   return new NextResponse("Products are required", { status: 400 });
-    // }
-    return new NextResponse(null, { status: 200 });
-    console.log("Checkout session completed");
+    console.log("Received event:", event.type);
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      console.log("Checkout session completed:", session);
+
+      // Here you can add your post-payment logic
+      // For example:
+      // - Update order status
+      // - Send confirmation email
+      // - Create shipping label
+      // - etc.
+
+      return NextResponse.json({ received: true });
+    }
+
+    return NextResponse.json({ received: true });
+  } catch (err) {
+    console.error("Webhook error:", err);
+    return NextResponse.json(
+      {
+        error: `Webhook error: ${
+          err instanceof Error ? err.message : "Unknown error"
+        }`,
+      },
+      { status: 400 }
+    );
   }
-  return new NextResponse(null, { status: 200 });
 }

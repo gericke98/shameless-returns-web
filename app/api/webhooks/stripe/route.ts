@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     // if (!session.metadata?.products) {
     //   return new NextResponse("Products are required", { status: 400 });
     // }
-
+    return new NextResponse(null, { status: 200 });
     console.log("Checkout session completed");
   }
   return new NextResponse(null, { status: 200 });

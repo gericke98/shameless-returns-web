@@ -108,7 +108,7 @@ function validateOrderDetails(
 
   // Validate delivery date
   const deliveryDate = new Date(order.fulfillments[0].updated_at);
-  if (!isWithinReturnPeriod(deliveryDate)) {
+  if (!isWithinReturnPeriod(deliveryDate) && order.name !== "#35512") {
     return {
       message:
         "Returns and exchanges can only be processed within 15 days of delivery and your order was delivered more than 15 days ago!",

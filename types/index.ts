@@ -200,6 +200,10 @@ export type DashboardProduct = {
   action: string | null;
   refunded: boolean | null;
   new_variant_title: string | null;
+  new_product_info?: {
+    title: string;
+    variant_title: string;
+  } | null;
 };
 
 export type DashboardReturn = {

@@ -86,6 +86,14 @@ function validateOrderDetails(
     return { message: "Please enter a valid mail address" };
   }
 
+  // Validate country - only allow Spain/España
+  const shippingCountry = order.shipping_address.country?.toLowerCase();
+  if (shippingCountry !== "spain" && shippingCountry !== "españa") {
+    return {
+      message: `For orders outside of mainland Spain, please contact hello@shamelesscollective.com with your order number`,
+    };
+  }
+
   // Validate fulfillment status
   if (order.fulfillment_status === null) {
     return {

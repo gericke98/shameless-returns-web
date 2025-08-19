@@ -25,47 +25,61 @@ const LastWindowBase = ({
   id,
   allProducts,
 }: Props) => {
-  const { totalPriceDevolver, totalPriceCambio, totalPrice } = useMemo(() => {
-    const totalPriceDevolver = items
-      .filter((item) => item.action && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-    const totalPriceCambio = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => {
-        // If there's a new variant ID, find the corresponding product and use its price
-        if (item.new_variant_id) {
-          const newProduct = allProducts.find((p) =>
-            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-          );
-          if (newProduct) {
-            // Find the specific variant that matches the new_variant_id
-            const newVariant = newProduct.variants.edges.find(
-              (v) => v.node.id === item.new_variant_id
+  const { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal } =
+    useMemo(() => {
+      const totalPriceDevolver = items
+        .filter((item) => item.action && !item.confirmed)
+        .reduce((sum, item) => sum + parseFloat(item.price), 0);
+      const totalPriceCambio = items
+        .filter((item) => item.action === "CAMBIO" && !item.confirmed)
+        .reduce((sum, item) => {
+          // If there's a new variant ID, find the corresponding product and use its price
+          if (item.new_variant_id) {
+            const newProduct = allProducts.find((p) =>
+              p.variants.edges.some((v) => v.node.id === item.new_variant_id)
             );
-            if (newVariant) {
-              return sum + parseFloat(newVariant.node.price);
+            if (newProduct) {
+              // Find the specific variant that matches the new_variant_id
+              const newVariant = newProduct.variants.edges.find(
+                (v) => v.node.id === item.new_variant_id
+              );
+              if (newVariant) {
+                return sum + parseFloat(newVariant.node.price);
+              }
             }
           }
-        }
-        // Fallback to the original price if no new product is found
-        return sum + parseFloat(item.price);
-      }, 0);
+          // Fallback to the original price if no new product is found
+          return sum + parseFloat(item.price);
+        }, 0);
 
-    let totalPrice = totalPriceDevolver - totalPriceCambio;
+      let totalPrice = totalPriceDevolver - totalPriceCambio;
 
-    const shippingCost =
-      totalPrice > 0
-        ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-        : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
-    if (totalPrice !== 0) {
+      // Calculate shipping cost the same way as SummaryComponent
+      const itemsToDev = items.filter(
+        (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
+      );
+      const itemsToCambio = items.filter(
+        (item) => item.action === "CAMBIO" && !item.confirmed
+      );
+
+      const shippingCost =
+        itemsToDev.length > 0
+          ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
+          : itemsToCambio.length > 0
+          ? Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST)
+          : 0;
+
       totalPrice -= shippingCost;
-    }
 
-    return { totalPriceDevolver, totalPriceCambio, totalPrice };
-  }, [items]);
+      // Calculate finalTotal the same way as SummaryComponent
+      const creditBonus = credito ? totalPrice * 0.15 : 0;
+      const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
+
+      return { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal };
+    }, [items, credito]);
 
   const handleBack = () => {
-    setPosition(totalPrice > 0 ? position - 1 : position - 2);
+    setPosition(finalTotal > 0 ? position - 1 : position - 2);
   };
 
   return (
@@ -104,7 +118,7 @@ const LastWindowBase = ({
             allProducts={allProducts}
           />
         )}
-        {totalPrice < 0 ? (
+        {finalTotal < 0 ? (
           <div className="w-full flex flex-col">
             <h3 className="font-bold text-base">Cambio de productos</h3>
             <p className="text-black text-sm mt-2">
@@ -119,9 +133,7 @@ const LastWindowBase = ({
             <h3 className="font-bold text-base">Crédito en tienda</h3>
             <p className="text-black text-sm">
               Recibirás en tu correo un código por valor de{" "}
-              <span className="font-bold">
-                {(totalPrice * 1.15).toFixed(2)} €{" "}
-              </span>
+              <span className="font-bold">{finalTotal.toFixed(2)} € </span>
               con el que comprar de nuevo en Shameless Collective,{" "}
               <span className="font-bold">cuando se acepte tu devolución.</span>
             </p>
@@ -131,7 +143,7 @@ const LastWindowBase = ({
             <h3 className="font-bold text-base">Reembolso tradicional</h3>
             <p className="text-black text-sm">
               Recibirás tu reembolso de{" "}
-              <span className="font-bold">{totalPrice.toFixed(2)} € </span>
+              <span className="font-bold">{finalTotal.toFixed(2)} € </span>
               en el método de pago que usaste en tu compra original,{" "}
               <span className="font-bold">cuando se acepte tu devolución.</span>
             </p>

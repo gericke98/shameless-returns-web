@@ -138,6 +138,7 @@ function TableHeader() {
     "Quantity",
     "Price",
     "Action",
+    "New Variant",
     "Refunded",
     "Status",
     "Validate",
@@ -179,6 +180,13 @@ function TableRow({ order, product, status }: TableRowProps) {
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.action || "No action"}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+        {product.action === "CAMBIO" && product.new_variant_title
+          ? product.new_variant_title
+          : product.action === "DEVOLUCION"
+          ? "DEVOLUCION"
+          : "-"}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.refunded ? "Yes" : "No"}

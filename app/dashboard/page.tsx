@@ -45,7 +45,10 @@ async function ReturnsList() {
         }
         return order.products.map((product) => ({
           order,
-          product,
+          product: {
+            ...product,
+            new_variant_title: product.new_variant_title || null,
+          },
           status,
         }));
       })

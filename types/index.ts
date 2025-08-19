@@ -199,6 +199,7 @@ export type DashboardProduct = {
   price: string;
   action: string | null;
   refunded: boolean | null;
+  new_variant_title: string | null;
 };
 
 export type DashboardReturn = {

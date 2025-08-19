@@ -43,20 +43,28 @@ export const FormProduct = ({
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const [new_product_change, setNewProductChange] = useState<Product>(
-    allProducts.find((p) =>
+  const [new_product_change, setNewProductChange] = useState<Product>(() => {
+    // First try to find product with existing new_variant_id
+    const existingProduct = allProducts.find((p) =>
       p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
-    ) ||
-      allProducts.find((p) =>
-        p.variants.edges.some((v) => v.node.inventoryQuantity > 0)
-      ) ||
-      allProducts[0]
-  );
+    );
+
+    if (existingProduct) {
+      return existingProduct;
+    }
+
+    // If no existing product, find first product with available stock
+    const productWithStock = allProducts.find((p) =>
+      p.variants.edges.some((v) => v.node.inventoryQuantity > 0)
+    );
+
+    return productWithStock || allProducts[0];
+  });
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Update new_product_change when orderProduct changes
+  // Update new_product_change when orderProduct changes and set initial variantId
   useEffect(() => {
     if (orderProduct.new_variant_id) {
       const newProduct = allProducts.find((p) =>
@@ -66,8 +74,18 @@ export const FormProduct = ({
       if (newProduct) {
         setNewProductChange(newProduct);
       }
+    } else if (!variantId && new_product_change) {
+      // If no existing new_variant_id, set the first available variant as default
+      const firstAvailableVariant = new_product_change.variants.edges.find(
+        (v) => v.node.inventoryQuantity > 0
+      );
+
+      if (firstAvailableVariant) {
+        setVariantId(firstAvailableVariant.node.id);
+        setSize(firstAvailableVariant.node.title);
+      }
     }
-  }, [orderProduct, allProducts]);
+  }, [orderProduct, allProducts, variantId, new_product_change]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -90,6 +108,7 @@ export const FormProduct = ({
     e.preventDefault();
     setIsSubmitting(true);
     const formData = new FormData(e.currentTarget);
+
     try {
       await updateOrder(formData);
       setChanged(!changed);
@@ -157,6 +176,7 @@ export const FormProduct = ({
     )?.node;
 
     if (newVariant) {
+      // Store the full GraphQL ID, not just the numeric part
       setVariantId(newVariant.id);
       setSize(value);
     }
@@ -323,7 +343,7 @@ export const FormProduct = ({
                               if (firstAvailableVariant) {
                                 // Set the size to the first available variant's title
                                 setSize(firstAvailableVariant.node.title);
-                                // Set the variant ID
+                                // Set the variant ID - store the full GraphQL ID
                                 setVariantId(firstAvailableVariant.node.id);
                               } else {
                                 // If no variants with stock (shouldn't happen due to hasStock check)

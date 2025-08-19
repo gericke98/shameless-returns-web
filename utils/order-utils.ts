@@ -92,3 +92,29 @@ export function wasItemReturned(
 ): boolean {
   return returns.some((returnItem) => returnItem.includes(item.title));
 }
+
+/**
+ * Compares a variant ID from the database with a Shopify GraphQL variant ID
+ * Database stores variant IDs as simple numbers (e.g., "123456789")
+ * Shopify GraphQL returns full IDs (e.g., "gid://shopify/ProductVariant/123456789")
+ */
+export function compareVariantIds(dbVariantId: string | null | undefined, graphqlVariantId: string): boolean {
+  if (!dbVariantId) return false;
+  
+  // Extract the numeric ID from the GraphQL ID format
+  const graphqlIdNumber = graphqlVariantId.split('/').pop();
+  
+  // Compare both the full GraphQL ID and the extracted number
+  return graphqlVariantId === dbVariantId || graphqlIdNumber === dbVariantId;
+}
+
+/**
+ * Finds a product that contains a variant matching the given variant ID
+ */
+export function findProductByVariantId(allProducts: any[], variantId: string | null | undefined) {
+  if (!variantId) return null;
+  
+  return allProducts.find((p) =>
+    p.variants.edges.some((v: any) => compareVariantIds(variantId, v.node.id))
+  );
+}

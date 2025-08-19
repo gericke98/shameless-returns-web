@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { LogoutButton } from "./LogoutButton";
-import { getReturns } from "@/db/queries";
+import { getReturns, getProducts } from "@/db/queries";
 import { obtainLastStatus } from "@/actions/shipping";
 import DashboardHeader from "./components/DashboardHeader";
 import ReturnsTable from "./components/ReturnsTable";
@@ -29,6 +29,15 @@ function LoadingSpinner() {
 async function ReturnsList() {
   try {
     const returns = await getReturns();
+
+    // Fetch all products to get product information for variants
+    let allProducts: any[] = [];
+    try {
+      allProducts = await getProducts();
+    } catch (error) {
+      console.error("Error fetching products:", error);
+    }
+
     const flattenedReturns = await Promise.all(
       returns.map(async (order) => {
         let status = order.locator || "No tracking number";
@@ -51,38 +60,49 @@ async function ReturnsList() {
             // If this is a change action and we have a new variant ID, fetch the product info
             if (product.action === "CAMBIO" && product.new_variant_id) {
               try {
-                // Extract product ID from variant ID (format: gid://shopify/ProductVariant/123456789)
-                // We need to get the product ID, not the variant ID
-                // The variant ID format is: gid://shopify/ProductVariant/123456789
-                // We need to find the product that contains this variant
+                // Find the product that contains this variant ID
+                const newProduct = allProducts.find((p) =>
+                  p.variants.edges.some(
+                    (v: any) => v.node.id === product.new_variant_id
+                  )
+                );
 
-                // For now, let's use a different approach - we'll need to fetch all products
-                // and find the one that contains this variant ID
-                // This is not ideal for performance, but it's the most reliable way
+                if (newProduct) {
+                  // Find the specific variant
+                  const newVariant = newProduct.variants.edges.find(
+                    (v: any) => v.node.id === product.new_variant_id
+                  );
 
-                // Since we don't have access to all products here, let's use the new_variant_title
-                // which typically contains both product and variant information
-                if (product.new_variant_title) {
-                  // Try to parse the new_variant_title to separate product and variant
-                  // Format is usually "Product Name - Variant Name"
-                  const parts = product.new_variant_title.split(" - ");
-                  if (parts.length >= 2) {
-                    newProductInfo = {
-                      title: parts[0].trim(),
-                      variant_title: parts.slice(1).join(" - ").trim(),
-                    };
+                  newProductInfo = {
+                    title: newProduct.title,
+                    variant_title: newVariant
+                      ? newVariant.node.title
+                      : product.new_variant_title || "Unknown variant",
+                  };
+                } else {
+                  // Fallback to parsing new_variant_title if we can't find the product
+                  if (product.new_variant_title) {
+                    // Try to parse the new_variant_title to separate product and variant
+                    // Format is usually "Product Name - Variant Name"
+                    const parts = product.new_variant_title.split(" - ");
+                    if (parts.length >= 2) {
+                      newProductInfo = {
+                        title: parts[0].trim(),
+                        variant_title: parts.slice(1).join(" - ").trim(),
+                      };
+                    } else {
+                      // If we can't parse it, use the full title as product name
+                      newProductInfo = {
+                        title: product.new_variant_title,
+                        variant_title: "Unknown variant",
+                      };
+                    }
                   } else {
-                    // If we can't parse it, use the full title as product name
                     newProductInfo = {
-                      title: product.new_variant_title,
+                      title: "Unknown Product",
                       variant_title: "Unknown variant",
                     };
                   }
-                } else {
-                  newProductInfo = {
-                    title: "Unknown Product",
-                    variant_title: "Unknown variant",
-                  };
                 }
               } catch (error) {
                 console.error(

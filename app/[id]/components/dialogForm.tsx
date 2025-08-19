@@ -35,31 +35,71 @@ export const FormProduct = ({
   const [motivo, setMotivo] = useState<string>(
     orderProduct.reason || "Me queda pequeño"
   );
-  const [size, setSize] = useState<string>(
-    orderProduct.new_variant_title || orderProduct.variant_title
-  );
-  const [variantId, setVariantId] = useState<string>(
-    orderProduct.new_variant_id || ""
-  );
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isPending, startTransition] = useTransition();
-  const [new_product_change, setNewProductChange] = useState<Product>(() => {
-    // First try to find product with existing new_variant_id
-    const existingProduct = allProducts.find((p) =>
-      p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
-    );
+  const [size, setSize] = useState<string>(() => {
+    // If there's an existing new_variant_title, check if it has stock
+    if (orderProduct.new_variant_title && orderProduct.new_variant_id) {
+      const existingProduct = allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+      );
 
-    if (existingProduct) {
-      return existingProduct;
+      if (existingProduct) {
+        const existingVariant = existingProduct.variants.edges.find(
+          (v) => v.node.id === orderProduct.new_variant_id
+        );
+
+        // Only use existing variant if it has stock
+        if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+          return orderProduct.new_variant_title;
+        }
+      }
     }
 
-    // If no existing product, find first product with available stock
-    const productWithStock = allProducts.find((p) =>
-      p.variants.edges.some((v) => v.node.inventoryQuantity > 0)
-    );
-
-    return productWithStock || allProducts[0];
+    return orderProduct.variant_title;
   });
+
+  const [variantId, setVariantId] = useState<string>(() => {
+    // If there's an existing new_variant_id, check if it has stock
+    if (orderProduct.new_variant_id) {
+      const existingProduct = allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+      );
+
+      if (existingProduct) {
+        const existingVariant = existingProduct.variants.edges.find(
+          (v) => v.node.id === orderProduct.new_variant_id
+        );
+
+        // Only use existing variant if it has stock
+        if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+          return orderProduct.new_variant_id;
+        }
+      }
+    }
+
+    return "";
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const [new_product_change, setNewProductChange] = useState<Product | null>(
+    () => {
+      // First try to find product with existing new_variant_id
+      const existingProduct = allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+      );
+
+      if (existingProduct) {
+        return existingProduct;
+      }
+
+      // If no existing product, find first product with available stock
+      const productWithStock = allProducts.find((p) =>
+        p.variants.edges.some((v) => v.node.inventoryQuantity > 0)
+      );
+
+      // Only return product with stock, never fallback to first product
+      return productWithStock || null;
+    }
+  );
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -73,12 +113,34 @@ export const FormProduct = ({
 
       if (newProduct) {
         setNewProductChange(newProduct);
+
+        // Check if the existing variant has stock
+        const existingVariant = newProduct.variants.edges.find(
+          (v) => v.node.id === orderProduct.new_variant_id
+        );
+
+        if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+          // Keep the existing variant if it has stock
+          setVariantId(orderProduct.new_variant_id);
+          setSize(orderProduct.new_variant_title || existingVariant.node.title);
+        } else {
+          // Find a variant with stock in the same product (in size order)
+          const availableVariant = getFirstAvailableVariant(newProduct);
+
+          if (availableVariant) {
+            setVariantId(availableVariant.node.id);
+            setSize(availableVariant.node.title);
+          } else {
+            // No variants with stock in this product, clear the selection
+            setVariantId("");
+            setSize("");
+          }
+        }
       }
     } else if (!variantId && new_product_change) {
-      // If no existing new_variant_id, set the first available variant as default
-      const firstAvailableVariant = new_product_change.variants.edges.find(
-        (v) => v.node.inventoryQuantity > 0
-      );
+      // If no existing new_variant_id, set the first available variant as default (in size order)
+      const firstAvailableVariant =
+        getFirstAvailableVariant(new_product_change);
 
       if (firstAvailableVariant) {
         setVariantId(firstAvailableVariant.node.id);
@@ -170,7 +232,59 @@ export const FormProduct = ({
     }
   };
 
+  // Helper function to get the first available variant with stock in size order
+  const getFirstAvailableVariant = (product: Product) => {
+    // Define size order based on actual size names from the API
+    const sizeOrder = [
+      "X-Small",
+      "XS",
+      "Extra Small",
+      "Small",
+      "S",
+      "Medium",
+      "M",
+      "Large",
+      "L",
+      "Extra large",
+      "XL",
+      "Extra Large",
+      "XXL",
+      "2XL",
+      "Double Extra Large",
+      "XXXL",
+      "3XL",
+      "Triple Extra Large",
+    ];
+
+    // Sort variants by size order
+    const sortedVariants = [...product.variants.edges].sort((a, b) => {
+      const aIndex = sizeOrder.indexOf(a.node.title);
+      const bIndex = sizeOrder.indexOf(b.node.title);
+
+      // If both sizes are in the order, sort by their position
+      if (aIndex !== -1 && bIndex !== -1) {
+        return aIndex - bIndex;
+      }
+
+      // If only one is in the order, prioritize it
+      if (aIndex !== -1) return -1;
+      if (bIndex !== -1) return 1;
+
+      // If neither is in the order, maintain original order
+      return 0;
+    });
+
+    // Find the first variant with stock
+    const firstAvailable = sortedVariants.find(
+      (v) => v.node.inventoryQuantity > 0
+    );
+
+    return firstAvailable;
+  };
+
   const handleSizeChange = (value: string) => {
+    if (!new_product_change) return;
+
     const newVariant = new_product_change.variants.edges.find(
       (v) => v.node.title === value
     )?.node;
@@ -182,11 +296,12 @@ export const FormProduct = ({
     }
   };
 
-  const sizeStock = new_product_change.variants.edges.map((variant) => ({
-    value: variant.node.title,
-    label: variant.node.title,
-    disabled: variant.node.inventoryQuantity === 0,
-  }));
+  const sizeStock =
+    new_product_change?.variants.edges.map((variant) => ({
+      value: variant.node.title,
+      label: variant.node.title,
+      disabled: variant.node.inventoryQuantity === 0,
+    })) || [];
 
   const showNewProduct = action === ACTIONS.CHANGE && motivo !== "";
 
@@ -251,7 +366,7 @@ export const FormProduct = ({
                   onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                 >
                   <div className="flex items-center">
-                    {new_product_change.id ? (
+                    {new_product_change?.id ? (
                       <>
                         <div className="relative w-8 h-8 mr-2">
                           <Image
@@ -290,7 +405,7 @@ export const FormProduct = ({
                 <input
                   type="hidden"
                   name="newProduct"
-                  value={new_product_change.id}
+                  value={new_product_change?.id || ""}
                 />
 
                 {/* Dropdown Options */}
@@ -324,7 +439,7 @@ export const FormProduct = ({
                         <div
                           key={p.id}
                           className={`relative py-2 pl-3 pr-9 flex items-center ${
-                            new_product_change.id === p.id ? "bg-cyan-50" : ""
+                            new_product_change?.id === p.id ? "bg-cyan-50" : ""
                           } ${
                             hasStock
                               ? "cursor-pointer hover:bg-gray-100"
@@ -334,11 +449,9 @@ export const FormProduct = ({
                             if (hasStock) {
                               setNewProductChange(p);
 
-                              // Find the first variant with stock
+                              // Find the first variant with stock in size order
                               const firstAvailableVariant =
-                                p.variants.edges.find(
-                                  (v) => v.node.inventoryQuantity > 0
-                                );
+                                getFirstAvailableVariant(p);
 
                               if (firstAvailableVariant) {
                                 // Set the size to the first available variant's title
@@ -348,6 +461,7 @@ export const FormProduct = ({
                               } else {
                                 // If no variants with stock (shouldn't happen due to hasStock check)
                                 setSize("");
+                                setVariantId("");
                               }
 
                               setIsDropdownOpen(false);
@@ -372,7 +486,7 @@ export const FormProduct = ({
                             </div>
                           </div>
 
-                          {new_product_change.id === p.id && (
+                          {new_product_change?.id === p.id && (
                             <span className="absolute inset-y-0 right-0 flex items-center pr-4 text-cyan-800">
                               <svg
                                 className="h-5 w-5"
@@ -395,7 +509,7 @@ export const FormProduct = ({
               </div>
 
               {/* Selected Product Preview */}
-              {new_product_change.id && (
+              {new_product_change?.id && (
                 <div className="mt-3 flex items-center p-2 border border-gray-200 rounded-md">
                   <div className="relative w-12 h-12 mr-3">
                     <Image
@@ -418,13 +532,15 @@ export const FormProduct = ({
               )}
             </div>
 
-            <FormSelectSize
-              name="newSize"
-              title="Nueva talla"
-              options={sizeStock}
-              valueini={size}
-              onChange={handleSizeChange}
-            />
+            {new_product_change && (
+              <FormSelectSize
+                name="newSize"
+                title="Nueva talla"
+                options={sizeStock}
+                valueini={size}
+                onChange={handleSizeChange}
+              />
+            )}
           </div>
         )}
 

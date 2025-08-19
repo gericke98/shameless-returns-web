@@ -1,5 +1,5 @@
 "use client";
-import { useState, ChangeEvent } from "react";
+import { useState, ChangeEvent, useEffect } from "react";
 import { cn } from "@/lib/utils";
 
 interface FormSelectSizeProps {
@@ -25,6 +25,13 @@ export const FormSelectSize = ({
 }: FormSelectSizeProps) => {
   const [value, setValue] = useState<string>(valueini || "");
   const [error, setError] = useState<string>("");
+
+  // Update internal state when valueini prop changes
+  useEffect(() => {
+    if (valueini !== undefined) {
+      setValue(valueini);
+    }
+  }, [valueini]);
 
   const handleChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const newValue = e.target.value;

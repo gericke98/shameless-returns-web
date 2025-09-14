@@ -68,16 +68,16 @@ function generateSoapBody(order: any, name: string, firstSurname: string) {
               <Apellido1>TEXTIL</Apellido1>
             </Identificacion>
             <DatosDireccion>
-              <Direccion>Calle Neptuno</Direccion>
-              <Numero>29</Numero>
-              <Localidad>Pozuelo de Alarcon</Localidad>
+              <Direccion>Calle Costa Rica 3 Escalera Izquierda 3G</Direccion>
+              <Numero>3</Numero>
+              <Localidad>Majadahonda</Localidad>
               <Provincia>Madrid</Provincia>
             </DatosDireccion>
-            <CP>28224</CP>
-            <Telefonocontacto>608667749</Telefonocontacto>
+            <CP>28221</CP>
+            <Telefonocontacto>604141762</Telefonocontacto>
             <Email>hello@shamelesscollective.com</Email>
             <DatosSMS>
-              <NumeroSMS>608667749</NumeroSMS>
+              <NumeroSMS>604141762</NumeroSMS>
               <Idioma>1</Idioma>
             </DatosSMS>
           </Destinatario>

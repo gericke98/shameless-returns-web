@@ -119,7 +119,8 @@ function validateOrderDetails(
   if (
     !isWithinReturnPeriod(deliveryDate) &&
     order.name !== "#35512" &&
-    order.name !== "#35768"
+    order.name !== "#35768" &&
+    order.name !== "#36617"
   ) {
     return {
       message:

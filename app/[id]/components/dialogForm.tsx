@@ -91,13 +91,9 @@ export const FormProduct = ({
         return existingProduct;
       }
 
-      // If no existing product, find first product with available stock
-      const productWithStock = allProducts.find((p) =>
-        p.variants.edges.some((v) => v.node.inventoryQuantity > 0)
-      );
-
-      // Only return product with stock, never fallback to first product
-      return productWithStock || null;
+      // If no existing new_variant_id, default to the ORIGINAL product (not a random in-stock product)
+      // so that when the user selects "Cambio" the dropdown starts on the same item.
+      return product?.id ? product : null;
     }
   );
 
@@ -137,17 +133,46 @@ export const FormProduct = ({
           }
         }
       }
-    } else if (!variantId && new_product_change) {
-      // If no existing new_variant_id, set the first available variant as default (in size order)
-      const firstAvailableVariant =
-        getFirstAvailableVariant(new_product_change);
+    }
 
+    // If there's no persisted new_variant_id, only seed defaults when the user is doing an exchange.
+    if (action !== ACTIONS.CHANGE) {
+      return;
+    }
+
+    // Always default the "Nuevo producto" dropdown to the original product.
+    if (product?.id && new_product_change?.id !== product.id) {
+      setNewProductChange(product);
+    }
+
+    // If the user hasn't picked a size/variant yet, default to the first in-stock size
+    // within the (original) product.
+    if (!variantId) {
+      const baseProduct = product?.id ? product : new_product_change;
+      if (!baseProduct) {
+        setVariantId("");
+        setSize("");
+        return;
+      }
+
+      const firstAvailableVariant = getFirstAvailableVariant(baseProduct);
       if (firstAvailableVariant) {
         setVariantId(firstAvailableVariant.node.id);
         setSize(firstAvailableVariant.node.title);
+      } else {
+        // No variants with stock in this product, clear the selection
+        setVariantId("");
+        setSize("");
       }
     }
-  }, [orderProduct, allProducts, variantId, new_product_change]);
+  }, [
+    orderProduct,
+    allProducts,
+    variantId,
+    new_product_change,
+    action,
+    product,
+  ]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

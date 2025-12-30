@@ -124,7 +124,7 @@ function validateOrderDetails(
   ) {
     return {
       message:
-        "Returns and exchanges can only be processed within 15 days of delivery and your order was delivered more than 15 days ago!",
+        "Returns and exchanges can only be processed within 60 days of delivery and your order was delivered more than 60 days ago!",
     };
   }
 

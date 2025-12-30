@@ -4,7 +4,7 @@ import { OrderLineItem, OrderData } from "@/types";
  * Constants for order processing
  */
 export const ORDER_CONSTANTS = {
-  FIFTEEN_DAYS_IN_MS: 15 * 24 * 60 * 60 * 1000,
+  SIXTY_DAYS_IN_MS: 60 * 24 * 60 * 60 * 1000,
 };
 
 /**
@@ -48,10 +48,10 @@ export function calculatePriceWithDiscount(item: OrderLineItem): number {
  * @returns Boolean indicating if the delivery is within the return period
  */
 export function isWithinReturnPeriod(deliveryDate: Date): boolean {
-  const fifteenDaysAgo = new Date(
-    Date.now() - ORDER_CONSTANTS.FIFTEEN_DAYS_IN_MS
+  const sixtyDaysAgo = new Date(
+    Date.now() - ORDER_CONSTANTS.SIXTY_DAYS_IN_MS
   );
-  return deliveryDate >= fifteenDaysAgo;
+  return deliveryDate >= sixtyDaysAgo;
 }
 
 /**

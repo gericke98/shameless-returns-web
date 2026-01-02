@@ -99,48 +99,65 @@ export const FormProduct = ({
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const userSelectedNewProductRef = useRef(false);
 
-  // Update new_product_change when orderProduct changes and set initial variantId
+  // Reset "user selected" guard when moving to a different line item / leaving exchange flow
   useEffect(() => {
-    if (orderProduct.new_variant_id) {
-      const newProduct = allProducts.find((p) =>
-        p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
-      );
+    userSelectedNewProductRef.current = false;
+  }, [orderProduct.id]);
 
-      if (newProduct) {
-        setNewProductChange(newProduct);
-
-        // Check if the existing variant has stock
-        const existingVariant = newProduct.variants.edges.find(
-          (v) => v.node.id === orderProduct.new_variant_id
-        );
-
-        if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
-          // Keep the existing variant if it has stock
-          setVariantId(orderProduct.new_variant_id);
-          setSize(orderProduct.new_variant_title || existingVariant.node.title);
-        } else {
-          // Find a variant with stock in the same product (in size order)
-          const availableVariant = getFirstAvailableVariant(newProduct);
-
-          if (availableVariant) {
-            setVariantId(availableVariant.node.id);
-            setSize(availableVariant.node.title);
-          } else {
-            // No variants with stock in this product, clear the selection
-            setVariantId("");
-            setSize("");
-          }
-        }
-      }
-    }
-
-    // If there's no persisted new_variant_id, only seed defaults when the user is doing an exchange.
+  useEffect(() => {
     if (action !== ACTIONS.CHANGE) {
+      userSelectedNewProductRef.current = false;
+    }
+  }, [action]);
+
+  // Sync from persisted selection (DB): orderProduct.new_variant_id
+  useEffect(() => {
+    if (!orderProduct.new_variant_id) return;
+
+    const newProduct = allProducts.find((p) =>
+      p.variants.edges.some((v) => v.node.id === orderProduct.new_variant_id)
+    );
+
+    if (!newProduct) return;
+
+    setNewProductChange(newProduct);
+
+    // Check if the existing variant has stock
+    const existingVariant = newProduct.variants.edges.find(
+      (v) => v.node.id === orderProduct.new_variant_id
+    );
+
+    if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+      // Keep the existing variant if it has stock
+      setVariantId(orderProduct.new_variant_id);
+      setSize(orderProduct.new_variant_title || existingVariant.node.title);
       return;
     }
 
-    // Always default the "Nuevo producto" dropdown to the original product.
+    // Find a variant with stock in the same product (in size order)
+    const availableVariant = getFirstAvailableVariant(newProduct);
+
+    if (availableVariant) {
+      setVariantId(availableVariant.node.id);
+      setSize(availableVariant.node.title);
+      return;
+    }
+
+    // No variants with stock in this product, clear the selection
+    setVariantId("");
+    setSize("");
+  }, [orderProduct.new_variant_id, orderProduct.new_variant_title, allProducts]);
+
+  // Seed defaults for exchange flow (only when there's no persisted new_variant_id and
+  // only until the user explicitly selects a new product)
+  useEffect(() => {
+    if (action !== ACTIONS.CHANGE) return;
+    if (orderProduct.new_variant_id) return;
+    if (userSelectedNewProductRef.current) return;
+
+    // Default the dropdown to the original product (once; do not overwrite a user's selection)
     if (product?.id && new_product_change?.id !== product.id) {
       setNewProductChange(product);
     }
@@ -166,12 +183,11 @@ export const FormProduct = ({
       }
     }
   }, [
-    orderProduct,
-    allProducts,
-    variantId,
-    new_product_change,
     action,
+    orderProduct.new_variant_id,
     product,
+    new_product_change,
+    variantId,
   ]);
 
   // Close dropdown when clicking outside
@@ -472,6 +488,7 @@ export const FormProduct = ({
                           }`}
                           onClick={() => {
                             if (hasStock) {
+                              userSelectedNewProductRef.current = true;
                               setNewProductChange(p);
 
                               // Find the first variant with stock in size order

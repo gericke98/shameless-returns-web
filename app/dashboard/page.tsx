@@ -2,8 +2,7 @@ import { getServerSession } from "next-auth/next";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { LogoutButton } from "./LogoutButton";
-import { getReturns, getProducts } from "@/db/queries";
-import { obtainLastStatus } from "@/actions/shipping";
+import { getReturns, getVariantsByIds } from "@/db/queries";
 import DashboardHeader from "./components/DashboardHeader";
 import ReturnsTable from "./components/ReturnsTable";
 import EmptyState from "./components/EmptyState";
@@ -30,106 +29,87 @@ async function ReturnsList() {
   try {
     const returns = await getReturns();
 
-    // Fetch all products to get product information for variants
-    let allProducts: any[] = [];
+    const variantIds = Array.from(
+      new Set(
+        returns
+          .flatMap((order) => order.products)
+          .map((product) => product.new_variant_id)
+          .filter(Boolean)
+      )
+    ) as string[];
+
+    let variantInfoById: Record<
+      string,
+      { productTitle: string; variantTitle: string }
+    > = {};
     try {
-      allProducts = await getProducts();
+      variantInfoById = await getVariantsByIds(variantIds);
     } catch (error) {
-      console.error("Error fetching products:", error);
+      console.error("Error fetching variant info:", error);
     }
 
-    const flattenedReturns = await Promise.all(
-      returns.map(async (order) => {
-        let status = order.locator || "No tracking number";
-        if (order.locator) {
+    const flattenedReturns = returns.flatMap((order) => {
+      const status = order.locator || "No tracking number";
+
+      return order.products.map((product) => {
+        let newProductInfo = null;
+
+        // If this is a change action and we have a new variant ID, fetch the product info
+        if (product.action === "CAMBIO" && product.new_variant_id) {
           try {
-            status = (await obtainLastStatus(order.locator)) ?? order.locator;
+            const variantInfo = variantInfoById[product.new_variant_id];
+
+            if (variantInfo) {
+              newProductInfo = {
+                title: variantInfo.productTitle,
+                variant_title: variantInfo.variantTitle,
+              };
+            } else if (product.new_variant_title) {
+              // Try to parse the new_variant_title to separate product and variant
+              // Format is usually "Product Name - Variant Name"
+              const parts = product.new_variant_title.split(" - ");
+              if (parts.length >= 2) {
+                newProductInfo = {
+                  title: parts[0].trim(),
+                  variant_title: parts.slice(1).join(" - ").trim(),
+                };
+              } else {
+                // If we can't parse it, use the full title as product name
+                newProductInfo = {
+                  title: product.new_variant_title,
+                  variant_title: "Unknown variant",
+                };
+              }
+            } else {
+              newProductInfo = {
+                title: "Unknown Product",
+                variant_title: "Unknown variant",
+              };
+            }
           } catch (error) {
             console.error(
-              `Error fetching status for order ${order.id}:`,
+              `Error processing new product info for variant ${product.new_variant_id}:`,
               error
             );
-            status = order.locator;
+            // Fallback to just the variant title if we can't process it
+            newProductInfo = {
+              title: "Unknown Product",
+              variant_title: product.new_variant_title || "Unknown variant",
+            };
           }
         }
 
-        return Promise.all(
-          order.products.map(async (product) => {
-            let newProductInfo = null;
-
-            // If this is a change action and we have a new variant ID, fetch the product info
-            if (product.action === "CAMBIO" && product.new_variant_id) {
-              try {
-                // Find the product that contains this variant ID
-                const newProduct = allProducts.find((p) =>
-                  p.variants.edges.some(
-                    (v: any) => v.node.id === product.new_variant_id
-                  )
-                );
-
-                if (newProduct) {
-                  // Find the specific variant
-                  const newVariant = newProduct.variants.edges.find(
-                    (v: any) => v.node.id === product.new_variant_id
-                  );
-
-                  newProductInfo = {
-                    title: newProduct.title,
-                    variant_title: newVariant
-                      ? newVariant.node.title
-                      : product.new_variant_title || "Unknown variant",
-                  };
-                } else {
-                  // Fallback to parsing new_variant_title if we can't find the product
-                  if (product.new_variant_title) {
-                    // Try to parse the new_variant_title to separate product and variant
-                    // Format is usually "Product Name - Variant Name"
-                    const parts = product.new_variant_title.split(" - ");
-                    if (parts.length >= 2) {
-                      newProductInfo = {
-                        title: parts[0].trim(),
-                        variant_title: parts.slice(1).join(" - ").trim(),
-                      };
-                    } else {
-                      // If we can't parse it, use the full title as product name
-                      newProductInfo = {
-                        title: product.new_variant_title,
-                        variant_title: "Unknown variant",
-                      };
-                    }
-                  } else {
-                    newProductInfo = {
-                      title: "Unknown Product",
-                      variant_title: "Unknown variant",
-                    };
-                  }
-                }
-              } catch (error) {
-                console.error(
-                  `Error processing new product info for variant ${product.new_variant_id}:`,
-                  error
-                );
-                // Fallback to just the variant title if we can't process it
-                newProductInfo = {
-                  title: "Unknown Product",
-                  variant_title: product.new_variant_title || "Unknown variant",
-                };
-              }
-            }
-
-            return {
-              order,
-              product: {
-                ...product,
-                new_variant_title: product.new_variant_title || null,
-                new_product_info: newProductInfo,
-              },
-              status,
-            };
-          })
-        );
-      })
-    ).then((arrays) => arrays.flat());
+        return {
+          order,
+          product: {
+            ...product,
+            new_variant_title: product.new_variant_title || null,
+            new_product_info: newProductInfo,
+          },
+          status,
+        };
+      });
+    });
 
     return flattenedReturns.length === 0 ? (
       <EmptyState />

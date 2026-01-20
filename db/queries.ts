@@ -756,6 +756,70 @@ export async function getProduct(id: string) {
   }
 }
 
+export async function getVariantsByIds(variantIds: string[]) {
+  const uniqueIds = Array.from(new Set(variantIds)).filter(Boolean);
+  if (uniqueIds.length === 0) {
+    return {};
+  }
+
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+
+  const query = `
+    query getVariants($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          title
+          product {
+            title
+          }
+        }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({
+        query,
+        variables: { ids: uniqueIds },
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const { data, errors } = await response.json();
+    if (errors) {
+      console.error("GraphQL Errors:", errors);
+      throw new Error("GraphQL query failed");
+    }
+
+    const variants = data?.nodes ?? [];
+    const variantInfoById: Record<
+      string,
+      { productTitle: string; variantTitle: string }
+    > = {};
+
+    for (const node of variants) {
+      if (!node?.id || !node?.product?.title) continue;
+      variantInfoById[node.id] = {
+        productTitle: node.product.title,
+        variantTitle: node.title,
+      };
+    }
+
+    return variantInfoById;
+  } catch (error) {
+    console.error("Error fetching variants:", error);
+    throw error;
+  }
+}
+
 export async function getProducts() {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;

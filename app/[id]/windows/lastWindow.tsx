@@ -76,7 +76,7 @@ const LastWindowBase = ({
       const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
 
       return { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal };
-    }, [items, credito]);
+    }, [allProducts, credito, items]);
 
   const handleBack = () => {
     setPosition(finalTotal > 0 ? position - 1 : position - 2);

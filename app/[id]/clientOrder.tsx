@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useTransition } from "react";
+import { useCallback, useMemo, useState, useTransition } from "react";
 import { ClientOrderProps, OrderItem, Prices } from "@/types";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
 import { ContinueButton } from "./components/buttons/nextButton";
@@ -33,7 +33,7 @@ export const ClientOrder = ({
       setCredito(false);
     }
   };
-  const calculatePrices = (items: OrderItem[]): Prices => {
+  const calculatePrices = useCallback((items: OrderItem[]): Prices => {
     const returnPrice = items
       .filter((item) => item.action && !item.confirmed)
       .reduce((sum, item) => sum + parseFloat(item.price), 0);
@@ -69,14 +69,17 @@ export const ClientOrder = ({
       exchangePrice,
       totalPrice: totalPrice,
     };
-  };
+  }, [allProducts]);
 
   const handleContinue = () => {
     startTransition(() => {
       setPosition((prev) => prev + 1);
     });
   };
-  const { totalPrice } = useMemo(() => calculatePrices(items), [items]);
+  const { totalPrice } = useMemo(
+    () => calculatePrices(items),
+    [calculatePrices, items]
+  );
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">

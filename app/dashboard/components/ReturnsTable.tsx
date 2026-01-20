@@ -1,7 +1,7 @@
 "use client";
 
 import { validateReturn } from "@/actions/refund";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ReturnTableProps,
   RefundFilter,
@@ -17,19 +17,30 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
   const [filterStatusShipping, setFilterStatusShipping] =
     useState<ShippingStatus>("all");
   const [currentPage, setCurrentPage] = useState(1);
+  const [statusOverrides, setStatusOverrides] = useState<
+    Record<string, string>
+  >({});
   const resultsPerPage = 15;
+
+  const resolveStatus = (order: TableRowProps["order"], status: string) => {
+    if (!order.locator) return status;
+    return statusOverrides[order.locator] ?? status;
+  };
 
   // Filtering the returns
   const filteredReturns = returns.filter(({ order, product, status }) => {
+    const resolvedStatus = resolveStatus(order, status);
     const searchMatch =
       order.orderNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      order.email.toLowerCase().includes(searchTerm.toLowerCase());
+      order.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.shippingName.toLowerCase().includes(searchTerm.toLowerCase());
     const filterMatchRef =
       filterStatusRefunded === "all" ||
       (filterStatusRefunded === "refunded" && product.refunded) ||
       (filterStatusRefunded === "not_refunded" && !product.refunded);
     const filterMatchShip =
-      filterStatusShipping === "all" || filterStatusShipping === status;
+      filterStatusShipping === "all" ||
+      filterStatusShipping === resolvedStatus;
 
     return searchMatch && filterMatchRef && filterMatchShip;
   });
@@ -40,6 +51,61 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
     (currentPage - 1) * resultsPerPage,
     currentPage * resultsPerPage
   );
+
+  const paginatedLocators = useMemo(() => {
+    const locators = new Set<string>();
+    paginatedReturns.forEach(({ order }) => {
+      if (order.locator) locators.add(order.locator);
+    });
+    return Array.from(locators);
+  }, [paginatedReturns]);
+
+  const locatorsToFetch = useMemo(
+    () => paginatedLocators.filter((locator) => !statusOverrides[locator]),
+    [paginatedLocators, statusOverrides]
+  );
+
+  useEffect(() => {
+    if (locatorsToFetch.length === 0) return;
+
+    let cancelled = false;
+
+    const fetchStatuses = async () => {
+      const results = await Promise.all(
+        locatorsToFetch.map(async (locator) => {
+          try {
+            const response = await fetch(
+              `/api/shipping-status?locator=${encodeURIComponent(locator)}`
+            );
+            if (!response.ok) {
+              throw new Error("Failed to fetch shipping status");
+            }
+            const data = await response.json();
+            return [locator, data.status as string] as const;
+          } catch (error) {
+            console.error("Error fetching shipping status:", error);
+            return [locator, locator] as const;
+          }
+        })
+      );
+
+      if (cancelled) return;
+
+      setStatusOverrides((prev) => {
+        const next = { ...prev };
+        results.forEach(([locator, status]) => {
+          next[locator] = status;
+        });
+        return next;
+      });
+    };
+
+    fetchStatuses();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locatorsToFetch]);
 
   return (
     <div className="bg-white shadow-sm rounded-lg p-4">
@@ -98,7 +164,11 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
                 key={`${order.id}-${product.id}`}
                 order={order}
                 product={product}
-                status={status}
+                status={
+                  order.locator && !statusOverrides[order.locator]
+                    ? "Loading status..."
+                    : resolveStatus(order, status)
+                }
               />
             ))}
           </tbody>
@@ -133,6 +203,7 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
 function TableHeader() {
   const headers = [
     "Order Number",
+    "Customer Name",
     "Customer Email",
     "Product",
     "Quantity",
@@ -166,6 +237,9 @@ function TableRow({ order, product, status }: TableRowProps) {
     <tr className="hover:bg-gray-50">
       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
         {order.orderNumber}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+        {order.shippingName}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {order.email}

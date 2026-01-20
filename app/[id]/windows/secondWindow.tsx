@@ -59,7 +59,7 @@ const SecondWindowBase = ({
       }, 0);
 
     return { totalPriceDevolver, totalPriceCambio };
-  }, [items]);
+  }, [allProducts, items]);
 
   const totalPrice = totalPriceDevolver - totalPriceCambio;
   const shippingCost =

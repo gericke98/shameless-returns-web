@@ -197,7 +197,7 @@ const ThirdWindowBase = ({
       result -= shippingCost;
     }
     return result;
-  }, [items, shipping]);
+  }, [allProducts, items, shipping]);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);

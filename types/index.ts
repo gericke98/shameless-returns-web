@@ -187,6 +187,7 @@ export type DashboardOrder = {
   id: string;
   orderNumber: string;
   email: string;
+  shippingName: string;
   locator: string | null;
   products: DashboardProduct[];
 };

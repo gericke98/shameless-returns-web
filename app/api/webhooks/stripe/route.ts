@@ -1,5 +1,7 @@
 import { createShippingLabel } from "@/actions/shipping";
+import { createInternationalReturn, isInternationalOrder } from "@/actions/amphoraReturn";
 import { updateFinalOrder } from "@/actions/updateOrder";
+import { getOrderById } from "@/db/queries";
 import { stripe } from "@/lib/stripe";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -36,8 +38,15 @@ export async function POST(req: Request) {
       try {
         // // First update the database
         await updateFinalOrder(id, false, isCredit);
-        // // // Then create shipping label and send email
-        const statusLabel = await createShippingLabel(id);
+        // // // Then create the return shipment (Correos label or Amphora collection)
+        const order = await getOrderById(id);
+        const useAmphora =
+          !!order &&
+          isInternationalOrder(order.shippingCountry) &&
+          process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
+        const statusLabel = useAmphora
+          ? await createInternationalReturn(id)
+          : await createShippingLabel(id);
         if (statusLabel !== 200) {
           // If label creation fails, undo database changes
           await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter

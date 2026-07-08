@@ -15,7 +15,11 @@ export const orders = pgTable("orders", {
   shippingProvince: text("shipping_province").notNull(),
   shippingCountry: text("shipping_country").notNull(),
   shippingPhone: text("shipping_phone").notNull(),
+  // Tracking number (Correos CodEnvio for ES, or Amphora carrier_number for intl).
   locator: text("locator"),
+  // Set for international (Amphora) returns: the carrier code + customer tracking URL.
+  carrier: text("carrier"),
+  carrierUrl: text("carrier_url"),
 });
 
 export const ordersRelations = relations(orders, ({ many }) => ({

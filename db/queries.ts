@@ -820,6 +820,55 @@ export async function getVariantsByIds(variantIds: string[]) {
   }
 }
 
+/**
+ * Fetch Shopify variant SKUs by variant id (numeric or GID). Returns a map keyed
+ * by the numeric variant id. Amphora's SKU == the Shopify variant SKU (verified),
+ * so these are exactly what `createAmphoraReturn` needs.
+ */
+export async function getVariantSkusByIds(
+  variantIds: string[]
+): Promise<Record<string, string>> {
+  const numericIds = Array.from(new Set(variantIds))
+    .map((id) => String(id).replace(/^gid:\/\/shopify\/ProductVariant\//, ""))
+    .filter(Boolean);
+  if (numericIds.length === 0) return {};
+
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const gids = numericIds.map((id) => `gid://shopify/ProductVariant/${id}`);
+  const query = `
+    query getVariantSkus($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant { id sku }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables: { ids: gids } }),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const { data, errors } = await response.json();
+    if (errors) {
+      console.error("GraphQL Errors:", errors);
+      throw new Error("GraphQL query failed");
+    }
+    const skusById: Record<string, string> = {};
+    for (const node of data?.nodes ?? []) {
+      if (!node?.id || !node?.sku) continue;
+      const numeric = String(node.id).replace(/^gid:\/\/shopify\/ProductVariant\//, "");
+      skusById[numeric] = node.sku;
+    }
+    return skusById;
+  } catch (error) {
+    console.error("Error fetching variant SKUs:", error);
+    throw error;
+  }
+}
+
 export async function getProducts() {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;

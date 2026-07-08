@@ -36,6 +36,57 @@ function extractAddressNumber(address: string): number {
   return Number(address.match(/\d+/)?.[0]) || 1;
 }
 
+function escapeXml(value: string): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
+ * Correos requires CN23 customs data when a parcel crosses the EU customs
+ * boundary. Our senders ship to a mainland warehouse, so this is needed only
+ * when the SENDER is in the Canary Islands (35xxx / 38xxx), Ceuta (51xxx) or
+ * Melilla (52xxx). Balearic Islands and the mainland are inside the EU customs
+ * territory and must NOT include customs data.
+ */
+function requiresCustomsData(order: any): boolean {
+  const zip = String(order.shippingZip ?? "").trim();
+  return /^(35|38|51|52)/.test(zip);
+}
+
+/**
+ * Builds the <Aduana> CN23 block injected inside <Envio>. Empty string when
+ * customs data is not required. Verified against the Correos preregistro API:
+ * TipoEnvio=4 (returned goods) + one <DATOSADUANA> line per product.
+ */
+function generateCustomsBlock(order: any): string {
+  if (!requiresCustomsData(order)) return "";
+
+  const products = Array.isArray(order.products) ? order.products : [];
+  // Correos accepts up to 5 DATOSADUANA lines.
+  const lines = products
+    .slice(0, 5)
+    .map(
+      (p: any) => `
+              <DATOSADUANA>
+                <Cantidad>${p.quantity ?? 1}</Cantidad>
+                <Descripcion>${escapeXml(String(p.title ?? "").slice(0, 100))}</Descripcion>
+                <Pesoneto>500</Pesoneto>
+                <Valorneto>${Math.max(1, Math.round(Number(p.price) || 0))}</Valorneto>
+                <PaisOrigen>ES</PaisOrigen>
+              </DATOSADUANA>`
+    )
+    .join("");
+
+  return `
+            <Aduana>
+              <TipoEnvio>4</TipoEnvio>
+              <DescAduanera>${lines}
+              </DescAduanera>
+            </Aduana>`;
+}
+
 function generateSoapBody(order: any, name: string, firstSurname: string) {
   const number = extractAddressNumber(order.shippingAddress1);
 
@@ -93,7 +144,7 @@ function generateSoapBody(order: any, name: string, firstSurname: string) {
             </Pesos>
             <Largo>30</Largo>
             <Alto>1</Alto>
-            <Ancho>20</Ancho>
+            <Ancho>20</Ancho>${generateCustomsBlock(order)}
           </Envio>
         </PreregistroEnvio>
       </soapenv:Body>
@@ -185,6 +236,24 @@ async function sendShippingLabel(soapBody: string): Promise<ShippingResponse> {
       auth: { username, password },
     });
 
+    // Correos returns HTTP 200 even for business errors: a rejected shipment
+    // has <Resultado>1</Resultado> with a <BultoError>/<DescError> and no
+    // <CodEnvio>. Detect that here so callers don't mistake it for success.
+    const body = String(response.data);
+    const resultado = body.match(/<Resultado>(.*?)<\/Resultado>/)?.[1];
+    const hasTracking = /<CodEnvio>(.*?)<\/CodEnvio>/.test(body);
+
+    if (resultado !== "0" || !hasTracking) {
+      const descError =
+        body.match(/<DescError>([\s\S]*?)<\/DescError>/)?.[1]?.trim() ??
+        "Unknown Correos error";
+      const errorCode = body.match(/<Error>([\s\S]*?)<\/Error>/)?.[1]?.trim();
+      console.error(
+        `Correos rejected shipment (Resultado=${resultado}, Error=${errorCode}): ${descError}`
+      );
+      return { status: 501, error: descError };
+    }
+
     return { status: 200, data: response.data };
   } catch (error) {
     console.error("Shipping label error:", error);
@@ -246,7 +315,12 @@ export async function createShippingLabel(id: string): Promise<number> {
   const soapBody = generateSoapBody(order, name, firstSurname);
 
   const shippingResponse = await sendShippingLabel(soapBody);
-  if (shippingResponse.status !== 200) return shippingResponse.status;
+  if (shippingResponse.status !== 200) {
+    console.error(
+      `Shipping label failed for order ${id} (${order.shippingZip} ${order.shippingProvince}): ${shippingResponse.error}`
+    );
+    return shippingResponse.status;
+  }
   // Extraigo el tracking number
   const trackingMatch = shippingResponse.data.match(
     /<CodEnvio>(.*?)<\/CodEnvio>/
@@ -254,7 +328,7 @@ export async function createShippingLabel(id: string): Promise<number> {
   const trackingNumber = trackingMatch ? trackingMatch[1] : null;
 
   if (!trackingNumber) {
-    console.error("Failed to extract tracking number from response");
+    console.error(`Failed to extract tracking number for order ${id}`);
     return 500;
   }
   await db

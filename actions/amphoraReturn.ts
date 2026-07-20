@@ -118,24 +118,42 @@ export async function createInternationalReturn(id: string): Promise<number> {
   }
 
   try {
-    const created = await createAmphoraReturn({
-      orderId: amphoraOrderIdFromShopifyId(order.id),
-      items,
-      externalId: order.id,
-      time: new Date().toISOString(),
-      name: order.orderNumber,
-      customerEmail: order.email,
-      autoApprove: true,
-    });
+    // Idempotency guard: don't book a second collection if one already exists
+    // for this order. We match on our own `external_id` (= order.id) rather than
+    // trusting Amphora to dedupe — a double-submit (retry, refresh, webhook +
+    // action race) must never result in two physical garment collections.
+    const existing = await getAmphoraReturnsByOrderName(order.orderNumber);
+    let ret: AmphoraReturn | undefined = existing.find((r) => r.external_id === order.id);
+    const alreadyExisted = !!ret;
 
-    // The carrier/tracking may not be assigned synchronously; fall back to a
-    // read-back by order name (a ReturnTravelling webhook can update it later).
-    let ret: AmphoraReturn = created;
-    if (!ret?.carrier_number) {
-      const back = await getAmphoraReturnsByOrderName(order.orderNumber);
-      ret = back.find((r) => r.external_id === order.id) ?? back[0] ?? created;
+    if (ret) {
+      console.warn(
+        `Amphora return already exists for order ${id} (external_id match) — reusing, not booking a new collection.`
+      );
+    } else {
+      ret = await createAmphoraReturn({
+        orderId: amphoraOrderIdFromShopifyId(order.id),
+        items,
+        externalId: order.id,
+        time: new Date().toISOString(),
+        name: order.orderNumber,
+        customerEmail: order.email,
+        autoApprove: true,
+      });
     }
 
+    // The carrier/tracking may not be assigned synchronously on a fresh create;
+    // fall back to a read-back by order name (a ReturnTravelling webhook can
+    // update it later). The reuse path already holds the latest record.
+    if (!ret?.carrier_number && !alreadyExisted) {
+      const back = await getAmphoraReturnsByOrderName(order.orderNumber);
+      ret = back.find((r) => r.external_id === order.id) ?? back[0] ?? ret;
+    }
+
+    // The collection is now booked — this is the point of no easy return. Persist
+    // tracking and treat the operation as a SUCCESS from here on. A failed
+    // confirmation email must NOT propagate as a failure: the caller reverts the
+    // DB order on non-200, which would orphan an already-booked collection.
     await db
       .update(orders)
       .set({
@@ -145,8 +163,14 @@ export async function createInternationalReturn(id: string): Promise<number> {
       })
       .where(eq(orders.id, id));
 
-    const emailStatus = await sendAmphoraConfirmationEmail(order.email, order.shippingName, ret);
-    return emailStatus === 200 ? 200 : emailStatus;
+    const emailStatus = await sendAmphoraConfirmationEmail(order.email, order.shippingName, ret!);
+    if (emailStatus !== 200) {
+      // Best-effort: log loudly for manual follow-up, but the return succeeded.
+      console.error(
+        `Amphora return ${id}: collection booked but confirmation email failed (status ${emailStatus}). Customer needs a manual collection/tracking notice.`
+      );
+    }
+    return 200;
   } catch (error: any) {
     console.error(
       `Amphora return failed for order ${id} (${order.shippingCountry}):`,

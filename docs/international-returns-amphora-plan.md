@@ -55,17 +55,22 @@ Dispatch at the return-creation step by `order.shippingCountry`:
 - `ES` (incl. 35/38/51/52) → **Correos** flow (unchanged).
 - non-`ES` → **Amphora** flow (this plan).
 
-## 4. Open dependencies (confirm with Amphora — parallel, mostly non-blocking)
+## 4. Open dependencies
 
-- **D0 — Exchange linkage**: can a `createOrder` be linked to a `createReturn`
-  as a formal exchange (via `metadata`, matching `name`, or a flag), or is
-  "return + separate replacement order" acceptable on Amphora's side?
+- **D0 — Exchange linkage**: ✅ **Moot.** We never create an Amphora exchange
+  order — the replacement is a normal Shopify order Amphora auto-fulfills.
 - **D1 — Webhooks**: will Amphora POST return-status events to our endpoint?
-  What URL + `X-Secret` do we register?
-- **D2 — SKU parity**: confirm Amphora SKU == Shopify variant SKU (so we can map).
-- **D3 — Shopify-return interaction**: should the intl flow create a Shopify
-  return (`returnCreate`) as domestic does, or **only** the Amphora return?
-  (Avoid the double-return / "invalid quantity" conflict seen on #310228.)
+  What URL + `X-Secret` do we register? (Optional — fills in tracking after the
+  carrier is assigned; the return response may not carry it synchronously.)
+- **D2 — SKU parity**: ✅ Resolved — Amphora SKU == Shopify `variant.sku`.
+- **D3 — Shopify-return interaction**: ✅ Resolved — keep creating the Shopify
+  return (Amphora does NOT sync returns from Shopify: verified #310443/#39613
+  have Amphora returns but zero Shopify returns), and additionally call
+  `createAmphoraReturn`. No duplication.
+- **D4 — Amphora↔Shopify order sync**: the exchange replacement + all outbound
+  orders reach Amphora via its Shopify order sync (evidenced by 629 synced
+  orders). Confirm the replacement Shopify order is picked up for intl the same
+  way (it should be — same pipeline as domestic).
 
 ## 4b. Verified during Phase 1 (2026-07-08)
 
@@ -81,7 +86,7 @@ Dispatch at the return-creation step by `order.shippingCountry`:
 | 2 | ✅ **SKU sourcing** — `getVariantSkusByIds` in `db/queries.ts` (Shopify variant SKU == Amphora SKU) | Line items resolve to SKUs |
 | 3 | ✅ **Routing + schema** — `isInternationalOrder` dispatch in `return.ts` + Stripe webhook, gated by `AMPHORA_INTL_RETURNS_ENABLED`; `carrier`/`carrier_url` columns added to `schema.ts` **and applied to prod DB** | ES flow unchanged (flag off); non-ES routed to Amphora |
 | 4 | ✅ **International returns** — `createInternationalReturn(id)` (`actions/amphoraReturn.ts`): derive order_id → SKUs → `createAmphoraReturn(auto_approve)` → persist carrier/tracking. **Write path NOT yet executed against prod** (would create a real collection) | Code + typecheck done; live E2E pending (Phase 8) |
-| 5 | **International exchanges** — `createReturn` (inbound) + `createOrder` (replacement) + linkage per D0 | Exchange produces inbound collection + outbound replacement |
+| 5 | ✅ **International exchanges** — **no new Amphora code needed.** Inbound = `createInternationalReturn` (collects the original item). Outbound replacement is already a Shopify order created by `validateReturn`→`createOrder` (uses `new_variant_id`), which **Amphora auto-fulfills** via its order sync. `createAmphoraOrder` in the client is unused (kept for future). D0 (formal exchange linkage) is **moot** — functionally the item is collected and the replacement shipped | Exchange = collection + replacement, both handled |
 | 6 | ✅ **Confirmation email (we own)** — intl template in `amphoraReturn.ts`: "courier will collect", tracking + `carrier_url`, no PDF, bilingual, Postmark | Renders; live send pending Phase 8 |
 | 7 | **Return-status webhooks (optional)** — host `X-Secret`-auth endpoint for `Travelling/Received/Exception` → update status | Transitions reflected in dashboard |
 | 8 | **E2E + rollout** — set env vars, enable flag, run a controlled real intl return, then enable for customers | Verified collection + emails + tracking |

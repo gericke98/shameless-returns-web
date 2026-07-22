@@ -1,5 +1,6 @@
 import { createShippingLabel } from "@/actions/shipping";
 import { createInternationalReturn, isInternationalOrder } from "@/actions/amphoraReturn";
+import { createSendcloudReturn, euIso2ForReturn } from "@/actions/sendcloudReturn";
 import { updateFinalOrder } from "@/actions/updateOrder";
 import { getOrderById } from "@/db/queries";
 import { stripe } from "@/lib/stripe";
@@ -40,11 +41,18 @@ export async function POST(req: Request) {
         await updateFinalOrder(id, false, isCredit);
         // // // Then create the return shipment (Correos label or Amphora collection)
         const order = await getOrderById(id);
+        const useSendcloud =
+          !!order &&
+          !!euIso2ForReturn(order.shippingCountry) &&
+          process.env.SENDCLOUD_INTL_RETURNS_ENABLED === "true";
         const useAmphora =
+          !useSendcloud &&
           !!order &&
           isInternationalOrder(order.shippingCountry) &&
           process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
-        const statusLabel = useAmphora
+        const statusLabel = useSendcloud
+          ? await createSendcloudReturn(id)
+          : useAmphora
           ? await createInternationalReturn(id)
           : await createShippingLabel(id);
         if (statusLabel !== 200) {

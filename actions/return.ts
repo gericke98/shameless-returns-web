@@ -6,19 +6,35 @@ import { updateFinalOrder } from "./updateOrder";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";
 import { createInternationalReturn, isInternationalOrder } from "./amphoraReturn";
+import { createSendcloudReturn, euIso2ForReturn } from "./sendcloudReturn";
 
 /**
- * Route the physical return: Spain → Correos label; international → Amphora
- * collection (gated by AMPHORA_INTL_RETURNS_ENABLED). Returns an HTTP-style
- * status (200 = success) either way.
+ * Route the physical return, in priority order:
+ *  1. EU (non-ES) → Sendcloud pre-paid drop-off label (gated by
+ *     SENDCLOUD_INTL_RETURNS_ENABLED).
+ *  2. Any other international → Amphora collection (gated by
+ *     AMPHORA_INTL_RETURNS_ENABLED).
+ *  3. Spain, or any flag-off case → Correos label (unchanged).
+ * Returns an HTTP-style status (200 = success) in every case. With both flags
+ * off this is behaviour-identical to the Correos-only flow.
  */
 async function createReturnShipment(id: string): Promise<number> {
   const order = await getOrderById(id);
-  const useAmphora =
-    !!order &&
-    isInternationalOrder(order.shippingCountry) &&
-    process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
-  return useAmphora ? createInternationalReturn(id) : createShippingLabel(id);
+  if (order) {
+    if (
+      euIso2ForReturn(order.shippingCountry) &&
+      process.env.SENDCLOUD_INTL_RETURNS_ENABLED === "true"
+    ) {
+      return createSendcloudReturn(id);
+    }
+    if (
+      isInternationalOrder(order.shippingCountry) &&
+      process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
+    ) {
+      return createInternationalReturn(id);
+    }
+  }
+  return createShippingLabel(id);
 }
 
 export async function returnFunction(

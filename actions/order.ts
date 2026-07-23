@@ -11,6 +11,7 @@ import {
   wasItemReturned,
 } from "@/utils/order-utils";
 import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
+import { euIso2ForReturn } from "@/actions/sendcloudReturn";
 
 /**
  * Processes an order form submission, validates the order details,
@@ -86,9 +87,18 @@ function validateOrderDetails(
     return { message: "Please enter a valid mail address" };
   }
 
-  // Validate country - only allow Spain/España
-  const shippingCountry = order.shipping_address.country?.toLowerCase();
-  if (shippingCountry !== "spain" && shippingCountry !== "españa") {
+  // Validate country. Spain is always allowed (national Correos). In-scope EU
+  // lanes are allowed only when Sendcloud international returns are enabled —
+  // they route to the Sendcloud drop-off flow (same euIso2ForReturn scope the
+  // shipment router uses). Everything else (non-EU) still gets the contact
+  // message, since those lanes aren't handled yet (customs / RGR).
+  const rawCountry = order.shipping_address.country;
+  const shippingCountry = rawCountry?.toLowerCase();
+  const isSpain = shippingCountry === "spain" || shippingCountry === "españa";
+  const isEnabledEuLane =
+    euIso2ForReturn(rawCountry) !== null &&
+    process.env.SENDCLOUD_INTL_RETURNS_ENABLED === "true";
+  if (!isSpain && !isEnabledEuLane) {
     return {
       message: `For orders outside of mainland Spain, please contact hello@shamelesscollective.com with your order number`,
     };

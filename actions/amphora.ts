@@ -192,7 +192,10 @@ export async function createAmphoraReturn(input: CreateReturnInput): Promise<Amp
     ...(input.shippingCountryCode ? { shipping_address_country_code: input.shippingCountryCode } : {}),
     ...(input.shippingZip ? { shipping_address_zip: input.shippingZip } : {}),
     ...(input.shippingName ? { shipping_address_name: input.shippingName } : {}),
-    ...(input.autoApprove !== undefined ? { auto_approve: input.autoApprove } : {}),
+    // NOTE: `auto_approve` is intentionally NOT sent — Amphora's API rejects it
+    // with 422 "Invalid properties: {'auto_approve'}" (verified live 2026-07-23).
+    // Returns are created without it; confirm on the first live test whether the
+    // collection is arranged automatically or needs a separate approve step.
   };
   const data = await amphoraRequest<{ return_order: AmphoraReturn }>("POST", "/returns", {
     body: { return_order },

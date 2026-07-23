@@ -12,6 +12,7 @@ import {
 } from "@/utils/order-utils";
 import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
 import { euIso2ForReturn } from "@/actions/sendcloudReturn";
+import { isInternationalOrder } from "@/actions/amphoraReturn";
 
 /**
  * Processes an order form submission, validates the order details,
@@ -95,10 +96,15 @@ function validateOrderDetails(
   const rawCountry = order.shipping_address.country;
   const shippingCountry = rawCountry?.toLowerCase();
   const isSpain = shippingCountry === "spain" || shippingCountry === "españa";
+  // Amphora handles ALL international (EU + non-EU) when enabled.
+  const isAmphoraIntl =
+    isInternationalOrder(rawCountry) &&
+    process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
+  // Sendcloud (EU-only) kept as a dormant fallback — allowed only if its flag is on.
   const isEnabledEuLane =
     euIso2ForReturn(rawCountry) !== null &&
     process.env.SENDCLOUD_INTL_RETURNS_ENABLED === "true";
-  if (!isSpain && !isEnabledEuLane) {
+  if (!isSpain && !isAmphoraIntl && !isEnabledEuLane) {
     return {
       message: `For orders outside of mainland Spain, please contact hello@shamelesscollective.com with your order number`,
     };

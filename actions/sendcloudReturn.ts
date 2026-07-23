@@ -9,6 +9,7 @@
 import db from "@/db/drizzle";
 import { getOrderById } from "@/db/queries";
 import { orders } from "@/db/schema";
+import { base64img } from "@/placeholder";
 import axios from "axios";
 import { eq } from "drizzle-orm";
 
@@ -76,18 +77,74 @@ function estimateWeightKg(products: any[]): number {
   return Math.max(0.5, Math.min(20, (items || 1) * 0.5));
 }
 
+/**
+ * Fetch the full return object. The v3 `POST /returns` only returns
+ * `{ return_id, parcel_id }` — the tracking number and label URL appear on the
+ * return record once the carrier has announced it (status goes
+ * no-label → announcing → ready-to-send in ~1-2s). Poll briefly until the label
+ * is present; return the last response either way (best-effort).
+ */
+async function fetchSendcloudReturn(returnId: number, auth: string): Promise<any | null> {
+  const url = `${SENDCLOUD_API}/returns/${returnId}`;
+  let last: any = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      const { data } = await axios.get(url, { headers: { Authorization: auth } });
+      last = (data as any)?.data ?? data;
+      // Readiness requires BOTH a populated tracking number AND the printable
+      // label array. Immediately after create, the return briefly exposes a
+      // `label_printer`/`label_url` *template* URL (which 404s) with an empty
+      // tracking number — `label.normal_printer[]` only appears once the label
+      // PDF actually exists. Keying on the template URL would exit too early.
+      const trackingReady =
+        typeof last?.tracking_number === "string" && last.tracking_number.length > 0;
+      const labelReady = Boolean(last?.label?.normal_printer?.[0]);
+      if (trackingReady && labelReady) return last;
+    } catch {
+      // transient (e.g. record not yet queryable) — retry
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return last;
+}
+
+/**
+ * Download the label PDF as base64. The Sendcloud label URL is an authenticated
+ * API endpoint (401 without the API key), so it can't be emailed as a plain
+ * link — we fetch it here with auth and attach the bytes to the email instead.
+ */
+async function downloadLabelBase64(labelUrl: string, auth: string): Promise<string | null> {
+  try {
+    const res = await axios.get(labelUrl, {
+      headers: { Authorization: auth },
+      responseType: "arraybuffer",
+    });
+    return Buffer.from(res.data as ArrayBuffer).toString("base64");
+  } catch (error: any) {
+    console.error(
+      "Sendcloud label download failed:",
+      error?.response?.status || error?.message || error
+    );
+    return null;
+  }
+}
+
 async function sendSendcloudConfirmationEmail(
   recipientEmail: string,
   name: string,
-  labelUrl: string | null,
+  labelPdfBase64: string | null,
   tracking: string | null
 ): Promise<number> {
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
   if (!postmarkToken) return 500;
+  // No label to attach → don't send a useless label-less email; signal failure
+  // so the caller logs that this return needs a manual label send.
+  if (!labelPdfBase64) {
+    console.error("Sendcloud email: no label PDF to attach; skipping send");
+    return 500;
+  }
 
-  const labelLine = labelUrl
-    ? `<p style="font-size:16px;color:#555;">Your pre-paid return label: <a href="${labelUrl}">download &amp; print it here</a>.</p>`
-    : `<p style="font-size:16px;color:#555;">We'll email your pre-paid return label shortly.</p>`;
+  const labelLine = `<p style="font-size:16px;color:#555;">Your pre-paid return label is attached to this email (PDF).</p>`;
   const trackingLine = tracking
     ? `<p style="font-size:16px;color:#555;">Tracking number: <strong>${tracking}</strong>.</p>`
     : "";
@@ -123,10 +180,24 @@ async function sendSendcloudConfirmationEmail(
             <li>Empaqueta el/los artículo(s) y pega la etiqueta.</li>
             <li>Deja el paquete en tu punto de entrega más cercano.</li>
           </ol>
+          <p style="font-size:16px;color:#555;">Tu etiqueta de devolución prepagada está adjunta a este correo (PDF).</p>
           <p style="font-size:16px;color:#555;">Si tienes preguntas, escríbenos a <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
           <p style="font-size:16px;color:#555;">Saludos,<br/><strong>El equipo de Shameless Collective</strong></p>
         </div>
       </div>`,
+    Attachments: [
+      {
+        Name: "Return_label.pdf",
+        Content: labelPdfBase64,
+        ContentType: "application/pdf",
+      },
+      {
+        Name: "mail.jpg",
+        Content: base64img,
+        ContentType: "image/jpeg",
+        ContentID: "embedded-image",
+      },
+    ],
   };
 
   try {
@@ -187,20 +258,37 @@ export async function createSendcloudReturn(id: string): Promise<number> {
       headers: { Authorization: auth, "Content-Type": "application/json" },
     });
 
-    // Response field paths follow Sendcloud v3 conventions; confirm/adjust the
-    // exact keys on the first live test-create (logged in full on failure).
-    const ret: any = (data as any)?.data ?? data;
+    // v3 POST /returns returns only { return_id, parcel_id, multi_collo_ids }.
+    // The tracking number + label live on the return record, fetched next.
+    const created: any = (data as any)?.data ?? data;
+    const returnId = created?.return_id ?? created?.id;
+    if (!returnId) {
+      console.error(`Sendcloud return ${id}: no return_id in create response`, created);
+      return 501;
+    }
+
+    const ret = await fetchSendcloudReturn(returnId, auth);
     const tracking =
       ret?.tracking_number ?? ret?.parcel?.tracking_number ?? null;
     const carrierName =
-      ret?.ship_with?.carrier ?? ret?.carrier?.code ?? "correos";
+      ret?.carrier?.code ??
+      ret?.shipping_product?.code?.split(":")[0] ??
+      "correos";
     const trackingUrl =
       ret?.tracking_url ?? ret?.parcel?.tracking_url ?? null;
     const labelUrl =
       ret?.label?.normal_printer?.[0] ??
       ret?.label?.label_printer ??
-      ret?.label?.url ??
+      ret?.label_url ??
       null;
+
+    // Download the (auth-gated) label PDF now so we can attach it to the email.
+    const labelPdfBase64 = labelUrl ? await downloadLabelBase64(labelUrl, auth) : null;
+    if (!labelPdfBase64) {
+      console.error(
+        `Sendcloud return ${id}: created (return_id ${returnId}) but label not retrievable yet (labelUrl=${labelUrl}). Needs manual label send.`
+      );
+    }
 
     // The label is booked — treat as SUCCESS from here regardless of the email
     // outcome, so a failed email never causes the caller to revert an
@@ -213,7 +301,7 @@ export async function createSendcloudReturn(id: string): Promise<number> {
     const emailStatus = await sendSendcloudConfirmationEmail(
       order.email,
       order.shippingName,
-      labelUrl,
+      labelPdfBase64,
       tracking
     );
     if (emailStatus !== 200) {

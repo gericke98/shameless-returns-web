@@ -36,7 +36,9 @@ export async function saveOrderDetails(order: OrderData): Promise<void> {
     shippingAddress2: order.shipping_address.address2 || "",
     shippingZip: order.shipping_address.zip,
     shippingCity: order.shipping_address.city,
-    shippingProvince: order.shipping_address.province,
+    // International addresses often have no province (null); the column is NOT
+    // NULL, so default to "" like the other optional fields. Spain always has one.
+    shippingProvince: order.shipping_address.province || "",
     shippingCountry: order.shipping_address.country,
     shippingPhone: order.shipping_address.phone || "",
   });

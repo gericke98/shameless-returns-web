@@ -150,6 +150,24 @@ export async function createInternationalReturn(id: string): Promise<number> {
       ret = back.find((r) => r.external_id === order.id) ?? back[0] ?? ret;
     }
 
+    // DIAGNOSTIC (temporary): capture what Amphora returned so we can confirm
+    // from the logs whether, after dropping `auto_approve`, the collection is
+    // auto-arranged (carrier/tracking assigned, status advanced) or is sitting
+    // unapproved (e.g. status CREATED + a supported "APPROVE" action).
+    console.log(
+      `[amphora] return created for order ${id}:`,
+      JSON.stringify({
+        return_id: ret?.id,
+        external_id: ret?.external_id,
+        internal_status: ret?.internal_status,
+        carrier: ret?.carrier ?? null,
+        carrier_number: ret?.carrier_number ?? null,
+        carrier_url: ret?.carrier_url ?? null,
+        supported_actions: (ret as any)?.supported_actions ?? null,
+        reused_existing: alreadyExisted,
+      })
+    );
+
     // The collection is now booked — this is the point of no easy return. Persist
     // tracking and treat the operation as a SUCCESS from here on. A failed
     // confirmation email must NOT propagate as a failure: the caller reverts the

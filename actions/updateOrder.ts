@@ -8,6 +8,7 @@ import {
   getOrderTotal,
 } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
+import { normalizeCountry } from "@/lib/countries";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -118,6 +119,15 @@ export async function updateData(prevState: number, formData: FormData) {
     return prevState;
   }
 
+  // The country drives which carrier is used and which fee is charged, so it
+  // must be a supported ISO-2 code. The form is a <select> over
+  // SUPPORTED_COUNTRIES, so an unrecognised value means a tampered request —
+  // reject rather than writing arbitrary text.
+  const country = normalizeCountry(data.country);
+  if (!country) {
+    return prevState;
+  }
+
   await db
     .update(orders)
     .set({
@@ -127,7 +137,7 @@ export async function updateData(prevState: number, formData: FormData) {
       shippingZip: data.zip,
       shippingCity: data.city,
       shippingProvince: data.province,
-      shippingCountry: data.country,
+      shippingCountry: country,
       shippingPhone: data.phone,
     })
     .where(eq(orders.id, data.orderId));

@@ -1,6 +1,8 @@
 import { updateData } from "@/actions/updateOrder";
 import { FormInput } from "@/components/formInput";
+import { FormSelect } from "@/components/formSelect";
 import { orders, productsOrder } from "@/db/schema";
+import { SUPPORTED_COUNTRIES, normalizeCountry } from "@/lib/countries";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
@@ -118,11 +120,15 @@ export const SecondWindowForm = ({
         valueini={order.shippingProvince?.toString()}
         icon={false}
       />
-      <FormInput
+      <FormSelect
         name="country"
         title="País"
-        valueini={order.shippingCountry?.toString()}
-        icon={false}
+        options={SUPPORTED_COUNTRIES.map((c) => ({
+          value: c.code,
+          label: c.nameEs,
+        }))}
+        valueini={normalizeCountry(order.shippingCountry) ?? "ES"}
+        required
       />
       <FormInput
         name="phone"

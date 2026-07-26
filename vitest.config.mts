@@ -1,6 +1,4 @@
 import { defineConfig } from "vitest/config";
-
-// @ts-expect-error vite-tsconfig-paths ESM import
 import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({

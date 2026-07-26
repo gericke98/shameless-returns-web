@@ -62,17 +62,19 @@ export const EU_ISO2: Set<string> = new Set([
 
 const VALID_CODES = new Set(SUPPORTED_COUNTRIES.map((c) => c.code));
 
+/** Strip combining diacritical marks and lowercase. */
+const stripAccents = (s: string): string =>
+  s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
 /** Lowercased display name (ES and EN) -> ISO-2. Includes unaccented
  *  variants because historical rows contain "Espana". */
 const NAME_TO_ISO2: Record<string, string> = (() => {
   const map: Record<string, string> = {};
-  const strip = (s: string) =>
-    s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
   for (const c of SUPPORTED_COUNTRIES) {
     map[c.nameEn.toLowerCase()] = c.code;
     map[c.nameEs.toLowerCase()] = c.code;
-    map[strip(c.nameEn)] = c.code;
-    map[strip(c.nameEs)] = c.code;
+    map[stripAccents(c.nameEn)] = c.code;
+    map[stripAccents(c.nameEs)] = c.code;
   }
   // Aliases seen in historical Shopify data.
   map["czechia"] = "CZ";
@@ -99,12 +101,9 @@ export function normalizeCountry(
 
   if (raw.length === 2) {
     const upper = raw.toUpperCase();
-    return VALID_CODES.has(upper) ? upper : null;
+    if (VALID_CODES.has(upper)) return upper;
   }
 
-  const stripped = raw
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
+  const stripped = stripAccents(raw);
   return NAME_TO_ISO2[raw.toLowerCase()] ?? NAME_TO_ISO2[stripped] ?? null;
 }

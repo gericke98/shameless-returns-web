@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { integer, text, pgTable, serial, boolean } from "drizzle-orm/pg-core";
+import { integer, text, pgTable, serial, boolean, timestamp } from "drizzle-orm/pg-core";
 
 // Creo una tabla que contenga las orders que han sido editadas
 export const orders = pgTable("orders", {
@@ -65,6 +65,20 @@ export const users = pgTable("users", {
   id: text("id").primaryKey(),
   username: text("username").notNull().unique(),
   hashedPassword: text("hashed_password").notNull(),
+});
+
+/**
+ * Return/exchange shipping fee per destination country.
+ *
+ * One row per ISO-2 country, plus a single row with country_code = '*' that
+ * every unlisted or unrecognised country falls back to. Amounts are integer
+ * cents — never floats, which is how you end up charging 4.199999999.
+ */
+export const shippingFees = pgTable("shipping_fees", {
+  countryCode: text("country_code").primaryKey(),
+  returnFeeCents: integer("return_fee_cents").notNull(),
+  exchangeFeeCents: integer("exchange_fee_cents").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // CODE TO UPDATE TABLA SCHEMA  npx drizzle-kit push:pg

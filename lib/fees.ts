@@ -6,20 +6,20 @@
 // of them disagreed with the other six.
 
 export type CountryFees = {
-  returnFeeCents: number;
-  exchangeFeeCents: number;
+  readonly returnFeeCents: number;
+  readonly exchangeFeeCents: number;
 };
 
-export type FeeTable = Record<string, CountryFees>;
+export type FeeTable = Readonly<Record<string, CountryFees>>;
 
 export type FeeKind = "return" | "exchange" | "none";
 
 export type Basket = {
   /** Any item selected for return or exchange and not already confirmed. */
-  hasItems: boolean;
+  readonly hasItems: boolean;
   /** Value returned minus value of replacement items, in euros. Positive
    *  means the customer is owed money. */
-  netAmount: number;
+  readonly netAmount: number;
 };
 
 /** Row that every unlisted or unrecognised country falls back to. */
@@ -58,6 +58,11 @@ export function resolveFee(
   return { feeCents: fees.exchangeFeeCents, kind: "exchange" };
 }
 
+/**
+ * Do not chain arithmetic on the result — summing two euro values converted
+ * here can reintroduce binary float drift, exactly what the "money is
+ * integer cents" rule exists to prevent. Add in cents, convert once, last.
+ */
 export function centsToEuros(cents: number): number {
   return Math.round(cents) / 100;
 }

@@ -30,6 +30,24 @@ describe("feesForCountry", () => {
   it("returns zero fees when even the default row is missing", () => {
     expect(feesForCountry({}, "ES")).toEqual({ returnFeeCents: 0, exchangeFeeCents: 0 });
   });
+
+  it("marks CountryFees fields readonly so cached rows cannot be mutated by mistake", () => {
+    // Isolated table (not the shared TABLE above): `readonly` is a
+    // compile-time-only guard — Vitest's esbuild transform strips types
+    // without checking them, so the `@ts-expect-error` line below still
+    // *executes* at runtime and mutates whatever object `fees` aliases.
+    // Using a throwaway table here keeps that mutation from leaking into
+    // other tests that read from the shared TABLE constant.
+    const isolated: FeeTable = { ES: { returnFeeCents: 400, exchangeFeeCents: 0 } };
+    const fees = feesForCountry(isolated, "ES");
+    expect(fees.returnFeeCents).toBe(400);
+    // The actual regression guard is `npx tsc --noEmit`, not this runtime
+    // assertion: if `readonly` is ever removed from `CountryFees`, this
+    // assignment stops being a type error, the directive below becomes
+    // unused, and tsc fails with "Unused '@ts-expect-error' directive".
+    // @ts-expect-error readonly: mutating a cached fee row must not compile
+    fees.returnFeeCents = 0;
+  });
 });
 
 describe("resolveFee — Rule A, by net amount", () => {

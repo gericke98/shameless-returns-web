@@ -12,6 +12,7 @@ import { orders } from "@/db/schema";
 import axios from "axios";
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
+import { EU_ISO2, normalizeCountry } from "@/lib/countries";
 
 const SENDCLOUD_API = "https://panel.sendcloud.sc/api/v3";
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
@@ -33,33 +34,13 @@ const WAREHOUSE_ADDRESS = {
   country_code: "ES",
 } as const;
 
-// EU member states (ISO-2). Spain is national (Correos) and excluded below.
-const EU_ISO2 = new Set([
-  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
-  "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "SE",
-]);
-
-// Shopify stores the country as a display name (e.g. "France") or sometimes an
-// ISO code. Map the names we actually see to ISO-2.
-const COUNTRY_NAME_TO_ISO2: Record<string, string> = {
-  austria: "AT", belgium: "BE", bulgaria: "BG", croatia: "HR", cyprus: "CY",
-  "czech republic": "CZ", czechia: "CZ", denmark: "DK", estonia: "EE",
-  finland: "FI", france: "FR", germany: "DE", greece: "GR", hungary: "HU",
-  ireland: "IE", italy: "IT", latvia: "LV", lithuania: "LT", luxembourg: "LU",
-  malta: "MT", netherlands: "NL", poland: "PL", portugal: "PT", romania: "RO",
-  slovakia: "SK", slovenia: "SI", sweden: "SE",
-};
-
 /**
  * Returns the ISO-2 code if the order is an in-scope EU return (EU member,
  * not Spain); otherwise null. Non-EU and Spain both fall through to their
  * existing flows.
  */
 export function euIso2ForReturn(shippingCountry: string | null | undefined): string | null {
-  const raw = String(shippingCountry ?? "").trim();
-  if (!raw) return null;
-  const iso =
-    raw.length === 2 ? raw.toUpperCase() : COUNTRY_NAME_TO_ISO2[raw.toLowerCase()] ?? null;
+  const iso = normalizeCountry(shippingCountry);
   if (!iso || iso === "ES") return null; // Spain stays national
   return EU_ISO2.has(iso) ? iso : null; // only EU lanes handled here
 }

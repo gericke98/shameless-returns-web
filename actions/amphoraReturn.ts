@@ -6,6 +6,7 @@ import { getOrderById, getVariantSkusByIds } from "@/db/queries";
 import { orders } from "@/db/schema";
 import axios from "axios";
 import { eq } from "drizzle-orm";
+import { normalizeCountry } from "@/lib/countries";
 import {
   amphoraOrderIdFromShopifyId,
   createAmphoraReturn,
@@ -16,12 +17,13 @@ import {
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
 /** Spain (incl. Canarias/Ceuta/Melilla) stays on the Correos flow; everything
- *  else is routed to Amphora. Accepts the stored country name or an ISO code. */
+ *  else is routed to Amphora. Accepts the stored country name or an ISO code.
+ *  An unrecognised country is treated as international, matching the previous
+ *  behaviour (anything not in the Spain list was international). */
 export function isInternationalOrder(shippingCountry: string | null | undefined): boolean {
-  const c = String(shippingCountry ?? "").trim().toLowerCase();
-  if (!c) return false;
-  const spain = ["spain", "españa", "espana", "es", "esp"];
-  return !spain.includes(c);
+  const raw = String(shippingCountry ?? "").trim();
+  if (!raw) return false;
+  return normalizeCountry(raw) !== "ES";
 }
 
 async function sendAmphoraConfirmationEmail(

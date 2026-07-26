@@ -1,7 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { EU_ISO2, SUPPORTED_COUNTRIES, normalizeCountry } from "@/lib/countries";
+
+// `db/queries.ts` wraps a query in React's `cache()`, which is only resolvable
+// under Next.js's "react-server" module condition (its own build pipeline).
+// Plain vitest/node resolves the default "react" export, which does not
+// include `cache` in this React 18 build. The two tests below import
+// actions/amphoraReturn.ts and actions/sendcloudReturn.ts, which transitively
+// import db/queries.ts purely to reach `getOrderById`/`getVariantSkusByIds` —
+// neither is called by the functions under test. Stub `cache` as a pass-through
+// so the module graph loads; no behavior under test depends on memoization.
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react")>();
+  return { ...actual, cache: (fn: unknown) => fn };
+});
 
 describe("normalizeCountry", () => {
   it("accepts an ISO-2 code in any case", () => {
@@ -68,5 +81,28 @@ describe("normalizeCountry", () => {
     // (this would indicate the regex was created from literal chars, not escapes)
     const combinedMarkRange = /[̀-ͯ]/;
     expect(sourceFile).not.toMatch(combinedMarkRange);
+  });
+});
+
+describe("country helpers keep their previous semantics", () => {
+  it("treats Spain in every stored spelling as national", async () => {
+    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    for (const spelling of ["Spain", "España", "Espana", "ES", "es", "esp"]) {
+      expect(isInternationalOrder(spelling)).toBe(false);
+    }
+  });
+
+  it("treats empty as not international, matching the old guard", async () => {
+    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    expect(isInternationalOrder("")).toBe(false);
+    expect(isInternationalOrder(null)).toBe(false);
+  });
+
+  it("keeps Spain and non-EU out of the Sendcloud EU lane", async () => {
+    const { euIso2ForReturn } = await import("@/actions/sendcloudReturn");
+    expect(euIso2ForReturn("Spain")).toBeNull();
+    expect(euIso2ForReturn("United Kingdom")).toBeNull();
+    expect(euIso2ForReturn("France")).toBe("FR");
+    expect(euIso2ForReturn("Portugal")).toBe("PT");
   });
 });

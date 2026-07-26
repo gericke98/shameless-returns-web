@@ -6,6 +6,7 @@ import {
   resolveFee,
   type FeeTable,
 } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
 
 const TABLE: FeeTable = {
   [DEFAULT_FEE_KEY]: { returnFeeCents: 2000, exchangeFeeCents: 1500 },
@@ -104,5 +105,53 @@ describe("centsToEuros", () => {
     expect(centsToEuros(419)).toBe(4.19);
     expect(centsToEuros(0)).toBe(0);
     expect(centsToEuros(2000)).toBe(20);
+  });
+});
+
+const product = (variantId: string, price: string) => ({
+  id: "gid://shopify/Product/1",
+  title: "T",
+  handle: "t",
+  description: "",
+  images: { edges: [] },
+  variants: { edges: [{ node: { id: variantId, price } }] },
+}) as any;
+
+const line = (over: Record<string, unknown>) => ({
+  id: 1, lineItemId: "1", orderId: "o", productId: "1", title: "T",
+  variant_title: "M", variant_id: "v1", price: "30.00", quantity: 1,
+  changed: false, action: null, reason: null, notes: null,
+  new_variant_title: null, new_variant_id: null, confirmed: false,
+  return_id: null, refunded: null, credit: null, gift_card_id: null,
+  return_line_item_id: null, transaction_id: null, transaction_amount: null,
+  ...over,
+}) as any;
+
+describe("valueBasket", () => {
+  it("reports an empty basket when nothing is selected", () => {
+    expect(valueBasket([line({})], [])).toMatchObject({ hasItems: false, netAmount: 0 });
+  });
+
+  it("ignores lines already confirmed", () => {
+    const b = valueBasket([line({ action: "DEVOLUCIÓN", confirmed: true })], []);
+    expect(b.hasItems).toBe(false);
+  });
+
+  it("values a pure return at the line price", () => {
+    const b = valueBasket([line({ action: "DEVOLUCIÓN" })], []);
+    expect(b).toMatchObject({ returnPrice: 30, exchangePrice: 0, netAmount: 30, hasItems: true });
+  });
+
+  it("nets an exchange against the replacement variant price", () => {
+    const b = valueBasket(
+      [line({ action: "CAMBIO", new_variant_id: "v2" })],
+      [product("v2", "25.00")]
+    );
+    expect(b).toMatchObject({ returnPrice: 30, exchangePrice: 25, netAmount: 5 });
+  });
+
+  it("falls back to the original price when the variant is missing", () => {
+    const b = valueBasket([line({ action: "CAMBIO", new_variant_id: "gone" })], []);
+    expect(b.netAmount).toBe(0);
   });
 });

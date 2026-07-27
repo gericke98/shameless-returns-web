@@ -395,7 +395,9 @@ export const FormProduct = ({
 
         {showNewProduct && (
           <div className="w-full flex flex-col mt-8 gap-3">
-            <h3 className="text-base font-bold">NUEVO PRODUCTO</h3>
+            <h3 className="text-base font-bold">
+              {t.dialog.newProductHeading}
+            </h3>
 
             {/* Custom Dropdown with Images */}
             <div className="w-full">
@@ -403,7 +405,7 @@ export const FormProduct = ({
                 htmlFor="newProduct"
                 className="block text-sm font-medium text-gray-700 mb-1"
               >
-                Seleccionar producto
+                {t.dialog.selectProduct}
               </label>
 
               <div className="relative" ref={dropdownRef}>
@@ -429,7 +431,7 @@ export const FormProduct = ({
                       </>
                     ) : (
                       <span className="text-gray-500">
-                        Selecciona un producto
+                        {t.dialog.selectProductPlaceholder}
                       </span>
                     )}
                   </div>
@@ -598,7 +600,7 @@ export const FormProduct = ({
           disabled={isSubmitting}
           className="bg-cyan-800 text-white py-3 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full mt-8 font-bold"
         >
-          Confirmar selección
+          {t.dialog.confirm}
         </button>
 
         <DialogFooter className="w-full" />
@@ -609,7 +611,7 @@ export const FormProduct = ({
         disabled={isSubmitting}
         className="bg-white border border-cyan-800 py-3 rounded-full hover:bg-cyan-800 focus:bg-cyan-800 flex items-center justify-center w-full -mt-2 mb-2 hover:text-white font-bold"
       >
-        Anular selección
+        {t.dialog.cancel}
       </button>
 
       {isSubmitting && (

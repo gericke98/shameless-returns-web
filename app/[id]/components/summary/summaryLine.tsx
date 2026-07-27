@@ -3,6 +3,8 @@
 import { productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import Image from "next/image";
+import { useLocale } from "@/lib/i18n/context";
+import { formatEuros } from "@/lib/i18n";
 
 type SummaryLineProps = {
   item: typeof productsOrder.$inferSelect;
@@ -20,12 +22,18 @@ const ProductPrice = ({
 }: {
   price: string;
   newAction: boolean;
-}) => (
-  <h6 className="text-sm font-light">
-    {newAction && "- "}
-    {Number(price).toFixed(2)} €
-  </h6>
-);
+}) => {
+  // Matches the sibling ShippingCost in summaryShipping.tsx: read the locale in
+  // the leaf rather than threading it down from SummaryComponent. Without this
+  // the same accordion showed two formats — "4.50 €" here, "4,50 €" above.
+  const locale = useLocale();
+  return (
+    <h6 className="text-sm font-light">
+      {newAction && "- "}
+      {formatEuros(Number(price), locale)}
+    </h6>
+  );
+};
 
 const ProductVariant = ({
   variantTitle,

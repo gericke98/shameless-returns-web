@@ -24,6 +24,10 @@ export const en: Dictionary = {
     orderTitle: "Order",
     selectPrompt: "Select the items you want to manage:",
   },
+  productLine: {
+    selection: "Selection",
+    alreadyModified: "This item has already been updated",
+  },
   dialog: {
     actionTitle: "Action",
     actionChange: "Exchange",
@@ -32,6 +36,11 @@ export const en: Dictionary = {
     reasonReturn: "Reason for the return",
     notes: "Notes",
     newSize: "New size",
+    newProductHeading: "NEW ITEM",
+    selectProduct: "Select an item",
+    selectProductPlaceholder: "Choose an item",
+    confirm: "Confirm selection",
+    cancel: "Clear selection",
   },
   reasons: {
     TOO_BIG: "Too big",

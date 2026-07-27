@@ -22,6 +22,10 @@ export const es = {
     orderTitle: "Pedido",
     selectPrompt: "Selecciona los productos que deseas gestionar:",
   },
+  productLine: {
+    selection: "Selección",
+    alreadyModified: "El producto ya ha sido modificado",
+  },
   dialog: {
     actionTitle: "Acción a realizar",
     actionChange: "Cambio",
@@ -30,6 +34,13 @@ export const es = {
     reasonReturn: "Motivo de la devolución",
     notes: "Notas",
     newSize: "Nueva talla",
+    // Rendered upper-case in the markup, so the casing lives here rather than
+    // in a .toUpperCase() call: other languages may not want shouting.
+    newProductHeading: "NUEVO PRODUCTO",
+    selectProduct: "Seleccionar producto",
+    selectProductPlaceholder: "Selecciona un producto",
+    confirm: "Confirmar selección",
+    cancel: "Anular selección",
   },
   reasons: {
     TOO_BIG: "Me queda grande",

@@ -146,6 +146,18 @@ async function sendSendcloudConfirmationEmail(
  * Returns an HTTP-style status (200 = success) to mirror `createShippingLabel`
  * so it slots into the same dispatch point.
  */
+/**
+ * NOT session-gated, deliberately.
+ *
+ * Reached from two callers: `returnFunction` (a customer with a portal session)
+ * and the Stripe webhook (`app/api/webhooks/stripe/route.ts`), which is an
+ * inbound request from Stripe with NO cookies, authenticated by signature
+ * verification instead.
+ *
+ * Adding a portal-session check here would break every PAID return: the payment
+ * would succeed and the return would never be created. The gate belongs on the
+ * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
+ */
 export async function createSendcloudReturn(id: string): Promise<number> {
   const order = await getOrderById(id);
   if (!order) return 404;

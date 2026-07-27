@@ -11,6 +11,7 @@ import {
 import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
+import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry } from "@/lib/fees";
 import { ACTIONS } from "@/placeholder";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
@@ -19,6 +20,7 @@ import { revalidatePath } from "next/cache";
 
 type FormDataFields = {
   orderId?: string;
+  parentOrderId?: string;
   action?: string;
   motivo?: string;
   notas?: string;
@@ -38,7 +40,11 @@ type FormDataFields = {
 
 function parseFormData(formData: FormData): FormDataFields {
   return {
+    // NOTE: `orderId` is the productsorder ROW id (the form field is "id").
+    // The order it belongs to is `parentOrderId` below — a portal session names
+    // an order, so that is what has to be verified.
     orderId: formData.get("id")?.toString(),
+    parentOrderId: formData.get("orderId")?.toString(),
     action: formData.get("accion")?.toString(),
     motivo: formData.get("motivo")?.toString(),
     notas: formData.get("notas")?.toString(),
@@ -90,6 +96,12 @@ export async function updateOrder(formData: FormData) {
   // data.action is the submitted <select> value, which is now the stable code
   // (ACTIONS.CHANGE === "CAMBIO"), never the localized label. Comparing against
   // the constant is what keeps an English exchange from being saved as a return.
+  // Reject before any DB access. Without this, knowing an order id was enough
+  // to alter somebody else's return.
+  if (!data.parentOrderId || !(await hasOrderAccess(data.parentOrderId))) {
+    return;
+  }
+
   const actionType = data.action === ACTIONS.CHANGE ? "CAMBIO" : "DEVOLUCIÓN";
 
   if (!data.orderId || !data.oldVariantId) return;
@@ -114,8 +126,9 @@ export async function updateOrder(formData: FormData) {
  * Scoping by the row's primary key is the tightest available and matches how the
  * sibling writes in this file are scoped.
  */
-export async function anularOrder(productOrderId: number) {
+export async function anularOrder(productOrderId: number, orderId: string) {
   if (!Number.isInteger(productOrderId) || productOrderId <= 0) return;
+  if (!orderId || !(await hasOrderAccess(orderId))) return;
 
   await db
     .update(productsOrder)
@@ -127,13 +140,25 @@ export async function anularOrder(productOrderId: number) {
       new_variant_title: null,
       new_variant_id: null,
     })
-    .where(eq(productsOrder.id, productOrderId));
+    // Scoped by BOTH: a row id alone must not suffice even with a valid session
+    // for a different order.
+    .where(
+      and(eq(productsOrder.id, productOrderId), eq(productsOrder.orderId, orderId))
+    );
 
   revalidatePath("/", "layout");
 }
 
 export async function updateData(prevState: number, formData: FormData) {
   const data = parseFormData(formData);
+
+  // Unlike updateOrder's form, this one submits the ORDER id as "id" (see
+  // secondWindowForm), so data.orderId is what the session names. This action
+  // rewrites the shipping address, which redirects where the return label is
+  // sent — the most consequential customer-facing write on the portal.
+  if (!data.orderId || !(await hasOrderAccess(data.orderId))) {
+    return prevState;
+  }
 
   if (!data.orderId || !data.name || !data.address) {
     return prevState;
@@ -261,6 +286,18 @@ async function processProductReturn(
   }
 }
 
+/**
+ * NOT session-gated, deliberately.
+ *
+ * Reached from two callers: `returnFunction` (a customer with a portal session)
+ * and the Stripe webhook (`app/api/webhooks/stripe/route.ts`), which is an
+ * inbound request from Stripe with NO cookies, authenticated by signature
+ * verification instead.
+ *
+ * Adding a portal-session check here would break every PAID return: the payment
+ * would succeed and the return would never be created. The gate belongs on the
+ * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
+ */
 export async function updateFinalOrder(
   id: string,
   revert: boolean = false,

@@ -10,6 +10,11 @@ import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import CorreosLogo from "@/public/correos.webp";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros } from "@/lib/i18n";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -30,42 +35,16 @@ const SecondWindowBase = ({
   id,
   allProducts,
 }: Props) => {
-  // Calculate totals
-  const { totalPriceDevolver, totalPriceCambio } = useMemo(() => {
-    const totalPriceDevolver = items
-      .filter((item) => item.action && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-    const totalPriceCambio = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => {
-        // If there's a new variant ID, find the corresponding product and use its price
-        if (item.new_variant_id) {
-          const newProduct = allProducts.find((p) =>
-            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-          );
-          if (newProduct) {
-            // Find the specific variant that matches the new_variant_id
-            const newVariant = newProduct.variants.edges.find(
-              (v) => v.node.id === item.new_variant_id
-            );
-            if (newVariant) {
-              return sum + parseFloat(newVariant.node.price);
-            }
-          }
-        }
-        // Fallback to the original price if no new product is found
-        return sum + parseFloat(item.price);
-      }, 0);
-
-    return { totalPriceDevolver, totalPriceCambio };
-  }, [allProducts, items]);
-
-  const totalPrice = totalPriceDevolver - totalPriceCambio;
-  const shippingCost =
-    totalPrice > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
+  const t = useT();
+  const locale = useLocale();
+  // One shared valuation (lib/basket.ts), the same one payments.ts charges
+  // from, so the "Cost" line below cannot drift from what Stripe bills.
+  const basket = useMemo(
+    () => valueBasket(items, allProducts),
+    [allProducts, items]
+  );
+  const fees = useFees();
+  const { feeCents } = resolveFee(fees, basket);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -84,13 +63,12 @@ const SecondWindowBase = ({
       <div className="space-y-8 p-0">
         {/* Title */}
         <h3 className="font-bold text-xl sm:text-2xl text-left mt-2">
-          Método de devolución
+          {t.second.title}
         </h3>
 
         {/* Subtitle */}
         <p className="mt-3 text-sm sm:text-base text-gray-700">
-          Escoge el método de envío que quieres usar para devolver los productos
-          seleccionados
+          {t.second.subtitle}
         </p>
 
         {/*
@@ -115,12 +93,12 @@ const SecondWindowBase = ({
                 // className="hidden lg:block"
               />
               <h5 className="text-xs sm:text-sm font-semibold">
-                Entrega en punto de recogida Correos
+                {t.second.correosDropoff}
               </h5>
             </div>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
-                Coste: {shippingCost},00 €
+                {t.second.cost}: {formatEuros(centsToEuros(feeCents), locale)}
               </h5>
             </div>
           </div>
@@ -132,19 +110,17 @@ const SecondWindowBase = ({
           <div className="flex flex-row items-center gap-2">
             <IoLocationSharp size={30} color="black" />
             <h3 className="font-bold text-base sm:text-lg">
-              Entrega en punto de recogida
+              {t.second.dropoffTitle}
             </h3>
           </div>
 
           <p className="mt-2 text-sm sm:text-base font-light">
-            Valida tu dirección de envío para poder generar la etiqueta de
-            devolución que recibirás en tu email, con la que podrás llevar tu
-            paquete a un punto de recogida de Correos.{" "}
+            {t.second.dropoffBody}{" "}
             <Link
               href="https://www.correos.es/es/es/herramientas/oficinas-buzones-citypaq/detalle"
               className="text-blue-500 font-semibold"
             >
-              Ver listado
+              {t.second.dropoffLink}
             </Link>
           </p>
 

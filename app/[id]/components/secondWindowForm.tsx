@@ -1,10 +1,15 @@
 import { updateData } from "@/actions/updateOrder";
 import { FormInput } from "@/components/formInput";
 import { orders, productsOrder } from "@/db/schema";
+import { countryDisplayName } from "@/lib/countries";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
+import { useLocale, useT } from "@/lib/i18n/context";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -23,41 +28,19 @@ export const SecondWindowForm = ({
   onItemChange,
   allProducts,
 }: Props) => {
+  const t = useT();
+  const locale = useLocale();
   // useFormState returns [state, formAction]
   const [state, formAction] = useFormState(updateData, position);
 
-  const totalPriceDevolver = items
-    .filter((item) => item.action && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-  const totalPriceCambio = items
-    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-    .reduce((sum, item) => {
-      // If there's a new variant ID, find the corresponding product and use its price
-      if (item.new_variant_id) {
-        const newProduct = allProducts.find((p) =>
-          p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-        );
-        if (newProduct) {
-          // Find the specific variant that matches the new_variant_id
-          const newVariant = newProduct.variants.edges.find(
-            (v) => v.node.id === item.new_variant_id
-          );
-          if (newVariant) {
-            return sum + parseFloat(newVariant.node.price);
-          }
-        }
-      }
-      // Fallback to the original price if no new product is found
-      return sum + parseFloat(item.price);
-    }, 0);
-
-  const totalPriceAux = totalPriceDevolver - totalPriceCambio;
-  const shippingCost =
-    totalPriceAux > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
-  const totalPrice = totalPriceAux - shippingCost;
+  // Same valuation the server charges from: payments.ts -> loadBasket ->
+  // valueBasket, over the same discounted product list. This used to be a
+  // hand-rolled copy of that reduce; the two agreed, but nothing made them
+  // keep agreeing.
+  const basket = valueBasket(items, allProducts);
+  const fees = useFees();
+  const { feeCents } = resolveFee(fees, basket);
+  const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
   useEffect(() => {
     if (state !== 2) {
@@ -80,19 +63,19 @@ export const SecondWindowForm = ({
       <input hidden name="id" value={order.id} readOnly />
       <FormInput
         name="name"
-        title="Nombre"
+        title={t.second.name}
         valueini={order.shippingName}
         icon={false}
       />
       <FormInput
         name="address"
-        title="Calle y número"
+        title={t.second.address}
         valueini={order.shippingAddress1}
         icon={false}
       />
       <FormInput
         name="address2"
-        title="Apartamento, local, etc (Opcional)"
+        title={t.second.address2}
         valueini={
           order.shippingAddress2?.toString() === "No information provided"
             ? ""
@@ -102,31 +85,42 @@ export const SecondWindowForm = ({
       />
       <FormInput
         name="zip"
-        title="Código postal"
+        title={t.second.zip}
         valueini={order.shippingZip?.toString()}
         icon={false}
       />
       <FormInput
         name="city"
-        title="Ciudad"
+        title={t.second.city}
         valueini={order.shippingCity?.toString()}
         icon={false}
       />
       <FormInput
         name="province"
-        title="Provincia"
+        title={t.second.province}
         valueini={order.shippingProvince?.toString()}
         icon={false}
       />
-      <FormInput
-        name="country"
-        title="País"
-        valueini={order.shippingCountry?.toString()}
-        icon={false}
-      />
+      {/*
+        Country is shown, not chosen. It decides the carrier (Correos vs
+        Amphora) and the shipping_fees row, so letting the customer set it
+        would both misroute parcels and let them pick their own price. It is
+        rendered straight from the stored order — `countryDisplayName` falls
+        back to the raw stored string for a country we cannot name, so an
+        Andorra order reads "Andorra" rather than being relabelled "España" —
+        and `updateData` never reads a `country` field, so there is no form
+        value to tamper with. There is deliberately no <input>, hidden or
+        otherwise, carrying this value back to the server.
+      */}
+      <div className="flex flex-col gap-2">
+        <span className="text-xs text-slate-600">{t.second.country}</span>
+        <p className="w-full p-2 border border-slate-200 rounded-md bg-gray-100 text-slate-700">
+          {countryDisplayName(order.shippingCountry, locale)}
+        </p>
+      </div>
       <FormInput
         name="phone"
-        title="Teléfono"
+        title={t.second.phone}
         valueini={order.shippingPhone?.toString()}
         icon={false}
       />
@@ -143,7 +137,7 @@ export const SecondWindowForm = ({
         type="submit"
         className="bg-cyan-800 py-4 lg:-my-8 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
       >
-        Continuar
+        {t.common.continue}
       </button>
     </form>
   );

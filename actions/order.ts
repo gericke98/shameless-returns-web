@@ -13,6 +13,7 @@ import {
 import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
 import { euIso2ForReturn } from "@/actions/sendcloudReturn";
 import { isInternationalOrder } from "@/actions/amphoraReturn";
+import { normalizeCountry } from "@/lib/countries";
 
 /**
  * Processes an order form submission, validates the order details,
@@ -94,8 +95,7 @@ function validateOrderDetails(
   // shipment router uses). Everything else (non-EU) still gets the contact
   // message, since those lanes aren't handled yet (customs / RGR).
   const rawCountry = order.shipping_address.country;
-  const shippingCountry = rawCountry?.toLowerCase();
-  const isSpain = shippingCountry === "spain" || shippingCountry === "españa";
+  const isSpain = normalizeCountry(rawCountry) === "ES";
   // Amphora handles ALL international (EU + non-EU) when enabled.
   const isAmphoraIntl =
     isInternationalOrder(rawCountry) &&

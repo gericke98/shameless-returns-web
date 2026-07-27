@@ -4,45 +4,24 @@ import { FirstWindow } from "./firstWindow";
 import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 import { LastWindow } from "./lastWindow";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee, type CountryFees } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
 
+// Valuation comes from lib/basket.ts — the same function payments.ts charges
+// from — so the `totalPrice > 0` branch that decides whether the refund-method
+// step is shown at all agrees with what Stripe would bill.
 const calculatePrices = (
   items: OrderItem[],
-  allProducts: Product[]
+  allProducts: Product[],
+  fees: CountryFees
 ): Prices => {
-  const returnPrice = items
-    .filter((item) => item.action && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
-  const exchangePrice = items
-    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-    .reduce((sum, item) => {
-      // If there's a new variant ID, find the corresponding product and use its price
-      if (item.new_variant_id) {
-        const newProduct = allProducts.find((p) =>
-          p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-        );
-        if (newProduct) {
-          // Find the specific variant that matches the new_variant_id
-          const newVariant = newProduct.variants.edges.find(
-            (v) => v.node.id === item.new_variant_id
-          );
-          if (newVariant) {
-            return sum + parseFloat(newVariant.node.price);
-          }
-        }
-      }
-      // Fallback to the original price if no new product is found
-      return sum + parseFloat(item.price);
-    }, 0);
-  let totalPrice = returnPrice - exchangePrice;
-  const shippingCost =
-    totalPrice > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
-  totalPrice -= shippingCost;
+  const basket = valueBasket(items, allProducts);
+  const { feeCents } = resolveFee(fees, basket);
   return {
-    returnPrice,
-    exchangePrice,
-    totalPrice: totalPrice,
+    returnPrice: basket.returnPrice,
+    exchangePrice: basket.exchangePrice,
+    totalPrice: basket.netAmount - centsToEuros(feeCents),
   };
 };
 
@@ -58,9 +37,10 @@ export const OrderWindowContent = ({
   onItemChange,
   allProducts,
 }: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
+  const fees = useFees();
   const { totalPrice } = useMemo(
-    () => calculatePrices(items, allProducts),
-    [items, allProducts]
+    () => calculatePrices(items, allProducts, fees),
+    [items, allProducts, fees]
   );
   const itemsToShow = useMemo(
     () => items.filter((item) => item.action && !item.confirmed),

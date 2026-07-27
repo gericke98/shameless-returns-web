@@ -1,6 +1,10 @@
 import { InputComponent } from "@/components/inputComponent";
 import { Metadata } from "next";
 import { Suspense } from "react";
+import { cookies } from "next/headers";
+import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
+import { LocaleProvider } from "@/lib/i18n/context";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export const metadata: Metadata = {
   title: "Shameless Returns | Order Search",
@@ -26,13 +30,20 @@ function LoadingState() {
  * Displays the order search form in a centered layout
  */
 const Home = () => {
+  const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
+
   return (
     <main className="min-h-screen grid place-items-center bg-black-pattern">
-      <div className="bg-white rounded-3xl py-5 px-4 lg:px-6 w-[85%] lg:w-[30%] flex flex-col items-center">
-        <Suspense fallback={<LoadingState />}>
-          <InputComponent />
-        </Suspense>
-      </div>
+      <LocaleProvider locale={locale}>
+        <div className="bg-white rounded-3xl py-5 px-4 lg:px-6 w-[85%] lg:w-[30%] flex flex-col items-center">
+          <div className="w-full flex justify-end">
+            <LanguageSwitcher />
+          </div>
+          <Suspense fallback={<LoadingState />}>
+            <InputComponent />
+          </Suspense>
+        </div>
+      </LocaleProvider>
     </main>
   );
 };

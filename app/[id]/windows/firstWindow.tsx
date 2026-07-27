@@ -3,6 +3,7 @@ import { Progress } from "@/components/ui/progress";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { OrderItem, Product } from "@/types";
+import { useT } from "@/lib/i18n/context";
 
 type FirstWindowProps = {
   name: string;
@@ -17,6 +18,7 @@ const FirstWindowBase = ({
   onItemChange,
   allProducts,
 }: FirstWindowProps) => {
+  const t = useT();
   const hasSelectedItems = useMemo(
     () => items.some((item) => item.action !== null),
     [items]
@@ -27,10 +29,10 @@ const FirstWindowBase = ({
       <Progress value={25} className="mb-8" />
       <div className="space-y-8">
         <div className="space-y-2">
-          <h3 className="text-3xl font-bold text-gray-900">Pedido {name}</h3>
-          <h5 className="text-base text-gray-600">
-            Selecciona los productos que deseas gestionar:
-          </h5>
+          <h3 className="text-3xl font-bold text-gray-900">
+            {t.first.orderTitle} {name}
+          </h3>
+          <h5 className="text-base text-gray-600">{t.first.selectPrompt}</h5>
         </div>
 
         <div className="space-y-4">

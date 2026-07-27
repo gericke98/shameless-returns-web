@@ -20,6 +20,10 @@ import {
   Product,
 } from "@/types";
 import { cn } from "@/lib/utils";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
+import { reasonLabel } from "@/lib/reasons";
+import { ACTIONS } from "@/placeholder";
 import { LiaExchangeAltSolid } from "react-icons/lia";
 import { IoIosReturnLeft } from "react-icons/io";
 
@@ -40,11 +44,16 @@ const ActionIcon = ({ action }: { action: string }) => {
   return <IoIosReturnLeft size={11} />;
 };
 
-const ActionBadge = ({ action }: { action: string }) => (
+// `action` is the persisted code from productsOrder.action, not display text.
+// This used to title-case the code itself, so the badge stayed Spanish even in
+// English. Select the label off the code instead; the code itself is untouched.
+// `t` is passed as a prop for consistency with sibling components declared at
+// module scope (e.g. thirdWindow's StoreCredit).
+const ActionBadge = ({ action, t }: { action: string; t: Dictionary }) => (
   <div className="w-full h-5 flex flex-row items-center justify-center bg-blue-100 rounded-md max-w-24">
     <ActionIcon action={action} />
     <span className="text-xs font-light text-left align-text-middle px-2 flex-none">
-      {action.charAt(0) + action.slice(1).toLowerCase()}
+      {action === ACTIONS.CHANGE ? t.dialog.actionChange : t.dialog.actionReturn}
     </span>
   </div>
 );
@@ -74,6 +83,19 @@ const VariantInfo = ({
   </div>
 );
 
+// `reason` is the value persisted in productsOrder.reason: a REASON_KEYS key
+// for anything saved since the value/label split, or a legacy Spanish sentence
+// for older rows. reasonLabel() localizes both and passes anything else
+// through unchanged rather than rendering an empty note.
+const ReasonNote = ({ reason }: { reason: string }) => {
+  const t = useT();
+  return (
+    <span className="text-xs font-light italic rounded-md text-left">
+      &quot;{reasonLabel(reason, t)}&quot;
+    </span>
+  );
+};
+
 const ProductInfo = ({
   title,
   variant,
@@ -85,9 +107,13 @@ const ProductInfo = ({
   newVariant,
   newProduct,
   isNewProduct,
+  t,
+  locale,
 }: ProductInfoProps & {
   newProduct?: Product | null;
   isNewProduct: boolean;
+  t: Dictionary;
+  locale: Locale;
 }) => (
   <div className="flex flex-col w-full gap-1 items-start">
     <span className="lg:text-base text-sm text-left font-bold leading-tight text-black">
@@ -100,21 +126,17 @@ const ProductInfo = ({
       isNewProduct={isNewProduct}
     />
     <span className="text-sm text-left font-bold leading-tight text-black">
-      {Number(price).toFixed(2)} €
+      {formatEuros(Number(price), locale)}
     </span>
     {action && (
       <div className="flex flex-col justify-center gap-1 w-full">
-        <ActionBadge action={action} />
-        {reason && (
-          <span className="text-xs font-light italic rounded-md text-left">
-            &quot;{reason}&quot;
-          </span>
-        )}
+        <ActionBadge action={action} t={t} />
+        {reason && <ReasonNote reason={reason} />}
       </div>
     )}
     {confirmed && (
       <span className="text-xs font-bold text-left px-1 py-2 flex-none bg-blue-200 rounded-md">
-        El producto ya ha sido modificado
+        {t.productLine.alreadyModified}
       </span>
     )}
     {changed && newProduct && isNewProduct && (
@@ -149,7 +171,9 @@ const ProductDialog = ({
   onSuccess,
   onItemChange,
   allProducts,
-}: ProductDialogProps) => {
+  t,
+  locale,
+}: ProductDialogProps & { t: Dictionary; locale: Locale }) => {
   const [newProduct, setNewProduct] = useState<Product | null>(null);
 
   // Find the new product if a change has been made
@@ -174,7 +198,9 @@ const ProductDialog = ({
     <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto lg:pb-14">
       <DialogHeader>
         <DialogTitle>
-          <span className="text-2xl font-bold mt-8 mb-8">Selección</span>
+          <span className="text-2xl font-bold mt-8 mb-8">
+            {t.productLine.selection}
+          </span>
         </DialogTitle>
       </DialogHeader>
       <DialogDescription asChild>
@@ -197,6 +223,8 @@ const ProductDialog = ({
               newVariant={orderProduct.new_variant_title ?? undefined}
               newProduct={newProduct}
               isNewProduct={isNewProduct}
+              t={t}
+              locale={locale}
             />
           </div>
           <div className="w-full mt-2">
@@ -237,6 +265,8 @@ export const ProductLineClient = ({
   onItemChange,
   allProducts,
 }: ProductLineProps) => {
+  const t = useT();
+  const locale = useLocale();
   const [changed, setChanged] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
   const [newProduct, setNewProduct] = useState<Product | null>(null);
@@ -287,6 +317,8 @@ export const ProductLineClient = ({
             newVariant={orderProduct.new_variant_title ?? undefined}
             newProduct={newProduct}
             isNewProduct={isNewProduct}
+            t={t}
+            locale={locale}
           />
         </DialogTrigger>
 
@@ -325,6 +357,8 @@ export const ProductLineClient = ({
             }
           }}
           allProducts={allProducts}
+          t={t}
+          locale={locale}
         />
       </Dialog>
     </div>

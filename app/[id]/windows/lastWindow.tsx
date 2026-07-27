@@ -5,6 +5,11 @@ import { Product } from "@/types";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros } from "@/lib/i18n";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
@@ -25,58 +30,25 @@ const LastWindowBase = ({
   id,
   allProducts,
 }: Props) => {
-  const { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal } =
-    useMemo(() => {
-      const totalPriceDevolver = items
-        .filter((item) => item.action && !item.confirmed)
-        .reduce((sum, item) => sum + parseFloat(item.price), 0);
-      const totalPriceCambio = items
-        .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-        .reduce((sum, item) => {
-          // If there's a new variant ID, find the corresponding product and use its price
-          if (item.new_variant_id) {
-            const newProduct = allProducts.find((p) =>
-              p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-            );
-            if (newProduct) {
-              // Find the specific variant that matches the new_variant_id
-              const newVariant = newProduct.variants.edges.find(
-                (v) => v.node.id === item.new_variant_id
-              );
-              if (newVariant) {
-                return sum + parseFloat(newVariant.node.price);
-              }
-            }
-          }
-          // Fallback to the original price if no new product is found
-          return sum + parseFloat(item.price);
-        }, 0);
+  const fees = useFees();
+  const t = useT();
+  const locale = useLocale();
+  const finalTotal = useMemo(() => {
+    // One shared valuation (lib/basket.ts) — the same one payments.ts charges
+    // from. Only the numbers are needed here; nothing on this screen renders a
+    // filtered item list of its own.
+    const basket = valueBasket(items, allProducts);
 
-      let totalPrice = totalPriceDevolver - totalPriceCambio;
+    // Rule A, shared with every other site and with the server-side charge.
+    // This previously used a Rule B variant keyed on action type, which
+    // disagreed with the checkout total on a cheaper-item exchange.
+    const { feeCents } = resolveFee(fees, basket);
 
-      // Calculate shipping cost the same way as SummaryComponent
-      const itemsToDev = items.filter(
-        (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
-      );
-      const itemsToCambio = items.filter(
-        (item) => item.action === "CAMBIO" && !item.confirmed
-      );
+    const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
-      const shippingCost =
-        itemsToDev.length > 0
-          ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-          : itemsToCambio.length > 0
-          ? Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST)
-          : 0;
-
-      totalPrice -= shippingCost;
-
-      // Calculate finalTotal the same way as SummaryComponent
-      const creditBonus = credito ? totalPrice * 0.15 : 0;
-      const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
-
-      return { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal };
-    }, [allProducts, credito, items]);
+    // Calculate finalTotal the same way as SummaryComponent
+    return credito ? totalPrice * 1.15 : totalPrice;
+  }, [allProducts, credito, items, fees]);
 
   const handleBack = () => {
     setPosition(finalTotal > 0 ? position - 1 : position - 2);
@@ -90,7 +62,7 @@ const LastWindowBase = ({
         className="mt-4 cursor-pointer"
         onClick={handleBack}
       />
-      <h3 className="font-bold text-2xl text-left mt-1">Resumen final</h3>
+      <h3 className="font-bold text-2xl text-left mt-1">{t.last.title}</h3>
       <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer flex flex-col gap-4">
         {items.map(
           (product) =>
@@ -120,38 +92,39 @@ const LastWindowBase = ({
         )}
         {finalTotal < 0 ? (
           <div className="w-full flex flex-col">
-            <h3 className="font-bold text-base">Cambio de productos</h3>
+            <h3 className="font-bold text-base">{t.last.exchangeTitle}</h3>
             <p className="text-black text-sm mt-2">
-              <span className="font-bold">
-                Una vez devuelvas tus productos,
-              </span>{" "}
-              recibirás los nuevos que has seleccionado.{" "}
+              <span className="font-bold">{t.last.exchangeBodyBold}</span>{" "}
+              {t.last.exchangeBodyRest}{" "}
             </p>
           </div>
         ) : credito ? (
           <div className="w-full flex flex-col">
-            <h3 className="font-bold text-base">Crédito en tienda</h3>
+            <h3 className="font-bold text-base">{t.last.creditTitle}</h3>
             <p className="text-black text-sm">
-              Recibirás en tu correo un código por valor de{" "}
-              <span className="font-bold">{finalTotal.toFixed(2)} € </span>
-              con el que comprar de nuevo en Shameless Collective,{" "}
-              <span className="font-bold">cuando se acepte tu devolución.</span>
+              {t.last.creditBodyStart}{" "}
+              <span className="font-bold">
+                {formatEuros(finalTotal, locale)}{" "}
+              </span>
+              {t.last.creditBodyMid}{" "}
+              <span className="font-bold">{t.last.creditBodyEnd}</span>
             </p>
           </div>
         ) : (
           <div className="w-full flex flex-col">
-            <h3 className="font-bold text-base">Reembolso tradicional</h3>
+            <h3 className="font-bold text-base">{t.last.refundTitle}</h3>
             <p className="text-black text-sm">
-              Recibirás tu reembolso de{" "}
-              <span className="font-bold">{finalTotal.toFixed(2)} € </span>
-              en el método de pago que usaste en tu compra original,{" "}
-              <span className="font-bold">cuando se acepte tu devolución.</span>
+              {t.last.refundBodyStart}{" "}
+              <span className="font-bold">
+                {formatEuros(finalTotal, locale)}{" "}
+              </span>
+              {t.last.refundBodyMid}{" "}
+              <span className="font-bold">{t.last.refundBodyEnd}</span>
             </p>
             <p className="text-black text-sm mt-2">
-              Debido al tiempo necesario para recibir los productos, revisarlos,
-              y procesar la devolución,{" "}
-              <span className="font-bold">pueden pasar hasta 15 días</span>{" "}
-              hasta que recibas tu dinero.
+              {t.last.refundDelayStart}{" "}
+              <span className="font-bold">{t.last.refundDelayBold}</span>{" "}
+              {t.last.refundDelayEnd}
             </p>
           </div>
         )}

@@ -4,10 +4,15 @@ import db from "@/db/drizzle";
 import {
   createReturn,
   getFulfillmentLineItems,
+  getOrderById,
   getOrderProductsById,
   getOrderTotal,
 } from "@/db/queries";
+import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
+import { normalizeCountry } from "@/lib/countries";
+import { centsToEuros, feesForCountry } from "@/lib/fees";
+import { ACTIONS } from "@/placeholder";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -26,7 +31,8 @@ type FormDataFields = {
   zip?: string;
   city?: string;
   province?: string;
-  country?: string;
+  // No `country`: the destination country is never taken from the form. See
+  // updateData below.
   phone?: string;
 };
 
@@ -45,7 +51,6 @@ function parseFormData(formData: FormData): FormDataFields {
     zip: formData.get("zip")?.toString(),
     city: formData.get("city")?.toString(),
     province: formData.get("province")?.toString(),
-    country: formData.get("country")?.toString(),
     phone: formData.get("phone")?.toString(),
   };
 }
@@ -82,8 +87,10 @@ async function updateProductOrder(
 export async function updateOrder(formData: FormData) {
   const data = parseFormData(formData);
 
-  const actionType =
-    data.action === "Quiero cambiar este producto" ? "CAMBIO" : "DEVOLUCIÓN";
+  // data.action is the submitted <select> value, which is now the stable code
+  // (ACTIONS.CHANGE === "CAMBIO"), never the localized label. Comparing against
+  // the constant is what keeps an English exchange from being saved as a return.
+  const actionType = data.action === ACTIONS.CHANGE ? "CAMBIO" : "DEVOLUCIÓN";
 
   if (!data.orderId || !data.oldVariantId) return;
 
@@ -118,6 +125,18 @@ export async function updateData(prevState: number, formData: FormData) {
     return prevState;
   }
 
+  // NOTE: `shippingCountry` is deliberately absent from this payload.
+  //
+  // The country decides which carrier books the return (Correos domestically,
+  // Amphora internationally) and which `shipping_fees` row is charged, so it is
+  // not something the customer may supply. The address form renders it
+  // read-only, straight from the stored order, and this action never reads a
+  // `country` field — a tampered request simply has no effect on the column.
+  //
+  // This also removes the failure mode where an order whose stored country was
+  // not in SUPPORTED_COUNTRIES had the <select> pre-select España and, on
+  // Continue, overwrote the real destination with "ES" — which then booked a
+  // domestic label for a foreign address and charged the cheaper ES fee.
   await db
     .update(orders)
     .set({
@@ -127,7 +146,6 @@ export async function updateData(prevState: number, formData: FormData) {
       shippingZip: data.zip,
       shippingCity: data.city,
       shippingProvince: data.province,
-      shippingCountry: data.country,
       shippingPhone: data.phone,
     })
     .where(eq(orders.id, data.orderId));
@@ -139,7 +157,8 @@ export async function updateData(prevState: number, formData: FormData) {
 async function processProductReturn(
   product: { action?: string; variant_id: string; [key: string]: any },
   totalOrder: OrderData,
-  isCredit: boolean
+  isCredit: boolean,
+  returnFeeEuros: number
 ) {
   try {
     if (!product.action) return;
@@ -187,7 +206,8 @@ async function processProductReturn(
       totalOrder.id,
       fulfillmentsProduct.node.id,
       adjustedProduct,
-      lineitem.discount_allocations?.[0]
+      lineitem.discount_allocations?.[0],
+      returnFeeEuros
     );
 
     // Si la return se creo correctamente, actualizo el producto
@@ -254,12 +274,20 @@ export async function updateFinalOrder(
   }
   const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
+  const dbOrder = await getOrderById(id);
+  const feeTable = await getFeeTable();
+  const orderFees = feesForCountry(
+    feeTable,
+    normalizeCountry(dbOrder?.shippingCountry)
+  );
+  const returnFeeEuros = centsToEuros(orderFees.returnFeeCents);
   await Promise.all(
     products.map((product) =>
       processProductReturn(
         { ...product, action: product.action || undefined },
         totalOrder,
-        isCredit
+        isCredit,
+        returnFeeEuros
       )
     )
   );

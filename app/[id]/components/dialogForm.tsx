@@ -8,7 +8,9 @@ import { DialogFooter } from "@/components/ui/dialog";
 import { Product } from "@/types";
 import { productsOrder } from "@/db/schema";
 import { anularOrder, updateOrder } from "@/actions/updateOrder";
-import { ACTIONS, REASONS } from "@/placeholder";
+import { ACTIONS, REASON_KEYS } from "@/placeholder";
+import { useT } from "@/lib/i18n/context";
+import { toReasonKey } from "@/lib/reasons";
 
 type Props = {
   product: Product;
@@ -29,12 +31,14 @@ export const FormProduct = ({
   onItemChange,
   allProducts,
 }: Props) => {
+  const t = useT();
   const [action, setAction] = useState<string | null>(
     orderProduct.action === "CAMBIO" ? ACTIONS.CHANGE : ACTIONS.RETURN
   );
-  const [motivo, setMotivo] = useState<string>(
-    orderProduct.reason || "Me queda pequeño"
-  );
+  // The persisted reason is a REASON_KEYS key, not a sentence. Legacy rows hold
+  // the old Spanish sentence, so normalise to a key that actually exists as an
+  // option in the select below.
+  const [motivo, setMotivo] = useState<string>(toReasonKey(orderProduct.reason));
   const [size, setSize] = useState<string>(() => {
     // If there's an existing new_variant_title, check if it has stock
     if (orderProduct.new_variant_title && orderProduct.new_variant_id) {
@@ -363,12 +367,12 @@ export const FormProduct = ({
 
         <FormSelect
           name="accion"
-          title="Acción a realizar"
+          title={t.dialog.actionTitle}
           options={[
-            { value: ACTIONS.CHANGE, label: "Cambio" },
-            { value: ACTIONS.RETURN, label: "Devolución" },
+            { value: ACTIONS.CHANGE, label: t.dialog.actionChange },
+            { value: ACTIONS.RETURN, label: t.dialog.actionReturn },
           ]}
-          valueini={action || "CAMBIO"}
+          valueini={action || ACTIONS.CHANGE}
           onChange={setAction}
         />
 
@@ -376,19 +380,24 @@ export const FormProduct = ({
           name="motivo"
           title={
             action === ACTIONS.CHANGE
-              ? "Motivo del cambio"
-              : "Motivo de la devolución"
+              ? t.dialog.reasonChange
+              : t.dialog.reasonReturn
           }
-          options={REASONS.map((reason) => ({ value: reason, label: reason }))}
+          options={REASON_KEYS.map((key) => ({
+            value: key,
+            label: t.reasons[key],
+          }))}
           valueini={motivo}
           onChange={setMotivo}
         />
 
-        <FormInput name="notas" title="Notas" icon={false} valueini="" />
+        <FormInput name="notas" title={t.dialog.notes} icon={false} valueini="" />
 
         {showNewProduct && (
           <div className="w-full flex flex-col mt-8 gap-3">
-            <h3 className="text-base font-bold">NUEVO PRODUCTO</h3>
+            <h3 className="text-base font-bold">
+              {t.dialog.newProductHeading}
+            </h3>
 
             {/* Custom Dropdown with Images */}
             <div className="w-full">
@@ -396,7 +405,7 @@ export const FormProduct = ({
                 htmlFor="newProduct"
                 className="block text-sm font-medium text-gray-700 mb-1"
               >
-                Seleccionar producto
+                {t.dialog.selectProduct}
               </label>
 
               <div className="relative" ref={dropdownRef}>
@@ -422,7 +431,7 @@ export const FormProduct = ({
                       </>
                     ) : (
                       <span className="text-gray-500">
-                        Selecciona un producto
+                        {t.dialog.selectProductPlaceholder}
                       </span>
                     )}
                   </div>
@@ -577,7 +586,7 @@ export const FormProduct = ({
             {new_product_change && (
               <FormSelectSize
                 name="newSize"
-                title="Nueva talla"
+                title={t.dialog.newSize}
                 options={sizeStock}
                 valueini={size}
                 onChange={handleSizeChange}
@@ -591,7 +600,7 @@ export const FormProduct = ({
           disabled={isSubmitting}
           className="bg-cyan-800 text-white py-3 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full mt-8 font-bold"
         >
-          Confirmar selección
+          {t.dialog.confirm}
         </button>
 
         <DialogFooter className="w-full" />
@@ -602,7 +611,7 @@ export const FormProduct = ({
         disabled={isSubmitting}
         className="bg-white border border-cyan-800 py-3 rounded-full hover:bg-cyan-800 focus:bg-cyan-800 flex items-center justify-center w-full -mt-2 mb-2 hover:text-white font-bold"
       >
-        Anular selección
+        {t.dialog.clear}
       </button>
 
       {isSubmitting && (
@@ -627,7 +636,7 @@ export const FormProduct = ({
               d="M4 12a8 8 0 018-8v8H4z"
             ></path>
           </svg>
-          <span className="mt-2 text-sm text-cyan-800">Procesando...</span>
+          <span className="mt-2 text-sm text-cyan-800">{t.common.processing}</span>
         </div>
       )}
     </div>

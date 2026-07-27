@@ -12,6 +12,9 @@ import { orders } from "@/db/schema";
 import axios from "axios";
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
+import { EU_ISO2, normalizeCountry } from "@/lib/countries";
+import { buildSendcloudEmail } from "@/lib/emails";
+import { readLocale, type Locale } from "@/lib/i18n";
 
 const SENDCLOUD_API = "https://panel.sendcloud.sc/api/v3";
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
@@ -33,33 +36,13 @@ const WAREHOUSE_ADDRESS = {
   country_code: "ES",
 } as const;
 
-// EU member states (ISO-2). Spain is national (Correos) and excluded below.
-const EU_ISO2 = new Set([
-  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU",
-  "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "SE",
-]);
-
-// Shopify stores the country as a display name (e.g. "France") or sometimes an
-// ISO code. Map the names we actually see to ISO-2.
-const COUNTRY_NAME_TO_ISO2: Record<string, string> = {
-  austria: "AT", belgium: "BE", bulgaria: "BG", croatia: "HR", cyprus: "CY",
-  "czech republic": "CZ", czechia: "CZ", denmark: "DK", estonia: "EE",
-  finland: "FI", france: "FR", germany: "DE", greece: "GR", hungary: "HU",
-  ireland: "IE", italy: "IT", latvia: "LV", lithuania: "LT", luxembourg: "LU",
-  malta: "MT", netherlands: "NL", poland: "PL", portugal: "PT", romania: "RO",
-  slovakia: "SK", slovenia: "SI", sweden: "SE",
-};
-
 /**
  * Returns the ISO-2 code if the order is an in-scope EU return (EU member,
  * not Spain); otherwise null. Non-EU and Spain both fall through to their
  * existing flows.
  */
 export function euIso2ForReturn(shippingCountry: string | null | undefined): string | null {
-  const raw = String(shippingCountry ?? "").trim();
-  if (!raw) return null;
-  const iso =
-    raw.length === 2 ? raw.toUpperCase() : COUNTRY_NAME_TO_ISO2[raw.toLowerCase()] ?? null;
+  const iso = normalizeCountry(shippingCountry);
   if (!iso || iso === "ES") return null; // Spain stays national
   return EU_ISO2.has(iso) ? iso : null; // only EU lanes handled here
 }
@@ -124,7 +107,8 @@ async function sendSendcloudConfirmationEmail(
   recipientEmail: string,
   name: string,
   labelUrl: string | null,
-  tracking: string | null
+  tracking: string | null,
+  locale: Locale
 ): Promise<number> {
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
   if (!postmarkToken) return 500;
@@ -135,46 +119,10 @@ async function sendSendcloudConfirmationEmail(
     return 500;
   }
 
-  const labelButton = `<p style="font-size:16px;color:#555;"><a href="${labelUrl}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;">Download &amp; print your return label (PDF)</a></p>`;
-  const trackingLine = tracking
-    ? `<p style="font-size:16px;color:#555;">Tracking number: <strong>${tracking}</strong>.</p>`
-    : "";
-
   const emailData = {
-    From: "hello@shamelesscollective.com",
+    ...buildSendcloudEmail(name, locale, labelUrl, tracking),
     To: recipientEmail,
-    Subject: "Your return label is ready",
     MessageStream: "outbound",
-    TextBody:
-      `Your return was created. Download and print your pre-paid label here: ${labelUrl} — then drop the parcel at your nearest drop-off point.`,
-    HtmlBody: `
-      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
-        <div style="margin-bottom:20px;">
-          <p style="font-size:16px;color:#555;">Hello <strong>${name}</strong>,</p>
-          <p style="font-size:16px;color:#555;">Thank you for initiating a return with <strong>Shameless Collective</strong>. Here's how to complete it:</p>
-          <ol style="font-size:16px;color:#555;margin-left:20px;padding-left:10px;">
-            <li>Download and print your pre-paid return label (button below).</li>
-            <li>Package the item(s) securely and attach the label.</li>
-            <li>Drop the parcel at your nearest drop-off point.</li>
-          </ol>
-          ${labelButton}
-          ${trackingLine}
-          <p style="font-size:16px;color:#555;">Questions? <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
-          <p style="font-size:16px;color:#555;">Best regards,<br/><strong>The Shameless Collective Team</strong></p>
-        </div>
-        <hr style="border:0;border-top:1px solid #ddd;margin:20px 0;"/>
-        <div>
-          <p style="font-size:16px;color:#555;">Hola <strong>${name}</strong>,</p>
-          <p style="font-size:16px;color:#555;">Gracias por iniciar una devolución con <strong>Shameless Collective</strong>. Para completarla:</p>
-          <ol style="font-size:16px;color:#555;margin-left:20px;padding-left:10px;">
-            <li>Descarga e imprime tu etiqueta de devolución prepagada (botón arriba).</li>
-            <li>Empaqueta el/los artículo(s) y pega la etiqueta.</li>
-            <li>Deja el paquete en tu punto de entrega más cercano.</li>
-          </ol>
-          <p style="font-size:16px;color:#555;">Si tienes preguntas, escríbenos a <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
-          <p style="font-size:16px;color:#555;">Saludos,<br/><strong>El equipo de Shameless Collective</strong></p>
-        </div>
-      </div>`,
   };
 
   try {
@@ -273,11 +221,14 @@ export async function createSendcloudReturn(id: string): Promise<number> {
       .set({ locator: tracking, carrier: carrierName, carrierUrl: trackingUrl })
       .where(eq(orders.id, id));
 
+    // Language the customer chose in the portal, persisted on the order when the
+    // return was created (see actions/return.ts). `readLocale` falls back to "es".
     const emailStatus = await sendSendcloudConfirmationEmail(
       order.email,
       order.shippingName,
       labelUrl,
-      tracking
+      tracking,
+      readLocale(order.locale)
     );
     if (emailStatus !== 200) {
       console.error(

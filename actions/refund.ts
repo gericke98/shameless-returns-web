@@ -11,6 +11,9 @@ import {
 import { productsOrder } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { getFeeTable } from "@/db/fees";
+import { normalizeCountry } from "@/lib/countries";
+import { centsToEuros, feesForCountry } from "@/lib/fees";
 
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
@@ -26,9 +29,13 @@ export async function validateReturn(product: any, status: string, order: any) {
       const customerId = totalOrder.customer.id;
 
       // Extraigo el valor del gift card (En este caso siempre será return)
+      const feeTable = await getFeeTable();
+      const orderFees = feesForCountry(
+        feeTable,
+        normalizeCountry(order.shippingCountry)
+      );
       const giftCardValue =
-        (product.price - Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)) *
-        1.15;
+        (product.price - centsToEuros(orderFees.returnFeeCents)) * 1.15;
       const resultGiftCard = await processGiftCardReturn(
         customerId,
         giftCardValue,

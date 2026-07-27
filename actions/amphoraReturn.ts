@@ -6,6 +6,9 @@ import { getOrderById, getVariantSkusByIds } from "@/db/queries";
 import { orders } from "@/db/schema";
 import axios from "axios";
 import { eq } from "drizzle-orm";
+import { normalizeCountry } from "@/lib/countries";
+import { buildAmphoraEmail } from "@/lib/emails";
+import { readLocale, type Locale } from "@/lib/i18n";
 import {
   amphoraOrderIdFromShopifyId,
   createAmphoraReturn,
@@ -16,53 +19,31 @@ import {
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
 /** Spain (incl. Canarias/Ceuta/Melilla) stays on the Correos flow; everything
- *  else is routed to Amphora. Accepts the stored country name or an ISO code. */
+ *  else is routed to Amphora. Accepts the stored country name or an ISO code.
+ *  An unrecognised country is treated as international, matching the previous
+ *  behaviour (anything not in the Spain list was international). */
 export function isInternationalOrder(shippingCountry: string | null | undefined): boolean {
-  const c = String(shippingCountry ?? "").trim().toLowerCase();
-  if (!c) return false;
-  const spain = ["spain", "españa", "espana", "es", "esp"];
-  return !spain.includes(c);
+  const raw = String(shippingCountry ?? "").trim();
+  if (!raw) return false;
+  return normalizeCountry(raw) !== "ES";
 }
 
 async function sendAmphoraConfirmationEmail(
   recipientEmail: string,
   name: string,
-  ret: AmphoraReturn
+  ret: AmphoraReturn,
+  locale: Locale
 ): Promise<number> {
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
   if (!postmarkToken) return 500;
 
-  const trackingLine =
-    ret.carrier_number && ret.carrier_url
-      ? `<p style="font-size:16px;color:#555;">You can track the collection here: <a href="${ret.carrier_url}">${ret.carrier_number}</a>.</p>`
-      : `<p style="font-size:16px;color:#555;">We will email you the tracking details as soon as the collection is scheduled.</p>`;
-
   const emailData = {
-    From: "hello@shamelesscollective.com",
+    ...buildAmphoraEmail(name, locale, {
+      number: ret.carrier_number,
+      url: ret.carrier_url,
+    }),
     To: recipientEmail,
-    Subject: "Your return was successfully created",
     MessageStream: "outbound",
-    TextBody:
-      "Your return was successfully created. A courier will collect the item(s) from your address.",
-    HtmlBody: `
-      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
-        <div style="margin-bottom:20px;">
-          <p style="font-size:16px;color:#555;">Hello <strong>${name}</strong>,</p>
-          <p style="font-size:16px;color:#555;">Thank you for initiating a return with <strong>Shameless Collective</strong>. Our courier will <strong>collect the item(s) from your address</strong> — you don't need to print anything.</p>
-          <p style="font-size:16px;color:#555;">Please have the item(s) packaged and ready for collection.</p>
-          ${trackingLine}
-          <p style="font-size:16px;color:#555;">If you have any questions, contact us at <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
-          <p style="font-size:16px;color:#555;">Best regards,<br/><strong>The Shameless Collective Team</strong></p>
-        </div>
-        <hr style="border:0;border-top:1px solid #ddd;margin:20px 0;"/>
-        <div>
-          <p style="font-size:16px;color:#555;">Hola <strong>${name}</strong>,</p>
-          <p style="font-size:16px;color:#555;">Gracias por iniciar una devolución con <strong>Shameless Collective</strong>. Nuestro mensajero <strong>recogerá el/los artículo(s) en tu dirección</strong> — no necesitas imprimir nada.</p>
-          <p style="font-size:16px;color:#555;">Ten el/los artículo(s) empaquetado(s) y listo(s) para la recogida.</p>
-          <p style="font-size:16px;color:#555;">Si tienes alguna pregunta, escríbenos a <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
-          <p style="font-size:16px;color:#555;">Saludos,<br/><strong>El equipo de Shameless Collective</strong></p>
-        </div>
-      </div>`,
   };
 
   try {
@@ -181,7 +162,14 @@ export async function createInternationalReturn(id: string): Promise<number> {
       })
       .where(eq(orders.id, id));
 
-    const emailStatus = await sendAmphoraConfirmationEmail(order.email, order.shippingName, ret!);
+    // Language the customer chose in the portal, persisted on the order when the
+    // return was created (see actions/return.ts). `readLocale` falls back to "es".
+    const emailStatus = await sendAmphoraConfirmationEmail(
+      order.email,
+      order.shippingName,
+      ret!,
+      readLocale(order.locale)
+    );
     if (emailStatus !== 200) {
       // Best-effort: log loudly for manual follow-up, but the return succeeded.
       console.error(

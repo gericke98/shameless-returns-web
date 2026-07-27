@@ -6,13 +6,11 @@ export const AsyncButton = ({
   text,
   id,
   isCredit,
-  totalPrice,
   email,
 }: {
   text: string;
   id: string;
   isCredit: boolean;
-  totalPrice: number;
   email: string;
 }) => {
   return (
@@ -22,7 +20,7 @@ export const AsyncButton = ({
       )}
       type="submit"
       onClick={async () => {
-        await returnFunction(id, isCredit, totalPrice, email);
+        await returnFunction(id, isCredit, email);
       }}
     >
       {text}

@@ -3,6 +3,8 @@ import db from "@/db/drizzle";
 import { getOrderById } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { base64img } from "@/placeholder";
+import { buildCorreosEmail } from "@/lib/emails";
+import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
 
@@ -151,74 +153,6 @@ function generateSoapBody(order: any, name: string, firstSurname: string) {
     </soapenv:Envelope>`;
 }
 
-function generateEmailTemplate(name: string) {
-  return {
-    From: "hello@shamelesscollective.com",
-    To: "",
-    Subject: "Your return was successfully created",
-    TextBody: "Your return was successfully created!",
-    HtmlBody: `
-      <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-radius: 8px; max-width: 600px; margin: 20px auto;">
-        <!-- Logo Section -->
-        <div style="text-align: center; margin-bottom: 20px;">
-          <img src="cid:embedded-image" alt="Shameless Collective Logo" style="max-width: 400px; height: auto;"/>
-        </div>
-        
-        <!-- English Section -->
-        <div style="margin-bottom: 20px;">
-          <p style="font-size: 16px; color: #555;">Hello <strong>${name}</strong>,</p>
-          <p style="font-size: 16px; color: #555;">
-            Thank you for initiating a return with <strong>Shameless Collective</strong>. Attached is your return label to include with the package.
-          </p>
-          <p style="font-size: 16px; color: #555;">Steps to complete your return:</p>
-          <ol style="font-size: 16px; color: #555; margin-left: 20px; padding-left: 10px;">
-            <li style="margin-bottom: 10px;">Print the attached return label (PDF).</li>
-            <li style="margin-bottom: 10px;">Securely package the items you wish to return.</li>
-            <li style="margin-bottom: 10px;">Attach the label to the outside of your package.</li>
-            <li style="margin-bottom: 10px;">Drop off the package at your nearest <strong>Correos office</strong>.</li>
-          </ol>
-          <p style="font-size: 16px; color: #555;">
-            If you have any questions, feel free to contact us at 
-            <a href="mailto:hello@shamelesscollective.com" style="color: #0073e6; text-decoration: none;">hello@shamelesscollective.com</a>.
-          </p>
-          <p style="font-size: 16px; color: #555;">We look forward to seeing you again!</p>
-          <p style="font-size: 16px; color: #555;">
-            Best regards,<br/>
-            <strong>The Shameless Collective Team</strong>
-          </p>
-        </div>
-        
-        <!-- Separator -->
-        <hr style="border: 0; border-top: 1px solid #ddd; margin: 20px 0;"/>
-
-        <!-- Spanish Section -->
-        <div>
-          <p style="font-size: 16px; color: #555;">Hola <strong>${name}</strong>,</p>
-          <p style="font-size: 16px; color: #555;">
-            Gracias por iniciar un proceso de devolución con <strong>Shameless Collective</strong>. Adjunto encontrarás tu etiqueta de devolución para incluir en el paquete.
-          </p>
-          <p style="font-size: 16px; color: #555;">Pasos para completar tu devolución:</p>
-          <ol style="font-size: 16px; color: #555; margin-left: 20px; padding-left: 10px;">
-            <li style="margin-bottom: 10px;">Imprime la etiqueta de devolución adjunta (PDF).</li>
-            <li style="margin-bottom: 10px;">Empaqueta los artículos que deseas devolver en su envoltorio original.</li>
-            <li style="margin-bottom: 10px;">Coloca la etiqueta en el exterior del paquete.</li>
-            <li style="margin-bottom: 10px;">Lleva el paquete a tu oficina de <strong>Correos</strong> más cercana.</li>
-          </ol>
-          <p style="font-size: 16px; color: #555;">
-            Si tienes alguna pregunta, no dudes en contactarnos en 
-            <a href="mailto:hello@shamelesscollective.com" style="color: #0073e6; text-decoration: none;">hello@shamelesscollective.com</a>.
-          </p>
-          <p style="font-size: 16px; color: #555;">¡Esperamos volver a verte pronto!</p>
-          <p style="font-size: 16px; color: #555;">
-            Saludos cordiales,<br/>
-            <strong>El equipo de Shameless Collective</strong>
-          </p>
-        </div>
-      </div>
-    `,
-  };
-}
-
 async function sendShippingLabel(soapBody: string): Promise<ShippingResponse> {
   const username = process.env.USERNAME_CORREOS;
   const password = process.env.PASSWORD_CORREOS;
@@ -264,7 +198,8 @@ async function sendShippingLabel(soapBody: string): Promise<ShippingResponse> {
 async function sendEmail(
   base64Pdf: string,
   recipientEmail: string,
-  name: string
+  name: string,
+  locale: Locale
 ): Promise<ShippingResponse> {
   const base64Match = base64Pdf.match(/<Fichero>(.*?)<\/Fichero>/);
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
@@ -273,7 +208,7 @@ async function sendEmail(
   }
 
   try {
-    const emailTemplate = generateEmailTemplate(name);
+    const emailTemplate = buildCorreosEmail(name, locale);
     const emailData = {
       ...emailTemplate,
       To: recipientEmail,
@@ -336,10 +271,13 @@ export async function createShippingLabel(id: string): Promise<number> {
     .set({ locator: trackingNumber })
     .where(eq(orders.id, id));
 
+  // Language the customer chose in the portal, persisted on the order when the
+  // return was created (see actions/return.ts). `readLocale` falls back to "es".
   const emailResponse = await sendEmail(
     shippingResponse.data,
     order.email,
-    name
+    name,
+    readLocale(order.locale)
   );
   return emailResponse.status;
 }

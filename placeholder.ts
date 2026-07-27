@@ -1,20 +1,28 @@
+// ACTIONS values are the codes persisted in productsOrder.action — NOT display
+// text. They were previously the Spanish sentences shown in the dropdown, which
+// meant translating the label silently changed which branch updateOrder took.
 export const ACTIONS = {
-  CHANGE: "Quiero cambiar este producto",
-  RETURN: "Quiero devolver este producto",
+  CHANGE: "CAMBIO",
+  RETURN: "DEVOLUCIÓN",
 };
 
-export const REASONS = [
-  "Me queda grande",
-  "Me queda pequeño",
-  "Es incómodo o me hace daño",
-  "No me gusta",
-  "Compré varias opciones para probar",
-  "El producto está dañado",
-  "Recibí el producto equivocado",
-  "El producto llegó demasiado tarde",
-  "Otro motivo",
-  "El producto no es como se mostraba",
-];
+// Stable keys into the `reasons` dictionary. productsOrder.reason stores the
+// key, not the localized sentence, so a reason recorded in English and one
+// recorded in Spanish are the same value in the database.
+export const REASON_KEYS = [
+  "TOO_BIG",
+  "TOO_SMALL",
+  "UNCOMFORTABLE",
+  "DISLIKE",
+  "BOUGHT_OPTIONS",
+  "DAMAGED",
+  "WRONG_ITEM",
+  "LATE",
+  "OTHER",
+  "NOT_AS_SHOWN",
+] as const;
+
+export type ReasonKey = (typeof REASON_KEYS)[number];
 
 export const PRIVACY_LINKS = [
   {

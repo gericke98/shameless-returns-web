@@ -442,7 +442,8 @@ export async function createReturn(
   orderId: string,
   fulfillmentLineItem: string,
   product: any,
-  discount: any
+  discount: any,
+  returnFeeEuros: number
 ) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
@@ -461,7 +462,7 @@ export async function createReturn(
             ],
             returnShippingFee: {
               amount: {
-                amount: ${process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST}.00,
+                amount: ${returnFeeEuros.toFixed(2)},
                 currencyCode: EUR
               }
             }

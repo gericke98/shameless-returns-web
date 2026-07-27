@@ -1,6 +1,11 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
+import { eq } from "drizzle-orm";
+import db from "@/db/drizzle";
+import { orders } from "@/db/schema";
+import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { createShippingLabel } from "./shipping";
 import { updateFinalOrder } from "./updateOrder";
 import { createStripeUrl } from "./payments";
@@ -37,19 +42,49 @@ async function createReturnShipment(id: string): Promise<number> {
   return createShippingLabel(id);
 }
 
+/**
+ * Persist the language the customer is using, so the transactional email can be
+ * sent in it later — possibly from a context that has no cookies (the Stripe
+ * webhook is an inbound request from Stripe, not from the browser).
+ *
+ * This is the only place `orders.locale` is written. It is safe here and was
+ * NOT safe in `setLocale`: by this point the caller has already committed to
+ * mutating this very order (`updateFinalOrder(id, ...)` below writes far more
+ * consequential state with the same client-supplied id), so writing a
+ * whitelisted two-value string adds no new exposure. `setLocale`, by contrast,
+ * is reachable from the unauthenticated language switcher on any order id.
+ *
+ * Must run BEFORE `createStripeUrl`: that call loads the order through the
+ * request-scoped `cache()`d `getOrderById`, so a later write would be invisible
+ * to the free path's own read of the order.
+ *
+ * Best-effort — a failure here must not fail the return. Every read site uses
+ * `readLocale`, which falls back to "es" for a null column.
+ */
+async function persistOrderLocale(id: string) {
+  try {
+    const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
+    await db.update(orders).set({ locale }).where(eq(orders.id, id));
+  } catch (error) {
+    console.error(`Failed to persist locale for order ${id}:`, error);
+  }
+}
+
 export async function returnFunction(
   id: string,
   isCredit: boolean,
-  totalPrice: number,
   email: string
 ) {
-  if (totalPrice < 0) {
-    // Caso en el que tiene que pagar el usuario
-    const toPay = totalPrice * -1;
-    const url = (await createStripeUrl(toPay, email, id, isCredit)).data;
-    if (url) {
-      redirect(url);
-    }
+  // Before the payment branch, so it covers BOTH outcomes: the free path
+  // continues below, and the paid path redirects to Stripe and comes back
+  // through the webhook, which reads the column from the database.
+  await persistOrderLocale(id);
+
+  // Whether the customer owes anything is decided server-side, inside
+  // createStripeUrl. A null URL means nothing to pay.
+  const url = (await createStripeUrl(id, email, isCredit)).data;
+  if (url) {
+    redirect(url);
   }
   try {
     // Caso en el que no tiene que pagar nada

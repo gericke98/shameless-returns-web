@@ -61,6 +61,92 @@ A Next.js application for managing product returns and exchanges in an e-commerc
 - Database operations are handled through Drizzle ORM
 - Real-time updates are managed through server actions
 
+## Shipping fees and language switcher
+
+### Shipping fees
+
+Return/exchange shipping fees are per-country rows in the `shipping_fees`
+table, edited by ops at `/dashboard/shipping-fees` — no deploy required. Each
+row has a country code plus a return fee and an exchange fee, both in
+integer cents. The `*` row is the fallback used for any country that does
+not have its own row (see `feesForCountry` in `lib/fees.ts`); if the `*` row
+is also missing, the fee resolves to zero rather than `NaN`.
+
+The old `NEXT_PUBLIC_SHIPPING_RETURN_COST` and
+`NEXT_PUBLIC_SHIPPING_EXCHANGE_COST` environment variables are **gone**.
+Nothing under `app/`, `components/`, `lib/`, `actions/`, or `db/` reads them
+anymore — the only remaining reference is `scripts/seed-shipping-fees.ts`,
+and it only reads them once, to seed the table with the values that were
+already in effect (see "Deploy prerequisites" below).
+
+The Stripe charge is derived server-side from this table (see
+`actions/payments.ts`), so the browser can no longer influence the amount
+charged.
+
+Money is stored as integer cents everywhere. `centsToEuros` (`lib/fees.ts`)
+and `formatEuros` (`lib/i18n/index.ts`) are the only two places a cents
+value becomes a euro amount for display — do not add ad hoc `/ 100` or
+`.toFixed(2)` conversions elsewhere.
+
+### Language switcher (ES/EN)
+
+The customer portal and its transactional emails are available in Spanish
+and English. The active locale is stored in a cookie
+(`LOCALE_COOKIE` / `lib/i18n/index.ts`) and, server-side, `returnFunction`
+(`actions/return.ts`) writes it to `orders.locale` at return time so the
+transactional email can later be sent in the customer's language even from
+a context with no cookies (e.g. the Stripe webhook).
+
+To add a language:
+
+1. Add the new locale code to `LOCALES` in `lib/i18n/index.ts` (and to the
+   `Locale` union type).
+2. Add a dictionary file for it under `lib/i18n/` and register it in
+   `dictionaries`.
+3. Because `en.ts` is typed against the shape of `es.ts` (`Dictionary`), a
+   dictionary that is missing a key is a **build error** (TypeScript), not
+   something that silently renders `undefined` at runtime.
+
+## Deploy prerequisites for this branch
+
+This branch requires a database migration and a one-time data seed before
+it can go live. Do these **in this exact order**:
+
+1. **Run the migration:**
+
+   ```bash
+   npx drizzle-kit push:pg
+   ```
+
+   This creates the `shipping_fees` table and adds the `orders.locale`
+   column.
+
+2. **Seed the fee table**, with `DATABASE_URL`,
+   `NEXT_PUBLIC_SHIPPING_RETURN_COST`, and
+   `NEXT_PUBLIC_SHIPPING_EXCHANGE_COST` all still set in the environment:
+
+   ```bash
+   npx tsx scripts/seed-shipping-fees.ts
+   ```
+
+   This writes the `*` and `ES` rows from the values the app is already
+   charging, so the table starts at today's prices and no price moves as a
+   side effect of this migration.
+
+3. **Only then deploy** the new application code.
+
+**Why the order matters:** between step 1 and step 2, `shipping_fees`
+exists but is empty. In that window, `getFeeTable()` (`db/fees.ts`) returns
+`{}`, and `feesForCountry` (`lib/fees.ts`) falls through to its zero
+default because there is no `*` row yet. If the new code were live during
+that gap, every return and exchange would be charged a shipping fee of
+zero. Running the seed before deploying closes that gap entirely — the
+table is never empty while the new code can read it.
+
+The two `NEXT_PUBLIC_SHIPPING_*_COST` environment variables can be deleted
+from Vercel's project settings, but **only after step 2 has run** — the
+seed script is the last remaining reader of them.
+
 ## Contributing
 
 1. Fork the repository

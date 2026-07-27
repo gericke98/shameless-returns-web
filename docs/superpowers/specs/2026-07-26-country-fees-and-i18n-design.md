@@ -1,7 +1,7 @@
 # Country-based shipping fees & ES/EN language switcher
 
 **Date:** 2026-07-26
-**Status:** Approved design — pending implementation plan
+**Status:** Implemented — 2026-07-27
 **Author:** Santiago Gericke (with Claude)
 
 ## Context & driver

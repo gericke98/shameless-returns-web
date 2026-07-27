@@ -14,6 +14,7 @@ import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
 import { euIso2ForReturn } from "@/actions/sendcloudReturn";
 import { isInternationalOrder } from "@/actions/amphoraReturn";
 import { normalizeCountry } from "@/lib/countries";
+import { issueOrderAccess } from "@/lib/orderAccess";
 
 /**
  * Processes an order form submission, validates the order details,
@@ -48,14 +49,18 @@ export async function getOrder(
   // 4. Check if order exists in database
   const exists = await orderExists(order.id);
   if (exists) {
-    // Use redirect directly
+    // The order number and contact email have now been checked, so record that
+    // proof before handing the customer a URL that depends on it. redirect()
+    // throws by design, so this must come first.
+    await issueOrderAccess(order.id);
     redirect(`/${order.id}`);
   }
 
   // 5. Save order to database
   await saveOrderToDatabase(order);
 
-  // 6. Use redirect directly
+  // 6. Same as the exists branch above: issue the session before redirecting.
+  await issueOrderAccess(order.id);
   redirect(`/${order.id}`);
 }
 /**

@@ -71,17 +71,62 @@ describe("toReasonKey", () => {
     expect(toReasonKey("NOT_AS_SHOWN")).toBe("NOT_AS_SHOWN");
   });
 
-  it("maps legacy Spanish sentences back to their key", () => {
-    // These are the exact strings the pre-split dropdown wrote to the column.
-    expect(toReasonKey("Me queda pequeño")).toBe("TOO_SMALL");
-    expect(toReasonKey("El producto está dañado")).toBe("DAMAGED");
+  it("maps every legacy Spanish sentence back to its key", () => {
+    // The exact ten strings the pre-split dropdown wrote to the column
+    // (`REASONS` in placeholder.ts as of 072f4dc^). Pinned here in full so a
+    // reword of lib/i18n/es.ts cannot quietly break decoding of live rows:
+    // the map in lib/reasons.ts is a frozen literal, not derived from the
+    // display dictionary, and this is the test that says so.
+    const legacy: Record<string, string> = {
+      "Me queda grande": "TOO_BIG",
+      "Me queda pequeño": "TOO_SMALL",
+      "Es incómodo o me hace daño": "UNCOMFORTABLE",
+      "No me gusta": "DISLIKE",
+      "Compré varias opciones para probar": "BOUGHT_OPTIONS",
+      "El producto está dañado": "DAMAGED",
+      "Recibí el producto equivocado": "WRONG_ITEM",
+      "El producto llegó demasiado tarde": "LATE",
+      "Otro motivo": "OTHER",
+      "El producto no es como se mostraba": "NOT_AS_SHOWN",
+    };
+    expect(Object.keys(legacy)).toHaveLength(REASON_KEYS.length);
+    for (const [sentence, key] of Object.entries(legacy)) {
+      expect(toReasonKey(sentence), sentence).toBe(key);
+    }
   });
 
-  it("falls back for empty or unrecognised values", () => {
+  it("keeps decoding legacy rows after the Spanish display copy changes", () => {
+    // The failure this guards: LEGACY_ES_LABEL_TO_KEY used to be built from
+    // dictionaries.es.reasons, so any reword of that sentence orphaned every
+    // legacy row holding it. Reword it here and prove decoding is unaffected.
+    const reasons = dictionaries.es.reasons as unknown as Record<
+      string,
+      string
+    >;
+    const original = reasons.DAMAGED;
+    try {
+      reasons.DAMAGED = "El artículo ha llegado roto";
+      expect(toReasonKey("El producto está dañado")).toBe("DAMAGED");
+      // ...and the new wording is not retroactively a stored value.
+      expect(toReasonKey("El artículo ha llegado roto")).toBe("OTHER");
+    } finally {
+      reasons.DAMAGED = original;
+    }
+    expect(dictionaries.es.reasons.DAMAGED).toBe("El producto está dañado");
+  });
+
+  it("defaults to TOO_SMALL only when nothing was stored", () => {
     expect(toReasonKey(null)).toBe("TOO_SMALL");
     expect(toReasonKey(undefined)).toBe("TOO_SMALL");
     expect(toReasonKey("")).toBe("TOO_SMALL");
-    expect(toReasonKey("something a human typed")).toBe("TOO_SMALL");
+  });
+
+  it("maps an unrecognised stored value to OTHER, not TOO_SMALL", () => {
+    // The customer did state a reason; we just cannot decode it. Answering
+    // TOO_SMALL asserts a claim they never made, and updateOrder persists it.
+    expect(toReasonKey("something a human typed")).toBe("OTHER");
+    expect(toReasonKey("Too small")).toBe("OTHER"); // English label, never a stored value
+    expect(toReasonKey("Me queda pequeñito")).toBe("OTHER"); // near-miss of a legacy sentence
   });
 });
 

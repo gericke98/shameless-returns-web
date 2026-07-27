@@ -20,6 +20,8 @@ export const orders = pgTable("orders", {
   // Set for international (Amphora) returns: the carrier code + customer tracking URL.
   carrier: text("carrier"),
   carrierUrl: text("carrier_url"),
+  // Language the customer chose in the portal; drives the transactional email.
+  locale: text("locale"),
 });
 
 export const ordersRelations = relations(orders, ({ many }) => ({

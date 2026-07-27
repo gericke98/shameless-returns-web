@@ -116,4 +116,9 @@ export const en: Dictionary = {
     title: "We have received your request!",
     body: "We have received your request and sent you an email with the next steps.",
   },
+  error: {
+    title: "Something went wrong",
+    body: "We could not complete that. Please try again. If the problem persists, email us at hello@shamelesscollective.com with your order number.",
+    retry: "Try again",
+  },
 };

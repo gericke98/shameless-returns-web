@@ -42,6 +42,13 @@ export const createStripeUrl = async (
 
   const amountCents = Math.round(-totalEuros * 100);
 
+  // Stripe rejects a EUR charge below its €0.50 minimum, so a session created
+  // for less would fail at the moment the customer tries to pay. That is now
+  // reachable: per-country fees may legitimately be €0.00, which makes a
+  // one-cent shortfall on an exchange possible. Treat it as "no payment
+  // required" — the same contract as the >= 0 case above.
+  if (amountCents < 50) return { data: null };
+
   const isCreditMeta = isCredit ? "true" : "false";
   const stripeSession = await stripe.checkout.sessions.create({
     mode: "payment",

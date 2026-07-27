@@ -117,6 +117,11 @@ export const es = {
     title: "¡Hemos recibido tu solicitud correctamente!",
     body: "Hemos recibido tu solicitud y te hemos enviado un correo electrónico con los próximos pasos.",
   },
+  error: {
+    title: "Algo ha salido mal",
+    body: "No hemos podido completar la operación. Vuelve a intentarlo. Si el problema continúa, escríbenos a hello@shamelesscollective.com con tu número de pedido.",
+    retry: "Reintentar",
+  },
 } as const;
 
 // `es` is `as const`, so `typeof es` alone would type every leaf as its exact

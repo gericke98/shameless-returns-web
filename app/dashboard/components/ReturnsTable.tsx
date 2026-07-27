@@ -256,6 +256,12 @@ function TableRow({ order, product, status }: TableRowProps) {
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.action || "No action"}
       </td>
+      {/* HAZARD: "DEVOLUCION" here is unaccented and the column stores the
+          accented ACTIONS.RETURN ("DEVOLUCIÓN"), so this branch never matches
+          and both columns render "-" for every return.
+          Left as-is deliberately: swapping in ACTIONS.RETURN would change what
+          this dashboard displays, which is a behaviour change and needs its
+          own review — do not "fix" it as a drive-by. */}
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.action === "CAMBIO" && product.new_product_info
           ? product.new_product_info.title

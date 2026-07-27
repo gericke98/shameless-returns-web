@@ -84,9 +84,11 @@ The Stripe charge is derived server-side from this table (see
 charged.
 
 Money is stored as integer cents everywhere. `centsToEuros` (`lib/fees.ts`)
-and `formatEuros` (`lib/i18n/index.ts`) are the only two places a cents
-value becomes a euro amount for display — do not add ad hoc `/ 100` or
-`.toFixed(2)` conversions elsewhere.
+and `formatEuros` (`lib/i18n/index.ts`) are the two helpers a cents value
+should go through to become a euro amount for display. There is one further
+conversion, `toEuros` in `app/dashboard/shipping-fees/FeesTable.tsx`, which
+formats the fee inputs in the internal admin table. Do not add any more ad hoc
+`/ 100` or `.toFixed(2)` conversions.
 
 ### Language switcher (ES/EN)
 
@@ -112,14 +114,32 @@ To add a language:
 This branch requires a database migration and a one-time data seed before
 it can go live. Do these **in this exact order**:
 
-1. **Run the migration:**
+1. **Run the migration.** Apply exactly these two statements against the
+   production database (`psql "$DATABASE_URL" -f ...`, or the Neon SQL
+   editor). They are the complete schema delta for this branch:
 
-   ```bash
-   npx drizzle-kit push:pg
+   ```sql
+   CREATE TABLE shipping_fees (
+     country_code       text    PRIMARY KEY,
+     return_fee_cents   integer NOT NULL,
+     exchange_fee_cents integer NOT NULL,
+     updated_at         timestamp NOT NULL DEFAULT now()
+   );
+
+   ALTER TABLE orders ADD COLUMN locale text;
    ```
 
-   This creates the `shipping_fees` table and adds the `orders.locale`
-   column.
+   `locale` is intentionally nullable: every read site goes through
+   `readLocale`, which falls back to `"es"`, so existing rows need no
+   backfill.
+
+   **Do not use `npx drizzle-kit push:pg` for this.** There is no `drizzle/`
+   directory and no committed migration history, so `push` has nothing to
+   diff against except whatever production happens to be right now. Any
+   pre-existing drift between `db/schema.ts` and the live database surfaces
+   as a proposed `DROP` — on a live `orders` table. If you run it anyway,
+   read every statement it proposes before confirming, and abort if it
+   proposes anything beyond the two above.
 
 2. **Seed the fee table**, with `DATABASE_URL`,
    `NEXT_PUBLIC_SHIPPING_RETURN_COST`, and

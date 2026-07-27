@@ -20,6 +20,8 @@ export const en: Dictionary = {
     consent: "By continuing, you confirm that you accept the",
     errorTitle: "There was an error in your request",
     sessionExpired: "Please look up your order to continue.",
+    tooManyAttempts:
+      "Too many attempts. Please wait a few minutes and try again.",
   },
   first: {
     orderTitle: "Order",

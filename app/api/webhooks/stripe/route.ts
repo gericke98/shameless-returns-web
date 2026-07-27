@@ -3,6 +3,7 @@ import { createInternationalReturn, isInternationalOrder } from "@/actions/ampho
 import { createSendcloudReturn, euIso2ForReturn } from "@/actions/sendcloudReturn";
 import { updateFinalOrder } from "@/actions/updateOrder";
 import { getOrderById } from "@/db/queries";
+import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import { stripe } from "@/lib/stripe";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -29,12 +30,11 @@ export async function POST(req: Request) {
     const session = event.data.object as Stripe.Checkout.Session;
 
     if (event.type === "checkout.session.completed") {
-      if (!session.metadata) {
+      const metadata = parseCheckoutMetadata(session.metadata);
+      if (!metadata) {
         return new NextResponse("Metadata is required", { status: 400 });
       }
-      const id = JSON.parse(session.metadata.id);
-      const isCreditMet = JSON.parse(session.metadata.isCredit);
-      const isCredit = isCreditMet === "true";
+      const { id, isCredit } = metadata;
       // Una vez se ha procesado el pago vamos con los siguientes pasos
       try {
         // // First update the database

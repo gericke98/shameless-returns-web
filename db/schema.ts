@@ -1,5 +1,13 @@
 import { relations } from "drizzle-orm";
-import { integer, text, pgTable, serial, boolean, timestamp } from "drizzle-orm/pg-core";
+import {
+  integer,
+  text,
+  pgTable,
+  serial,
+  boolean,
+  timestamp,
+  index,
+} from "drizzle-orm/pg-core";
 
 // Creo una tabla que contenga las orders que han sido editadas
 export const orders = pgTable("orders", {
@@ -82,5 +90,32 @@ export const shippingFees = pgTable("shipping_fees", {
   exchangeFeeCents: integer("exchange_fee_cents").notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+/**
+ * Failed order-lookup attempts, for rate limiting.
+ *
+ * Only FAILURES are recorded — a wrong order number or a non-matching email.
+ * A successful lookup writes nothing, so a customer who finds their order is
+ * never penalised, and the count measures exactly the guessing behaviour we
+ * care about.
+ *
+ * Rows are pruned opportunistically once they fall outside the window (see
+ * db/lookupAttempts.ts), so the table stays bounded without a cron job.
+ */
+export const lookupAttempts = pgTable(
+  "lookup_attempts",
+  {
+    id: serial("id").primaryKey(),
+    ip: text("ip").notNull(),
+    attemptedAt: timestamp("attempted_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    // The only query is "count rows for this ip since T", so index both.
+    ipAttemptedAtIdx: index("lookup_attempts_ip_attempted_at_idx").on(
+      table.ip,
+      table.attemptedAt
+    ),
+  })
+);
 
 // CODE TO UPDATE TABLA SCHEMA  npx drizzle-kit push:pg

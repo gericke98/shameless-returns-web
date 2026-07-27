@@ -132,6 +132,28 @@ Before this, possession of a guessable URL was the only credential.
 Crypto lives in `lib/orderSession.ts` (pure, unit-tested) and the cookie layer in
 `lib/orderAccess.ts`. Design: `docs/superpowers/specs/2026-07-27-portal-session-design.md`.
 
+### Lookup rate limiting
+
+The lookup is now the only door, so it is rate limited: **10 failed attempts per
+IP per 15 minutes**, after which that IP is refused for the rest of the window.
+
+- **Only failures count** — a wrong order number, or a real order number with a
+  non-matching email. A successful lookup records nothing, so a customer who
+  finds their order is never penalised.
+- **It fails open.** If the counter cannot be read, the lookup proceeds and the
+  error is logged. This is defence in depth on top of the email match; a database
+  blip must never lock every customer out of returns.
+- Attempts live in `lookup_attempts`, pruned opportunistically on each write, so
+  the table stays bounded with no cron job.
+- Caller identity prefers `x-real-ip` and `x-vercel-forwarded-for` (platform-set,
+  unforgeable) over `x-forwarded-for` (client-prependable, leftmost entry only).
+  An unattributable caller is allowed through rather than bucketed together.
+
+Policy lives in `lib/rateLimit.ts` (pure, unit-tested); the counting in
+`db/lookupAttempts.ts`.
+
+**Requires a migration** — see Deploy prerequisites below.
+
 ### Four functions are deliberately NOT session-gated
 
 **Do not "fix" this.** `updateFinalOrder`, `createShippingLabel`,
@@ -170,7 +192,20 @@ it can go live. Do these **in this exact order**:
    );
 
    ALTER TABLE orders ADD COLUMN locale text;
+
+   CREATE TABLE lookup_attempts (
+     id           serial    PRIMARY KEY,
+     ip           text      NOT NULL,
+     attempted_at timestamp NOT NULL DEFAULT now()
+   );
+
+   CREATE INDEX lookup_attempts_ip_attempted_at_idx
+     ON lookup_attempts (ip, attempted_at);
    ```
+
+   `lookup_attempts` backs the lookup rate limit. Unlike `shipping_fees` it needs
+   no seed — an empty table simply means nobody has failed a lookup yet, and the
+   limit reads zero. It is safe to create before or after deploying.
 
    `locale` is intentionally nullable: every read site goes through
    `readLocale`, which falls back to `"es"`, so existing rows need no

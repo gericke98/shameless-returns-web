@@ -15,6 +15,13 @@ import { euIso2ForReturn } from "@/actions/sendcloudReturn";
 import { isInternationalOrder } from "@/actions/amphoraReturn";
 import { normalizeCountry } from "@/lib/countries";
 import { issueOrderAccess } from "@/lib/orderAccess";
+import { cookies, headers } from "next/headers";
+import { LOCALE_COOKIE, dictionaries, readLocale } from "@/lib/i18n";
+import { clientIpFrom, exceedsLookupLimit } from "@/lib/rateLimit";
+import {
+  countRecentFailures,
+  recordFailedAttempt,
+} from "@/db/lookupAttempts";
 
 /**
  * Processes an order form submission, validates the order details,
@@ -34,15 +41,41 @@ export async function getOrder(
     return { message: "Please enter a valid order number" };
   }
 
+  // Rate limit. Since /[id] requires a portal session, this lookup is the only
+  // door — and it is an order number plus a matching email, so someone holding a
+  // customer's email could brute-force sequential Shopify order numbers.
+  //
+  // A null ip means the caller could not be attributed; allow the attempt rather
+  // than bucketing every unattributable request together, which would let one
+  // attacker lock out everybody else who lands in that bucket.
+  const now = Date.now();
+  const ip = clientIpFrom({
+    "x-real-ip": headers().get("x-real-ip"),
+    "x-vercel-forwarded-for": headers().get("x-vercel-forwarded-for"),
+    "x-forwarded-for": headers().get("x-forwarded-for"),
+  });
+
+  if (ip && exceedsLookupLimit(await countRecentFailures(ip, now))) {
+    const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
+    // Deliberately vague: it must not hint whether any attempted order number
+    // exists.
+    return { message: dictionaries[locale].lookup.tooManyAttempts };
+  }
+
   // 2. Fetch order data
   const order = await getOrderQuery(orderNumber);
   if (!order) {
+    // A wrong order number is a guessing signal — count it.
+    if (ip) await recordFailedAttempt(ip, now);
     return { message: "Please enter a valid order" };
   }
 
   // 3. Validate order details
   const validationError = validateOrderDetails(order, email);
   if (validationError) {
+    // So is a real order number with the wrong email — in fact more so, since it
+    // means the order number was guessed correctly.
+    if (ip) await recordFailedAttempt(ip, now);
     return validationError;
   }
 

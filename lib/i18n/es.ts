@@ -18,6 +18,8 @@ export const es = {
     consent: "Al continuar, confirmas que aceptas los",
     errorTitle: "Ha habido un error en tu solicitud",
     sessionExpired: "Vuelve a buscar tu pedido para continuar.",
+    tooManyAttempts:
+      "Demasiados intentos. Espera unos minutos y vuelve a probar.",
   },
   first: {
     orderTitle: "Pedido",

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LogoutButton } from "../LogoutButton";
 import { DashboardHeaderProps } from "@/types";
 
@@ -8,7 +9,15 @@ export default function DashboardHeader({ username }: DashboardHeaderProps) {
         <h1 className="text-2xl font-bold text-gray-900">Returns Dashboard</h1>
         <p className="text-sm text-gray-600">Welcome back, {username}</p>
       </div>
-      <LogoutButton />
+      <div className="flex items-center gap-4">
+        <Link
+          href="/dashboard/shipping-fees"
+          className="text-sm font-medium text-cyan-800 hover:underline"
+        >
+          Shipping fees
+        </Link>
+        <LogoutButton />
+      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 
@@ -32,50 +33,22 @@ const LastWindowBase = ({
   const fees = useFees();
   const t = useT();
   const locale = useLocale();
-  const { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal } =
-    useMemo(() => {
-      const totalPriceDevolver = items
-        .filter((item) => item.action && !item.confirmed)
-        .reduce((sum, item) => sum + parseFloat(item.price), 0);
-      const totalPriceCambio = items
-        .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-        .reduce((sum, item) => {
-          // If there's a new variant ID, find the corresponding product and use its price
-          if (item.new_variant_id) {
-            const newProduct = allProducts.find((p) =>
-              p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-            );
-            if (newProduct) {
-              // Find the specific variant that matches the new_variant_id
-              const newVariant = newProduct.variants.edges.find(
-                (v) => v.node.id === item.new_variant_id
-              );
-              if (newVariant) {
-                return sum + parseFloat(newVariant.node.price);
-              }
-            }
-          }
-          // Fallback to the original price if no new product is found
-          return sum + parseFloat(item.price);
-        }, 0);
+  const finalTotal = useMemo(() => {
+    // One shared valuation (lib/basket.ts) — the same one payments.ts charges
+    // from. Only the numbers are needed here; nothing on this screen renders a
+    // filtered item list of its own.
+    const basket = valueBasket(items, allProducts);
 
-      let totalPrice = totalPriceDevolver - totalPriceCambio;
+    // Rule A, shared with every other site and with the server-side charge.
+    // This previously used a Rule B variant keyed on action type, which
+    // disagreed with the checkout total on a cheaper-item exchange.
+    const { feeCents } = resolveFee(fees, basket);
 
-      // Rule A, shared with every other site and with the server-side charge.
-      // This previously used a Rule B variant keyed on action type, which
-      // disagreed with the checkout total on a cheaper-item exchange.
-      const { feeCents } = resolveFee(fees, {
-        hasItems: items.some((item) => item.action && !item.confirmed),
-        netAmount: totalPrice,
-      });
+    const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
-      totalPrice -= centsToEuros(feeCents);
-
-      // Calculate finalTotal the same way as SummaryComponent
-      const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
-
-      return { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal };
-    }, [allProducts, credito, items, fees]);
+    // Calculate finalTotal the same way as SummaryComponent
+    return credito ? totalPrice * 1.15 : totalPrice;
+  }, [allProducts, credito, items, fees]);
 
   const handleBack = () => {
     setPosition(finalTotal > 0 ? position - 1 : position - 2);

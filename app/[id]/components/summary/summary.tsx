@@ -13,6 +13,7 @@ import {
 import { Product } from "@/types";
 import { useFees } from "../../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 
@@ -33,43 +34,18 @@ export const SummaryComponent = ({
 }: Props) => {
   const t = useT();
   const locale = useLocale();
-  const {
-    totalPriceDevolver,
-    itemsToDevolver,
-    totalPriceCambio,
-    itemsToCambio,
-    itemsToDev,
-  } = useMemo(() => {
-    const totalPriceDevolver = items
-      .filter((item) => Boolean(item.action) && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
+  const { basket, itemsToDevolver, itemsToCambio, itemsToDev } = useMemo(() => {
+    // The money comes from the one shared valuation (lib/basket.ts) — the same
+    // one payments.ts charges from — so the figures below cannot drift from
+    // the amount Stripe bills.
+    const basket = valueBasket(items, allProducts);
 
+    // valueBasket returns totals, not the underlying rows. The accordion
+    // bodies render the rows, so those filters stay local. They are the same
+    // predicates valueBasket applies internally.
     const itemsToDevolver = items.filter(
       (item) => Boolean(item.action) && !item.confirmed
     );
-
-    // Calculate total price for changes, using the new product's price if available
-    const totalPriceCambio = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => {
-        // If there's a new variant ID, find the corresponding product and use its price
-        if (item.new_variant_id) {
-          const newProduct = allProducts.find((p) =>
-            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-          );
-          if (newProduct) {
-            // Find the specific variant that matches the new_variant_id
-            const newVariant = newProduct.variants.edges.find(
-              (v) => v.node.id === item.new_variant_id
-            );
-            if (newVariant) {
-              return sum + parseFloat(newVariant.node.price);
-            }
-          }
-        }
-        // Fallback to the original price if no new product is found
-        return sum + parseFloat(item.price);
-      }, 0);
 
     const itemsToCambio = items.filter(
       (item) => item.action === "CAMBIO" && !item.confirmed
@@ -79,24 +55,17 @@ export const SummaryComponent = ({
       (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
     );
 
-    return {
-      totalPriceDevolver,
-      itemsToDevolver,
-      totalPriceCambio,
-      itemsToCambio,
-      itemsToDev,
-    };
+    return { basket, itemsToDevolver, itemsToCambio, itemsToDev };
   }, [items, allProducts]);
 
-  let totalPrice = totalPriceDevolver - totalPriceCambio;
+  const totalPriceDevolver = basket.returnPrice;
+  const totalPriceCambio = basket.exchangePrice;
+
   const fees = useFees();
-  const { feeCents } = resolveFee(fees, {
-    hasItems: itemsToDevolver.length > 0,
-    netAmount: totalPrice,
-  });
+  const { feeCents } = resolveFee(fees, basket);
   const shippingCost = centsToEuros(feeCents);
 
-  totalPrice -= shippingCost;
+  const totalPrice = basket.netAmount - shippingCost;
 
   const creditBonus = credito ? totalPrice * 0.15 : 0;
   const finalTotal = credito ? totalPrice * 1.15 : totalPrice;

@@ -12,6 +12,7 @@ import { FaArrowAltCircleLeft } from "react-icons/fa";
 import CorreosLogo from "@/public/correos.webp";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 
@@ -36,43 +37,14 @@ const SecondWindowBase = ({
 }: Props) => {
   const t = useT();
   const locale = useLocale();
-  // Calculate totals
-  const { totalPriceDevolver, totalPriceCambio } = useMemo(() => {
-    const totalPriceDevolver = items
-      .filter((item) => item.action && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-    const totalPriceCambio = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => {
-        // If there's a new variant ID, find the corresponding product and use its price
-        if (item.new_variant_id) {
-          const newProduct = allProducts.find((p) =>
-            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-          );
-          if (newProduct) {
-            // Find the specific variant that matches the new_variant_id
-            const newVariant = newProduct.variants.edges.find(
-              (v) => v.node.id === item.new_variant_id
-            );
-            if (newVariant) {
-              return sum + parseFloat(newVariant.node.price);
-            }
-          }
-        }
-        // Fallback to the original price if no new product is found
-        return sum + parseFloat(item.price);
-      }, 0);
-
-    return { totalPriceDevolver, totalPriceCambio };
-  }, [allProducts, items]);
-
-  const totalPrice = totalPriceDevolver - totalPriceCambio;
+  // One shared valuation (lib/basket.ts), the same one payments.ts charges
+  // from, so the "Cost" line below cannot drift from what Stripe bills.
+  const basket = useMemo(
+    () => valueBasket(items, allProducts),
+    [allProducts, items]
+  );
   const fees = useFees();
-  const { feeCents } = resolveFee(fees, {
-    hasItems: items.some((item) => item.action && !item.confirmed),
-    netAmount: totalPrice,
-  });
+  const { feeCents } = resolveFee(fees, basket);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);

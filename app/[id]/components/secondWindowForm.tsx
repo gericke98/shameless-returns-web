@@ -8,6 +8,7 @@ import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 
 type Props = {
@@ -32,39 +33,14 @@ export const SecondWindowForm = ({
   // useFormState returns [state, formAction]
   const [state, formAction] = useFormState(updateData, position);
 
-  const totalPriceDevolver = items
-    .filter((item) => item.action && !item.confirmed)
-    .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-  const totalPriceCambio = items
-    .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-    .reduce((sum, item) => {
-      // If there's a new variant ID, find the corresponding product and use its price
-      if (item.new_variant_id) {
-        const newProduct = allProducts.find((p) =>
-          p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-        );
-        if (newProduct) {
-          // Find the specific variant that matches the new_variant_id
-          const newVariant = newProduct.variants.edges.find(
-            (v) => v.node.id === item.new_variant_id
-          );
-          if (newVariant) {
-            return sum + parseFloat(newVariant.node.price);
-          }
-        }
-      }
-      // Fallback to the original price if no new product is found
-      return sum + parseFloat(item.price);
-    }, 0);
-
-  const totalPriceAux = totalPriceDevolver - totalPriceCambio;
+  // Same valuation the server charges from: payments.ts -> loadBasket ->
+  // valueBasket, over the same discounted product list. This used to be a
+  // hand-rolled copy of that reduce; the two agreed, but nothing made them
+  // keep agreeing.
+  const basket = valueBasket(items, allProducts);
   const fees = useFees();
-  const { feeCents } = resolveFee(fees, {
-    hasItems: items.some((item) => item.action && !item.confirmed),
-    netAmount: totalPriceAux,
-  });
-  const totalPrice = totalPriceAux - centsToEuros(feeCents);
+  const { feeCents } = resolveFee(fees, basket);
+  const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
   useEffect(() => {
     if (state !== 2) {

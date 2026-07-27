@@ -12,6 +12,7 @@ import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
 import { centsToEuros, feesForCountry } from "@/lib/fees";
+import { ACTIONS } from "@/placeholder";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -86,8 +87,10 @@ async function updateProductOrder(
 export async function updateOrder(formData: FormData) {
   const data = parseFormData(formData);
 
-  const actionType =
-    data.action === "Quiero cambiar este producto" ? "CAMBIO" : "DEVOLUCIÓN";
+  // data.action is the submitted <select> value, which is now the stable code
+  // (ACTIONS.CHANGE === "CAMBIO"), never the localized label. Comparing against
+  // the constant is what keeps an English exchange from being saved as a return.
+  const actionType = data.action === ACTIONS.CHANGE ? "CAMBIO" : "DEVOLUCIÓN";
 
   if (!data.orderId || !data.oldVariantId) return;
 

@@ -20,6 +20,8 @@ import {
   Product,
 } from "@/types";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n/context";
+import { reasonLabel } from "@/lib/reasons";
 import { LiaExchangeAltSolid } from "react-icons/lia";
 import { IoIosReturnLeft } from "react-icons/io";
 
@@ -74,6 +76,19 @@ const VariantInfo = ({
   </div>
 );
 
+// `reason` is the value persisted in productsOrder.reason: a REASON_KEYS key
+// for anything saved since the value/label split, or a legacy Spanish sentence
+// for older rows. reasonLabel() localizes both and passes anything else
+// through unchanged rather than rendering an empty note.
+const ReasonNote = ({ reason }: { reason: string }) => {
+  const t = useT();
+  return (
+    <span className="text-xs font-light italic rounded-md text-left">
+      &quot;{reasonLabel(reason, t)}&quot;
+    </span>
+  );
+};
+
 const ProductInfo = ({
   title,
   variant,
@@ -105,11 +120,7 @@ const ProductInfo = ({
     {action && (
       <div className="flex flex-col justify-center gap-1 w-full">
         <ActionBadge action={action} />
-        {reason && (
-          <span className="text-xs font-light italic rounded-md text-left">
-            &quot;{reason}&quot;
-          </span>
-        )}
+        {reason && <ReasonNote reason={reason} />}
       </div>
     )}
     {confirmed && (

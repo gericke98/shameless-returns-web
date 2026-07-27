@@ -8,7 +8,9 @@ import { DialogFooter } from "@/components/ui/dialog";
 import { Product } from "@/types";
 import { productsOrder } from "@/db/schema";
 import { anularOrder, updateOrder } from "@/actions/updateOrder";
-import { ACTIONS, REASONS } from "@/placeholder";
+import { ACTIONS, REASON_KEYS } from "@/placeholder";
+import { useT } from "@/lib/i18n/context";
+import { toReasonKey } from "@/lib/reasons";
 
 type Props = {
   product: Product;
@@ -29,12 +31,14 @@ export const FormProduct = ({
   onItemChange,
   allProducts,
 }: Props) => {
+  const t = useT();
   const [action, setAction] = useState<string | null>(
     orderProduct.action === "CAMBIO" ? ACTIONS.CHANGE : ACTIONS.RETURN
   );
-  const [motivo, setMotivo] = useState<string>(
-    orderProduct.reason || "Me queda pequeño"
-  );
+  // The persisted reason is a REASON_KEYS key, not a sentence. Legacy rows hold
+  // the old Spanish sentence, so normalise to a key that actually exists as an
+  // option in the select below.
+  const [motivo, setMotivo] = useState<string>(toReasonKey(orderProduct.reason));
   const [size, setSize] = useState<string>(() => {
     // If there's an existing new_variant_title, check if it has stock
     if (orderProduct.new_variant_title && orderProduct.new_variant_id) {
@@ -363,12 +367,12 @@ export const FormProduct = ({
 
         <FormSelect
           name="accion"
-          title="Acción a realizar"
+          title={t.dialog.actionTitle}
           options={[
-            { value: ACTIONS.CHANGE, label: "Cambio" },
-            { value: ACTIONS.RETURN, label: "Devolución" },
+            { value: ACTIONS.CHANGE, label: t.dialog.actionChange },
+            { value: ACTIONS.RETURN, label: t.dialog.actionReturn },
           ]}
-          valueini={action || "CAMBIO"}
+          valueini={action || ACTIONS.CHANGE}
           onChange={setAction}
         />
 
@@ -376,15 +380,18 @@ export const FormProduct = ({
           name="motivo"
           title={
             action === ACTIONS.CHANGE
-              ? "Motivo del cambio"
-              : "Motivo de la devolución"
+              ? t.dialog.reasonChange
+              : t.dialog.reasonReturn
           }
-          options={REASONS.map((reason) => ({ value: reason, label: reason }))}
+          options={REASON_KEYS.map((key) => ({
+            value: key,
+            label: t.reasons[key],
+          }))}
           valueini={motivo}
           onChange={setMotivo}
         />
 
-        <FormInput name="notas" title="Notas" icon={false} valueini="" />
+        <FormInput name="notas" title={t.dialog.notes} icon={false} valueini="" />
 
         {showNewProduct && (
           <div className="w-full flex flex-col mt-8 gap-3">
@@ -577,7 +584,7 @@ export const FormProduct = ({
             {new_product_change && (
               <FormSelectSize
                 name="newSize"
-                title="Nueva talla"
+                title={t.dialog.newSize}
                 options={sizeStock}
                 valueini={size}
                 onChange={handleSizeChange}

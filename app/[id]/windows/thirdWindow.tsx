@@ -29,8 +29,8 @@ type Props = {
 };
 
 // Reusable sub-component for Store Credit.
-// `t` and `locale` arrive as props: this is declared at module scope, outside
-// the component that reads the locale context, so it cannot call the hooks.
+// `t` and `locale` arrive as props, for consistency with sibling components
+// declared at module scope.
 const StoreCredit = ({
   totalPrice,
   isSelected,
@@ -97,7 +97,8 @@ const StoreCredit = ({
 );
 
 // Reusable sub-component for Original Payment.
-// Same module-scope constraint as StoreCredit: `t` and `locale` are props.
+// `t` and `locale` are props, same as StoreCredit, for consistency with
+// sibling components declared at module scope.
 const OriginalPayment = ({
   totalPrice,
   isSelected,

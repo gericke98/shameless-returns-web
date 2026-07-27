@@ -611,7 +611,7 @@ export const FormProduct = ({
         disabled={isSubmitting}
         className="bg-white border border-cyan-800 py-3 rounded-full hover:bg-cyan-800 focus:bg-cyan-800 flex items-center justify-center w-full -mt-2 mb-2 hover:text-white font-bold"
       >
-        {t.dialog.cancel}
+        {t.dialog.clear}
       </button>
 
       {isSubmitting && (
@@ -636,7 +636,7 @@ export const FormProduct = ({
               d="M4 12a8 8 0 018-8v8H4z"
             ></path>
           </svg>
-          <span className="mt-2 text-sm text-cyan-800">Procesando...</span>
+          <span className="mt-2 text-sm text-cyan-800">{t.common.processing}</span>
         </div>
       )}
     </div>

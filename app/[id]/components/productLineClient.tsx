@@ -20,8 +20,8 @@ import {
   Product,
 } from "@/types";
 import { cn } from "@/lib/utils";
-import { useT } from "@/lib/i18n/context";
-import type { Dictionary } from "@/lib/i18n";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
 import { reasonLabel } from "@/lib/reasons";
 import { ACTIONS } from "@/placeholder";
 import { LiaExchangeAltSolid } from "react-icons/lia";
@@ -47,8 +47,8 @@ const ActionIcon = ({ action }: { action: string }) => {
 // `action` is the persisted code from productsOrder.action, not display text.
 // This used to title-case the code itself, so the badge stayed Spanish even in
 // English. Select the label off the code instead; the code itself is untouched.
-// `t` is a prop because this is declared at module scope, like thirdWindow's
-// StoreCredit — see the note in the task report.
+// `t` is passed as a prop for consistency with sibling components declared at
+// module scope (e.g. thirdWindow's StoreCredit).
 const ActionBadge = ({ action, t }: { action: string; t: Dictionary }) => (
   <div className="w-full h-5 flex flex-row items-center justify-center bg-blue-100 rounded-md max-w-24">
     <ActionIcon action={action} />
@@ -108,10 +108,12 @@ const ProductInfo = ({
   newProduct,
   isNewProduct,
   t,
+  locale,
 }: ProductInfoProps & {
   newProduct?: Product | null;
   isNewProduct: boolean;
   t: Dictionary;
+  locale: Locale;
 }) => (
   <div className="flex flex-col w-full gap-1 items-start">
     <span className="lg:text-base text-sm text-left font-bold leading-tight text-black">
@@ -124,7 +126,7 @@ const ProductInfo = ({
       isNewProduct={isNewProduct}
     />
     <span className="text-sm text-left font-bold leading-tight text-black">
-      {Number(price).toFixed(2)} €
+      {formatEuros(Number(price), locale)}
     </span>
     {action && (
       <div className="flex flex-col justify-center gap-1 w-full">
@@ -170,7 +172,8 @@ const ProductDialog = ({
   onItemChange,
   allProducts,
   t,
-}: ProductDialogProps & { t: Dictionary }) => {
+  locale,
+}: ProductDialogProps & { t: Dictionary; locale: Locale }) => {
   const [newProduct, setNewProduct] = useState<Product | null>(null);
 
   // Find the new product if a change has been made
@@ -221,6 +224,7 @@ const ProductDialog = ({
               newProduct={newProduct}
               isNewProduct={isNewProduct}
               t={t}
+              locale={locale}
             />
           </div>
           <div className="w-full mt-2">
@@ -262,6 +266,7 @@ export const ProductLineClient = ({
   allProducts,
 }: ProductLineProps) => {
   const t = useT();
+  const locale = useLocale();
   const [changed, setChanged] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
   const [newProduct, setNewProduct] = useState<Product | null>(null);
@@ -313,6 +318,7 @@ export const ProductLineClient = ({
             newProduct={newProduct}
             isNewProduct={isNewProduct}
             t={t}
+            locale={locale}
           />
         </DialogTrigger>
 
@@ -352,6 +358,7 @@ export const ProductLineClient = ({
           }}
           allProducts={allProducts}
           t={t}
+          locale={locale}
         />
       </Dialog>
     </div>

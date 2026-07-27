@@ -40,7 +40,7 @@ export const es = {
     selectProduct: "Seleccionar producto",
     selectProductPlaceholder: "Selecciona un producto",
     confirm: "Confirmar selección",
-    cancel: "Anular selección",
+    clear: "Anular selección",
   },
   reasons: {
     TOO_BIG: "Me queda grande",

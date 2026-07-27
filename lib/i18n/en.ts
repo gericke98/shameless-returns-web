@@ -40,7 +40,7 @@ export const en: Dictionary = {
     selectProduct: "Select an item",
     selectProductPlaceholder: "Choose an item",
     confirm: "Confirm selection",
-    cancel: "Clear selection",
+    clear: "Clear selection",
   },
   reasons: {
     TOO_BIG: "Too big",

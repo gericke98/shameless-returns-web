@@ -118,4 +118,12 @@ export const lookupAttempts = pgTable(
   })
 );
 
-// CODE TO UPDATE TABLA SCHEMA  npx drizzle-kit push:pg
+// APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
+//
+// There is no `drizzle/` directory and no committed migration history, so
+// `push` has nothing to diff against except whatever production happens to be
+// right now. This database also holds tables that are not modelled in this
+// file, so `push` reads them as drift and proposes DROPs on live data.
+//
+// Write the DDL by hand instead. See the migration section of README.md for
+// the statements applied so far and the pattern to follow.

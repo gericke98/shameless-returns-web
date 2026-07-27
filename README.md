@@ -46,13 +46,10 @@ A Next.js application for managing product returns and exchanges in an e-commerc
    npm run dev
    ```
 
-2. Sync database schema:
+2. Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-   ```bash
-   npx drizzle-kit push:pg
-   ```
-
-3. Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Schema changes are applied by hand, not with `drizzle-kit push:pg` — see the
+migration section below for why and for the statements applied so far.
 
 ## Development
 
@@ -241,9 +238,13 @@ that gap, every return and exchange would be charged a shipping fee of
 zero. Running the seed before deploying closes that gap entirely — the
 table is never empty while the new code can read it.
 
-The two `NEXT_PUBLIC_SHIPPING_*_COST` environment variables can be deleted
-from Vercel's project settings, but **only after step 2 has run** — the
-seed script is the last remaining reader of them.
+**Status: this migration has been applied to production.** Steps 1–3 are
+recorded here as history — the schema, the seed, and the deploy are all done.
+`NEXT_PUBLIC_SHIPPING_RETURN_COST` and `NEXT_PUBLIC_SHIPPING_EXCHANGE_COST`
+have since been removed from Vercel, so `scripts/seed-shipping-fees.ts` will
+now refuse to run rather than seed anything. That is deliberate: fees live in
+`shipping_fees` and are edited at `/dashboard/shipping-fees`. To re-seed a
+fresh database, set those two variables in your shell for the one command.
 
 ## Contributing
 

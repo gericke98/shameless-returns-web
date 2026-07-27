@@ -1,12 +1,10 @@
 "use client";
-import { useCallback, useMemo, useState, useTransition } from "react";
-import { ClientOrderProps, OrderItem, Prices } from "@/types";
+import { useMemo, useState, useTransition } from "react";
+import { ClientOrderProps } from "@/types";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
 import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
-import { useFees } from "./feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
 import { useT } from "@/lib/i18n/context";
 
 export const ClientOrder = ({
@@ -19,7 +17,6 @@ export const ClientOrder = ({
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
   const [isPending, startTransition] = useTransition();
-  const fees = useFees();
   const t = useT();
 
   // Compute a flag whether any item is selected (memoized)
@@ -38,53 +35,11 @@ export const ClientOrder = ({
       setCredito(false);
     }
   };
-  const calculatePrices = useCallback((items: OrderItem[]): Prices => {
-    const returnPrice = items
-      .filter((item) => item.action && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-    const exchangePrice = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => {
-        // If there's a new variant ID, find the corresponding product and use its price
-        if (item.new_variant_id) {
-          const newProduct = allProducts.find((p) =>
-            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-          );
-          if (newProduct) {
-            // Find the specific variant that matches the new_variant_id
-            const newVariant = newProduct.variants.edges.find(
-              (v) => v.node.id === item.new_variant_id
-            );
-            if (newVariant) {
-              return sum + parseFloat(newVariant.node.price);
-            }
-          }
-        }
-        // Fallback to the original price if no new product is found
-        return sum + parseFloat(item.price);
-      }, 0);
-    let totalPrice = returnPrice - exchangePrice;
-    const { feeCents } = resolveFee(fees, {
-      hasItems: items.some((item) => item.action && !item.confirmed),
-      netAmount: totalPrice,
-    });
-    totalPrice -= centsToEuros(feeCents);
-    return {
-      returnPrice,
-      exchangePrice,
-      totalPrice: totalPrice,
-    };
-  }, [allProducts, fees]);
-
   const handleContinue = () => {
     startTransition(() => {
       setPosition((prev) => prev + 1);
     });
   };
-  const { totalPrice } = useMemo(
-    () => calculatePrices(items),
-    [calculatePrices, items]
-  );
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">

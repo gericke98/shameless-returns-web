@@ -33,13 +33,22 @@ export async function saveShippingFee(
     return { ok: false, error: "Fees must be a non-negative amount with at most 2 decimals" };
   }
 
-  await db
-    .insert(shippingFees)
-    .values({ countryCode, returnFeeCents, exchangeFeeCents, updatedAt: new Date() })
-    .onConflictDoUpdate({
-      target: shippingFees.countryCode,
-      set: { returnFeeCents, exchangeFeeCents, updatedAt: new Date() },
-    });
+  try {
+    await db
+      .insert(shippingFees)
+      .values({ countryCode, returnFeeCents, exchangeFeeCents, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: shippingFees.countryCode,
+        set: { returnFeeCents, exchangeFeeCents, updatedAt: new Date() },
+      });
+  } catch (err) {
+    // Log the real error server-side for a diagnosable trail, but don't leak
+    // raw DB error text (connection strings, constraint names, etc.) to the
+    // client. revalidateTag must stay out of this catch block: it must never
+    // fire against a write that did not land.
+    console.error("saveShippingFee: upsert failed", { countryCode, err });
+    return { ok: false, error: "Could not save this fee. Please try again." };
+  }
 
   revalidateTag(SHIPPING_FEES_TAG);
   return { ok: true };

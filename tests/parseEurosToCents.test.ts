@@ -51,9 +51,22 @@ describe("parseEurosToCents", () => {
     expect(parseEurosToCents("12.")).toBeNull();
   });
 
-  it("rejects NaN-producing input", () => {
-    expect(parseEurosToCents("NaN")).toBeNull();
-    expect(parseEurosToCents("Infinity")).toBeNull();
+  it("rejects a thousands-separated comma as if it were a decimal", () => {
+    // "1,500" -> comma swapped for a dot -> "1.500", which has three digits
+    // after the separator and fails the regex. This pins down that the
+    // comma-decimal convenience (see the doc comment) cannot be abused to
+    // sneak a thousands grouping past validation and 10x/100x a fee.
+    expect(parseEurosToCents("1,500")).toBeNull();
+  });
+
+  it("rejects input that passes the digit regex but overflows to Infinity", () => {
+    // "NaN"/"Infinity" as literal strings never reach the Number.isFinite
+    // guard — they fail the leading \d+ regex first, so a test asserting
+    // they're rejected would only be re-testing the non-numeric-input case
+    // above. A string of all digits long enough to exceed Number.MAX_VALUE
+    // *does* pass the regex and genuinely exercises the isFinite check.
+    const tooLarge = "1" + "0".repeat(309); // 10^309 > Number.MAX_VALUE
+    expect(parseEurosToCents(tooLarge)).toBeNull();
   });
 
   it("trims surrounding whitespace", () => {

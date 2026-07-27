@@ -2,8 +2,13 @@ import Image from "next/image";
 import SuccessIcon from "@/public/check_circle.svg";
 import Logo from "@/public/LOGO_black.png";
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { LOCALE_COOKIE, dictionaries, readLocale } from "@/lib/i18n";
 
 export default function SuccessPage() {
+  const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
+  const t = dictionaries[locale];
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-black-pattern p-4">
       {/* 
@@ -24,11 +29,10 @@ export default function SuccessPage() {
             className="mt-5"
           />
           <h1 className="text-base sm:text-lg font-semibold mt-5 mb-2 text-center px-5">
-            ¡Hemos recibido tu solicitud correctamente!
+            {t.success.title}
           </h1>
           <h5 className="text-sm sm:text-base text-center">
-            Hemos recibido tu solicitud y te hemos enviado un correo electrónico
-            con los próximos pasos.
+            {t.success.body}
           </h5>
         </div>
       </div>

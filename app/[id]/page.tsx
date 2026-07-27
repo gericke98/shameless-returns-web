@@ -6,6 +6,9 @@ import { getFeeTable } from "@/db/fees";
 import { feesForCountry } from "@/lib/fees";
 import { normalizeCountry } from "@/lib/countries";
 import { FeesProvider } from "./feesContext";
+import { cookies } from "next/headers";
+import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
+import { LocaleProvider } from "@/lib/i18n/context";
 
 type OrderPageProps = {
   params: {
@@ -58,15 +61,19 @@ export default async function OrderPage({ params }: OrderPageProps) {
     normalizeCountry(orderData.shippingCountry)
   );
 
+  const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
+
   return (
-    <FeesProvider fees={fees}>
-      <ClientOrder
-        name={orderData.orderNumber}
-        items={orderData.products}
-        order={orderData}
-        id={orderData.id}
-        allProducts={discountedAllProducts}
-      />
-    </FeesProvider>
+    <LocaleProvider locale={locale}>
+      <FeesProvider fees={fees}>
+        <ClientOrder
+          name={orderData.orderNumber}
+          items={orderData.products}
+          order={orderData}
+          id={orderData.id}
+          allProducts={discountedAllProducts}
+        />
+      </FeesProvider>
+    </LocaleProvider>
   );
 }

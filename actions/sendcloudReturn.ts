@@ -13,6 +13,8 @@ import axios from "axios";
 import crypto from "crypto";
 import { eq } from "drizzle-orm";
 import { EU_ISO2, normalizeCountry } from "@/lib/countries";
+import { buildSendcloudEmail } from "@/lib/emails";
+import { readLocale, type Locale } from "@/lib/i18n";
 
 const SENDCLOUD_API = "https://panel.sendcloud.sc/api/v3";
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
@@ -105,7 +107,8 @@ async function sendSendcloudConfirmationEmail(
   recipientEmail: string,
   name: string,
   labelUrl: string | null,
-  tracking: string | null
+  tracking: string | null,
+  locale: Locale
 ): Promise<number> {
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
   if (!postmarkToken) return 500;
@@ -116,46 +119,10 @@ async function sendSendcloudConfirmationEmail(
     return 500;
   }
 
-  const labelButton = `<p style="font-size:16px;color:#555;"><a href="${labelUrl}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;">Download &amp; print your return label (PDF)</a></p>`;
-  const trackingLine = tracking
-    ? `<p style="font-size:16px;color:#555;">Tracking number: <strong>${tracking}</strong>.</p>`
-    : "";
-
   const emailData = {
-    From: "hello@shamelesscollective.com",
+    ...buildSendcloudEmail(name, locale, labelUrl, tracking),
     To: recipientEmail,
-    Subject: "Your return label is ready",
     MessageStream: "outbound",
-    TextBody:
-      `Your return was created. Download and print your pre-paid label here: ${labelUrl} — then drop the parcel at your nearest drop-off point.`,
-    HtmlBody: `
-      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
-        <div style="margin-bottom:20px;">
-          <p style="font-size:16px;color:#555;">Hello <strong>${name}</strong>,</p>
-          <p style="font-size:16px;color:#555;">Thank you for initiating a return with <strong>Shameless Collective</strong>. Here's how to complete it:</p>
-          <ol style="font-size:16px;color:#555;margin-left:20px;padding-left:10px;">
-            <li>Download and print your pre-paid return label (button below).</li>
-            <li>Package the item(s) securely and attach the label.</li>
-            <li>Drop the parcel at your nearest drop-off point.</li>
-          </ol>
-          ${labelButton}
-          ${trackingLine}
-          <p style="font-size:16px;color:#555;">Questions? <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
-          <p style="font-size:16px;color:#555;">Best regards,<br/><strong>The Shameless Collective Team</strong></p>
-        </div>
-        <hr style="border:0;border-top:1px solid #ddd;margin:20px 0;"/>
-        <div>
-          <p style="font-size:16px;color:#555;">Hola <strong>${name}</strong>,</p>
-          <p style="font-size:16px;color:#555;">Gracias por iniciar una devolución con <strong>Shameless Collective</strong>. Para completarla:</p>
-          <ol style="font-size:16px;color:#555;margin-left:20px;padding-left:10px;">
-            <li>Descarga e imprime tu etiqueta de devolución prepagada (botón arriba).</li>
-            <li>Empaqueta el/los artículo(s) y pega la etiqueta.</li>
-            <li>Deja el paquete en tu punto de entrega más cercano.</li>
-          </ol>
-          <p style="font-size:16px;color:#555;">Si tienes preguntas, escríbenos a <a href="mailto:hello@shamelesscollective.com">hello@shamelesscollective.com</a>.</p>
-          <p style="font-size:16px;color:#555;">Saludos,<br/><strong>El equipo de Shameless Collective</strong></p>
-        </div>
-      </div>`,
   };
 
   try {
@@ -254,11 +221,14 @@ export async function createSendcloudReturn(id: string): Promise<number> {
       .set({ locator: tracking, carrier: carrierName, carrierUrl: trackingUrl })
       .where(eq(orders.id, id));
 
+    // Language the customer chose in the portal, persisted on the order when the
+    // return was created (see actions/return.ts). `readLocale` falls back to "es".
     const emailStatus = await sendSendcloudConfirmationEmail(
       order.email,
       order.shippingName,
       labelUrl,
-      tracking
+      tracking,
+      readLocale(order.locale)
     );
     if (emailStatus !== 200) {
       console.error(

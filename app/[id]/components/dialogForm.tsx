@@ -259,7 +259,7 @@ export const FormProduct = ({
   const handleAnular = async () => {
     setIsSubmitting(true);
     try {
-      await anularOrder(orderProduct.id);
+      await anularOrder(orderProduct.id, orderProduct.orderId ?? "");
       setChanged(!changed);
       if (onItemChange) {
         // Create a proper structure with products array
@@ -363,6 +363,15 @@ export const FormProduct = ({
           readOnly
         />
         <input type="hidden" name="id" value={orderProduct.id} readOnly />
+        {/* The order this line belongs to. `name="id"` above is the
+            productsorder ROW id, which a portal session cannot be checked
+            against — the session names an order. */}
+        <input
+          type="hidden"
+          name="orderId"
+          value={orderProduct.orderId ?? ""}
+          readOnly
+        />
         <input type="hidden" name="variantId" value={variantId} readOnly />
 
         <FormSelect

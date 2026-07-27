@@ -36,6 +36,11 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
+const access = { granted: true };
+vi.mock("@/lib/orderAccess", () => ({
+  hasOrderAccess: async () => access.granted,
+}));
+
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
   revalidateTag: () => {},
@@ -46,29 +51,52 @@ vi.mock("next/cache", () => ({
 describe("anularOrder", () => {
   beforeEach(() => {
     captured.length = 0;
+    access.granted = true;
   });
 
   it("scopes the write to one productsorder row by its primary key", async () => {
     const { anularOrder } = await import("@/actions/updateOrder");
-    await anularOrder(4242);
+    await anularOrder(4242, "5678901234");
 
     expect(captured).toHaveLength(1);
-    expect(captured[0].params).toEqual([4242]);
+    expect(captured[0].params).toEqual([4242, "5678901234"]);
     expect(captured[0].sql).toMatch(/"id"\s*=/);
   });
 
   it("does not scope by variant_id, which is shared across customers' orders", async () => {
     const { anularOrder } = await import("@/actions/updateOrder");
-    await anularOrder(4242);
+    await anularOrder(4242, "5678901234");
 
     expect(captured[0].sql).not.toMatch(/variant_id/);
   });
 
+  it("also scopes by order_id, so a row id alone is not enough", async () => {
+    const { anularOrder } = await import("@/actions/updateOrder");
+    await anularOrder(4242, "5678901234");
+
+    expect(captured[0].sql).toMatch(/order_id/);
+  });
+
+  it("writes nothing without a portal session for that order", async () => {
+    access.granted = false;
+    const { anularOrder } = await import("@/actions/updateOrder");
+    await anularOrder(4242, "5678901234");
+
+    expect(captured).toHaveLength(0);
+  });
+
+  it("writes nothing when no order id is given", async () => {
+    const { anularOrder } = await import("@/actions/updateOrder");
+    await anularOrder(4242, "");
+
+    expect(captured).toHaveLength(0);
+  });
+
   it("writes nothing when given no row id", async () => {
     const { anularOrder } = await import("@/actions/updateOrder");
-    await anularOrder(undefined as unknown as number);
-    await anularOrder(0);
-    await anularOrder(NaN);
+    await anularOrder(undefined as unknown as number, "5678901234");
+    await anularOrder(0, "5678901234");
+    await anularOrder(NaN, "5678901234");
 
     expect(captured).toHaveLength(0);
   });

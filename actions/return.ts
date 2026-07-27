@@ -10,6 +10,7 @@ import { createShippingLabel } from "./shipping";
 import { updateFinalOrder } from "./updateOrder";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";
+import { hasOrderAccess } from "@/lib/orderAccess";
 import { createInternationalReturn, isInternationalOrder } from "./amphoraReturn";
 import { createSendcloudReturn, euIso2ForReturn } from "./sendcloudReturn";
 
@@ -75,6 +76,16 @@ export async function returnFunction(
   isCredit: boolean,
   email: string
 ) {
+  // `id` arrives from the client. Without this the caller only had to know an
+  // order id — which is the sequential Shopify order id — to submit somebody
+  // else's return, book a carrier against their address and charge their card.
+  // Silent: the caller ignores the result, and an unauthorised one should learn
+  // nothing.
+  if (!(await hasOrderAccess(id))) {
+    console.error(`returnFunction: rejected a call without a session for ${id}`);
+    return;
+  }
+
   // Before the payment branch, so it covers BOTH outcomes: the free path
   // continues below, and the paid path redirects to Stripe and comes back
   // through the webhook, which reads the column from the database.

@@ -4,6 +4,7 @@ import { stripe } from "@/lib/stripe";
 import { getFeeTable } from "@/db/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { normalizeCountry } from "@/lib/countries";
+import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry, resolveFee } from "@/lib/fees";
 
 function absoluteUrl(path: string) {
@@ -27,6 +28,14 @@ export const createStripeUrl = async (
   email: string,
   isCredit: boolean
 ) => {
+  // Its only caller, `returnFunction`, already verified this id — so this is
+  // defence in depth rather than the primary gate. It is here so the guarantee
+  // does not rest on Next's bundler declining to expose this action: server
+  // actions are addressable endpoints, and bundler behaviour is not a security
+  // boundary. Not shared with the Stripe webhook, which consumes sessions
+  // rather than creating them, so gating it is safe.
+  if (!(await hasOrderAccess(id))) return { data: null };
+
   const loaded = await loadBasket(id);
   if (!loaded) return { data: null };
 

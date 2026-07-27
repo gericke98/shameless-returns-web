@@ -9,6 +9,7 @@ import { FeesProvider } from "./feesContext";
 import { cookies } from "next/headers";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { LocaleProvider } from "@/lib/i18n/context";
+import { hasOrderAccess } from "@/lib/orderAccess";
 
 type OrderPageProps = {
   params: {
@@ -40,8 +41,15 @@ async function fetchOrderWithProducts(orderId: string) {
 }
 
 export default async function OrderPage({ params }: OrderPageProps) {
-  // Remove the artificial delay for immediate responsiveness.
-  // await new Promise((resolve) => setTimeout(resolve, 3000));
+  // Before anything is fetched or rendered. orders.id is the raw Shopify order
+  // id — sequential and enumerable — and this page renders the customer's name,
+  // street address and phone, so possession of the URL cannot be the credential.
+  //
+  // Absent, expired, and issued-for-another-order are treated identically on
+  // purpose: the response must not reveal whether this id names a real order.
+  if (!(await hasOrderAccess(params.id))) {
+    redirect("/?session=expired");
+  }
 
   const orderData = await fetchOrderWithProducts(params.id);
   const allProducts = await getProducts();

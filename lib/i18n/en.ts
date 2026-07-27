@@ -19,6 +19,7 @@ export const en: Dictionary = {
     submit: "Find order",
     consent: "By continuing, you confirm that you accept the",
     errorTitle: "There was an error in your request",
+    sessionExpired: "Please look up your order to continue.",
   },
   first: {
     orderTitle: "Order",

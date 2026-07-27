@@ -17,6 +17,7 @@ export const es = {
     submit: "Buscar pedido",
     consent: "Al continuar, confirmas que aceptas los",
     errorTitle: "Ha habido un error en tu solicitud",
+    sessionExpired: "Vuelve a buscar tu pedido para continuar.",
   },
   first: {
     orderTitle: "Pedido",

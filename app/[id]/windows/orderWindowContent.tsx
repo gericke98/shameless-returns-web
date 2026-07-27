@@ -4,10 +4,13 @@ import { FirstWindow } from "./firstWindow";
 import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 import { LastWindow } from "./lastWindow";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee, type CountryFees } from "@/lib/fees";
 
 const calculatePrices = (
   items: OrderItem[],
-  allProducts: Product[]
+  allProducts: Product[],
+  fees: CountryFees
 ): Prices => {
   const returnPrice = items
     .filter((item) => item.action && !item.confirmed)
@@ -34,11 +37,11 @@ const calculatePrices = (
       return sum + parseFloat(item.price);
     }, 0);
   let totalPrice = returnPrice - exchangePrice;
-  const shippingCost =
-    totalPrice > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
-  totalPrice -= shippingCost;
+  const { feeCents } = resolveFee(fees, {
+    hasItems: items.some((item) => item.action && !item.confirmed),
+    netAmount: totalPrice,
+  });
+  totalPrice -= centsToEuros(feeCents);
   return {
     returnPrice,
     exchangePrice,
@@ -58,9 +61,10 @@ export const OrderWindowContent = ({
   onItemChange,
   allProducts,
 }: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
+  const fees = useFees();
   const { totalPrice } = useMemo(
-    () => calculatePrices(items, allProducts),
-    [items, allProducts]
+    () => calculatePrices(items, allProducts, fees),
+    [items, allProducts, fees]
   );
   const itemsToShow = useMemo(
     () => items.filter((item) => item.action && !item.confirmed),

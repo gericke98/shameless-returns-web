@@ -40,16 +40,13 @@ async function createReturnShipment(id: string): Promise<number> {
 export async function returnFunction(
   id: string,
   isCredit: boolean,
-  totalPrice: number,
   email: string
 ) {
-  if (totalPrice < 0) {
-    // Caso en el que tiene que pagar el usuario
-    const toPay = totalPrice * -1;
-    const url = (await createStripeUrl(toPay, email, id, isCredit)).data;
-    if (url) {
-      redirect(url);
-    }
+  // Whether the customer owes anything is decided server-side, inside
+  // createStripeUrl. A null URL means nothing to pay.
+  const url = (await createStripeUrl(id, email, isCredit)).data;
+  if (url) {
+    redirect(url);
   }
   try {
     // Caso en el que no tiene que pagar nada

@@ -5,6 +5,8 @@ import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
 import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
+import { useFees } from "./feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 
 export const ClientOrder = ({
   name,
@@ -16,6 +18,7 @@ export const ClientOrder = ({
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
   const [isPending, startTransition] = useTransition();
+  const fees = useFees();
 
   // Compute a flag whether any item is selected (memoized)
   const hasSelectedItems = useMemo(
@@ -59,17 +62,17 @@ export const ClientOrder = ({
         return sum + parseFloat(item.price);
       }, 0);
     let totalPrice = returnPrice - exchangePrice;
-    const shippingCost =
-      totalPrice > 0
-        ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-        : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
-    totalPrice -= shippingCost;
+    const { feeCents } = resolveFee(fees, {
+      hasItems: items.some((item) => item.action && !item.confirmed),
+      netAmount: totalPrice,
+    });
+    totalPrice -= centsToEuros(feeCents);
     return {
       returnPrice,
       exchangePrice,
       totalPrice: totalPrice,
     };
-  }, [allProducts]);
+  }, [allProducts, fees]);
 
   const handleContinue = () => {
     startTransition(() => {
@@ -104,7 +107,6 @@ export const ClientOrder = ({
                 text="Actualizar pedido"
                 id={id}
                 isCredit={credito}
-                totalPrice={totalPrice}
                 email={order.email}
               />
             ) : (

@@ -7,6 +7,8 @@ import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -55,11 +57,12 @@ export const SecondWindowForm = ({
     }, 0);
 
   const totalPriceAux = totalPriceDevolver - totalPriceCambio;
-  const shippingCost =
-    totalPriceAux > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
-  const totalPrice = totalPriceAux - shippingCost;
+  const fees = useFees();
+  const { feeCents } = resolveFee(fees, {
+    hasItems: items.some((item) => item.action && !item.confirmed),
+    netAmount: totalPriceAux,
+  });
+  const totalPrice = totalPriceAux - centsToEuros(feeCents);
 
   useEffect(() => {
     if (state !== 2) {

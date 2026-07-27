@@ -5,6 +5,8 @@ import { Product } from "@/types";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
@@ -25,6 +27,7 @@ const LastWindowBase = ({
   id,
   allProducts,
 }: Props) => {
+  const fees = useFees();
   const { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal } =
     useMemo(() => {
       const totalPriceDevolver = items
@@ -54,29 +57,21 @@ const LastWindowBase = ({
 
       let totalPrice = totalPriceDevolver - totalPriceCambio;
 
-      // Calculate shipping cost the same way as SummaryComponent
-      const itemsToDev = items.filter(
-        (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
-      );
-      const itemsToCambio = items.filter(
-        (item) => item.action === "CAMBIO" && !item.confirmed
-      );
+      // Rule A, shared with every other site and with the server-side charge.
+      // This previously used a Rule B variant keyed on action type, which
+      // disagreed with the checkout total on a cheaper-item exchange.
+      const { feeCents } = resolveFee(fees, {
+        hasItems: items.some((item) => item.action && !item.confirmed),
+        netAmount: totalPrice,
+      });
 
-      const shippingCost =
-        itemsToDev.length > 0
-          ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-          : itemsToCambio.length > 0
-          ? Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST)
-          : 0;
-
-      totalPrice -= shippingCost;
+      totalPrice -= centsToEuros(feeCents);
 
       // Calculate finalTotal the same way as SummaryComponent
-      const creditBonus = credito ? totalPrice * 0.15 : 0;
       const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
 
       return { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal };
-    }, [allProducts, credito, items]);
+    }, [allProducts, credito, items, fees]);
 
   const handleBack = () => {
     setPosition(finalTotal > 0 ? position - 1 : position - 2);

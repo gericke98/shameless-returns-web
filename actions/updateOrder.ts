@@ -4,11 +4,14 @@ import db from "@/db/drizzle";
 import {
   createReturn,
   getFulfillmentLineItems,
+  getOrderById,
   getOrderProductsById,
   getOrderTotal,
 } from "@/db/queries";
+import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
+import { centsToEuros, feesForCountry } from "@/lib/fees";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -149,7 +152,8 @@ export async function updateData(prevState: number, formData: FormData) {
 async function processProductReturn(
   product: { action?: string; variant_id: string; [key: string]: any },
   totalOrder: OrderData,
-  isCredit: boolean
+  isCredit: boolean,
+  returnFeeEuros: number
 ) {
   try {
     if (!product.action) return;
@@ -197,7 +201,8 @@ async function processProductReturn(
       totalOrder.id,
       fulfillmentsProduct.node.id,
       adjustedProduct,
-      lineitem.discount_allocations?.[0]
+      lineitem.discount_allocations?.[0],
+      returnFeeEuros
     );
 
     // Si la return se creo correctamente, actualizo el producto
@@ -264,12 +269,20 @@ export async function updateFinalOrder(
   }
   const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
+  const dbOrder = await getOrderById(id);
+  const feeTable = await getFeeTable();
+  const orderFees = feesForCountry(
+    feeTable,
+    normalizeCountry(dbOrder?.shippingCountry)
+  );
+  const returnFeeEuros = centsToEuros(orderFees.returnFeeCents);
   await Promise.all(
     products.map((product) =>
       processProductReturn(
         { ...product, action: product.action || undefined },
         totalOrder,
-        isCredit
+        isCredit,
+        returnFeeEuros
       )
     )
   );

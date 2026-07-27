@@ -11,6 +11,8 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { Product } from "@/types";
+import { useFees } from "../../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect)[];
@@ -83,12 +85,12 @@ export const SummaryComponent = ({
   }, [items, allProducts]);
 
   let totalPrice = totalPriceDevolver - totalPriceCambio;
-  const shippingCost =
-    itemsToDev.length > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : itemsToCambio.length > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST)
-      : 0;
+  const fees = useFees();
+  const { feeCents } = resolveFee(fees, {
+    hasItems: itemsToDevolver.length > 0,
+    netAmount: totalPrice,
+  });
+  const shippingCost = centsToEuros(feeCents);
 
   totalPrice -= shippingCost;
 

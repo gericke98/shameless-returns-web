@@ -11,6 +11,8 @@ import RegaloWhite from "@/public/giftWhite.svg";
 import RegaloBlack from "@/public/giftBlack.svg";
 import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
@@ -158,6 +160,7 @@ const ThirdWindowBase = ({
   allProducts,
 }: Props) => {
   const [selected, setSelected] = useState<number>(0);
+  const fees = useFees();
 
   // Compute the total price after subtracting the "CAMBIO" items and shipping
   const totalPrice = useMemo(() => {
@@ -188,16 +191,16 @@ const ThirdWindowBase = ({
       }, 0);
 
     let result = totalPriceDevolver - totalPriceCambio;
-    const shippingCost =
-      result > 0
-        ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-        : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
+    const { feeCents } = resolveFee(fees, {
+      hasItems: items.some((item) => item.action && !item.confirmed),
+      netAmount: result,
+    });
 
     if (shipping) {
-      result -= shippingCost;
+      result -= centsToEuros(feeCents);
     }
     return result;
-  }, [allProducts, items, shipping]);
+  }, [allProducts, items, shipping, fees]);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);

@@ -10,6 +10,8 @@ import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import CorreosLogo from "@/public/correos.webp";
+import { useFees } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -62,10 +64,11 @@ const SecondWindowBase = ({
   }, [allProducts, items]);
 
   const totalPrice = totalPriceDevolver - totalPriceCambio;
-  const shippingCost =
-    totalPrice > 0
-      ? Number(process.env.NEXT_PUBLIC_SHIPPING_RETURN_COST)
-      : Number(process.env.NEXT_PUBLIC_SHIPPING_EXCHANGE_COST);
+  const fees = useFees();
+  const { feeCents } = resolveFee(fees, {
+    hasItems: items.some((item) => item.action && !item.confirmed),
+    netAmount: totalPrice,
+  });
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -120,7 +123,7 @@ const SecondWindowBase = ({
             </div>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
-                Coste: {shippingCost},00 €
+                Coste: {`${centsToEuros(feeCents).toFixed(2)} €`}
               </h5>
             </div>
           </div>

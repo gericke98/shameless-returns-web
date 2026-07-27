@@ -7,6 +7,8 @@ import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros } from "@/lib/i18n";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
@@ -28,6 +30,8 @@ const LastWindowBase = ({
   allProducts,
 }: Props) => {
   const fees = useFees();
+  const t = useT();
+  const locale = useLocale();
   const { totalPriceDevolver, totalPriceCambio, totalPrice, finalTotal } =
     useMemo(() => {
       const totalPriceDevolver = items
@@ -85,7 +89,7 @@ const LastWindowBase = ({
         className="mt-4 cursor-pointer"
         onClick={handleBack}
       />
-      <h3 className="font-bold text-2xl text-left mt-1">Resumen final</h3>
+      <h3 className="font-bold text-2xl text-left mt-1">{t.last.title}</h3>
       <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer flex flex-col gap-4">
         {items.map(
           (product) =>
@@ -115,38 +119,39 @@ const LastWindowBase = ({
         )}
         {finalTotal < 0 ? (
           <div className="w-full flex flex-col">
-            <h3 className="font-bold text-base">Cambio de productos</h3>
+            <h3 className="font-bold text-base">{t.last.exchangeTitle}</h3>
             <p className="text-black text-sm mt-2">
-              <span className="font-bold">
-                Una vez devuelvas tus productos,
-              </span>{" "}
-              recibirás los nuevos que has seleccionado.{" "}
+              <span className="font-bold">{t.last.exchangeBodyBold}</span>{" "}
+              {t.last.exchangeBodyRest}{" "}
             </p>
           </div>
         ) : credito ? (
           <div className="w-full flex flex-col">
-            <h3 className="font-bold text-base">Crédito en tienda</h3>
+            <h3 className="font-bold text-base">{t.last.creditTitle}</h3>
             <p className="text-black text-sm">
-              Recibirás en tu correo un código por valor de{" "}
-              <span className="font-bold">{finalTotal.toFixed(2)} € </span>
-              con el que comprar de nuevo en Shameless Collective,{" "}
-              <span className="font-bold">cuando se acepte tu devolución.</span>
+              {t.last.creditBodyStart}{" "}
+              <span className="font-bold">
+                {formatEuros(finalTotal, locale)}{" "}
+              </span>
+              {t.last.creditBodyMid}{" "}
+              <span className="font-bold">{t.last.creditBodyEnd}</span>
             </p>
           </div>
         ) : (
           <div className="w-full flex flex-col">
-            <h3 className="font-bold text-base">Reembolso tradicional</h3>
+            <h3 className="font-bold text-base">{t.last.refundTitle}</h3>
             <p className="text-black text-sm">
-              Recibirás tu reembolso de{" "}
-              <span className="font-bold">{finalTotal.toFixed(2)} € </span>
-              en el método de pago que usaste en tu compra original,{" "}
-              <span className="font-bold">cuando se acepte tu devolución.</span>
+              {t.last.refundBodyStart}{" "}
+              <span className="font-bold">
+                {formatEuros(finalTotal, locale)}{" "}
+              </span>
+              {t.last.refundBodyMid}{" "}
+              <span className="font-bold">{t.last.refundBodyEnd}</span>
             </p>
             <p className="text-black text-sm mt-2">
-              Debido al tiempo necesario para recibir los productos, revisarlos,
-              y procesar la devolución,{" "}
-              <span className="font-bold">pueden pasar hasta 15 días</span>{" "}
-              hasta que recibas tu dinero.
+              {t.last.refundDelayStart}{" "}
+              <span className="font-bold">{t.last.refundDelayBold}</span>{" "}
+              {t.last.refundDelayEnd}
             </p>
           </div>
         )}

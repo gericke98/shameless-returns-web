@@ -11,12 +11,14 @@ import { useToast } from "@/hooks/use-toast";
 import { getOrder } from "@/actions/order";
 import { Warning } from "@/types";
 import { PRIVACY_LINKS } from "@/placeholder";
+import { useT } from "@/lib/i18n/context";
 
 /**
  * Main input component for the order search form
  */
 export const InputComponent = () => {
   const { toast } = useToast();
+  const t = useT();
 
   // Initialize with an empty warning as the initial state
   const initialState: Warning = { message: "" };
@@ -28,11 +30,11 @@ export const InputComponent = () => {
     if (state && state.message) {
       toast({
         variant: "destructive",
-        title: "There was an error in your request",
+        title: t.lookup.errorTitle,
         description: state.message,
       });
     }
-  }, [toast, state]);
+  }, [toast, state, t]);
 
   /**
    * Renders the privacy policy links
@@ -40,7 +42,7 @@ export const InputComponent = () => {
   const renderPrivacyLinks = () => (
     <div role="contentinfo" aria-label="Privacy policy links">
       <h6 className="text-xxs text-black mt-5">
-        Al continuar, confirmas que aceptas los{" "}
+        {t.lookup.consent}{" "}
         {PRIVACY_LINKS.map((link, index) => (
           <span key={link.text}>
             <Link
@@ -72,11 +74,9 @@ export const InputComponent = () => {
         className="border w-full border-slate-100 mt-5"
         aria-hidden="true"
       />
-      <h3 className="text-xs mt-2 mb-10 text-slate-500">
-        CAMBIOS Y DEVOLUCIONES
-      </h3>
+      <h3 className="text-xs mt-2 mb-10 text-slate-500">{t.common.header}</h3>
       <h5 className="lg:text-sm text-xs text-slate-600">
-        Introduce los datos de tu pedido original para iniciar el proceso.{" "}
+        {t.lookup.intro}{" "}
         <span>
           <Link
             href="https://shamelesscollective.com/pages/return-and-exchanges"
@@ -84,7 +84,7 @@ export const InputComponent = () => {
             target="_blank"
             rel="noopener noreferrer"
           >
-            Ver política de devoluciones
+            {t.lookup.policyLink}
           </Link>
         </span>
       </h5>
@@ -96,29 +96,33 @@ export const InputComponent = () => {
       >
         <FormInput
           name="order"
-          title="Número de pedido"
+          title={t.lookup.orderNumber}
           icon
           valueini=""
           required
           aria-required="true"
           pattern="[A-Za-z0-9-]+"
-          placeholder="Enter your order number"
+          placeholder={t.lookup.orderPlaceholder}
           minLength={3}
           maxLength={50}
         />
         <FormInput
           name="email"
-          title="Email"
+          title={t.lookup.email}
           icon
           valueini=""
           required
           aria-required="true"
           type="email"
-          placeholder="Enter your email"
+          placeholder={t.lookup.emailPlaceholder}
           pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"
         />
         {renderPrivacyLinks()}
-        <Button text="Buscar pedido" type="submit" aria-label="Search order" />
+        <Button
+          text={t.lookup.submit}
+          type="submit"
+          aria-label="Search order"
+        />
       </form>
     </div>
   );

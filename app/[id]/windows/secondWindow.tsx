@@ -12,6 +12,8 @@ import { FaArrowAltCircleLeft } from "react-icons/fa";
 import CorreosLogo from "@/public/correos.webp";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros } from "@/lib/i18n";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -32,6 +34,8 @@ const SecondWindowBase = ({
   id,
   allProducts,
 }: Props) => {
+  const t = useT();
+  const locale = useLocale();
   // Calculate totals
   const { totalPriceDevolver, totalPriceCambio } = useMemo(() => {
     const totalPriceDevolver = items
@@ -87,13 +91,12 @@ const SecondWindowBase = ({
       <div className="space-y-8 p-0">
         {/* Title */}
         <h3 className="font-bold text-xl sm:text-2xl text-left mt-2">
-          Método de devolución
+          {t.second.title}
         </h3>
 
         {/* Subtitle */}
         <p className="mt-3 text-sm sm:text-base text-gray-700">
-          Escoge el método de envío que quieres usar para devolver los productos
-          seleccionados
+          {t.second.subtitle}
         </p>
 
         {/*
@@ -118,12 +121,12 @@ const SecondWindowBase = ({
                 // className="hidden lg:block"
               />
               <h5 className="text-xs sm:text-sm font-semibold">
-                Entrega en punto de recogida Correos
+                {t.second.correosDropoff}
               </h5>
             </div>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
-                Coste: {`${centsToEuros(feeCents).toFixed(2)} €`}
+                {t.second.cost}: {formatEuros(centsToEuros(feeCents), locale)}
               </h5>
             </div>
           </div>
@@ -135,19 +138,17 @@ const SecondWindowBase = ({
           <div className="flex flex-row items-center gap-2">
             <IoLocationSharp size={30} color="black" />
             <h3 className="font-bold text-base sm:text-lg">
-              Entrega en punto de recogida
+              {t.second.dropoffTitle}
             </h3>
           </div>
 
           <p className="mt-2 text-sm sm:text-base font-light">
-            Valida tu dirección de envío para poder generar la etiqueta de
-            devolución que recibirás en tu email, con la que podrás llevar tu
-            paquete a un punto de recogida de Correos.{" "}
+            {t.second.dropoffBody}{" "}
             <Link
               href="https://www.correos.es/es/es/herramientas/oficinas-buzones-citypaq/detalle"
               className="text-blue-500 font-semibold"
             >
-              Ver listado
+              {t.second.dropoffLink}
             </Link>
           </p>
 

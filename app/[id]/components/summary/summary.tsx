@@ -13,6 +13,8 @@ import {
 import { Product } from "@/types";
 import { useFees } from "../../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros } from "@/lib/i18n";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect)[];
@@ -29,6 +31,8 @@ export const SummaryComponent = ({
   credito,
   allProducts = [],
 }: Props) => {
+  const t = useT();
+  const locale = useLocale();
   const {
     totalPriceDevolver,
     itemsToDevolver,
@@ -110,7 +114,7 @@ export const SummaryComponent = ({
   return (
     // Reduced top margin & padding on mobile, larger on desktop
     <div className="w-full h-full flex flex-col mt-2 p-1 sm:mt-5 sm:p-2">
-      <h3 className="text-sm tracking-wider">DESGLOSE DE TU SOLICITUD</h3>
+      <h3 className="text-sm tracking-wider">{t.summary.heading}</h3>
 
       <Accordion type="multiple" className="w-full mt-2 sm:mt-4 space-y-3">
         {/* Productos a devolver */}
@@ -122,13 +126,13 @@ export const SummaryComponent = ({
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
               <span className="font-medium text-left w-full">
-                Productos a devolver <br />
+                {t.summary.toReturn} <br />
                 <span className="font-normal text-xs text-gray-600"></span>
               </span>
 
               {/* Right side (total, right-aligned) */}
               <span className="font-semibold text-sm text-right mt-1 sm:mt-0 w-full">
-                {totalPriceDevolver.toFixed(2)} €
+                {formatEuros(totalPriceDevolver, locale)}
               </span>
             </div>
           </AccordionTrigger>
@@ -150,18 +154,21 @@ export const SummaryComponent = ({
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
               <span className="font-medium text-left w-full">
-                Nuevos productos{" "}
-                {shipping && itemsToDev.length > 0 && "& Logística"}
+                {t.summary.newProducts}{" "}
+                {shipping && itemsToDev.length > 0 && t.summary.andLogistics}
                 <span className="font-normal text-xs text-gray-600"></span>
               </span>
 
               {/* Right side (total, right-aligned) */}
               <span className="font-semibold text-sm text-right mt-1 sm:mt-0 w-full">
                 {(totalPriceCambio > 0 || shipping) && "-"}
-                {shipping && (itemsToDev.length > 0 || itemsToCambio.length > 0)
-                  ? (totalPriceCambio + shippingCost).toFixed(2)
-                  : totalPriceCambio.toFixed(2)}
-                {" €"}
+                {formatEuros(
+                  shipping &&
+                    (itemsToDev.length > 0 || itemsToCambio.length > 0)
+                    ? totalPriceCambio + shippingCost
+                    : totalPriceCambio,
+                  locale
+                )}
               </span>
             </div>
           </AccordionTrigger>
@@ -185,11 +192,9 @@ export const SummaryComponent = ({
       {/* Crédito en tienda */}
       {credito && (
         <div className="w-full flex flex-row justify-between items-center mt-3 sm:mt-4">
+          <span className="font-semibold text-sm">{t.summary.bonus}</span>
           <span className="font-semibold text-sm">
-            Bonificaciones - Crédito en tienda
-          </span>
-          <span className="font-semibold text-sm">
-            {creditBonus.toFixed(2)} €
+            {formatEuros(creditBonus, locale)}
           </span>
         </div>
       )}
@@ -197,17 +202,15 @@ export const SummaryComponent = ({
       {/* Total row */}
       <div className="bg-gray-300 flex flex-row justify-between items-center px-1 py-2 my-3 sm:px-2 sm:py-3 sm:my-4 rounded-sm">
         <span className="font-semibold">
-          {finalTotal > 0 ? "Total reembolso" : "Total a pagar"}
+          {finalTotal > 0 ? t.summary.totalRefund : t.summary.totalToPay}
         </span>
         <span className="font-semibold">
-          {Math.abs(finalTotal).toFixed(2)} €
+          {formatEuros(Math.abs(finalTotal), locale)}
         </span>
       </div>
 
       {!final && (
-        <span className="text-xs font-light">
-          Resumen provisional. Puede cambiar a lo largo del proceso
-        </span>
+        <span className="text-xs font-light">{t.summary.provisional}</span>
       )}
       <span className="border w-full border-gray-300 my-3" />
     </div>

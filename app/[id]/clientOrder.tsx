@@ -7,6 +7,7 @@ import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
 import { useFees } from "./feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { useT } from "@/lib/i18n/context";
 
 export const ClientOrder = ({
   name,
@@ -19,6 +20,7 @@ export const ClientOrder = ({
   const [credito, setCredito] = useState<boolean>(true);
   const [isPending, startTransition] = useTransition();
   const fees = useFees();
+  const t = useT();
 
   // Compute a flag whether any item is selected (memoized)
   const hasSelectedItems = useMemo(
@@ -104,7 +106,7 @@ export const ClientOrder = ({
           <div className="w-full mt-4">
             {position >= 4 ? (
               <AsyncButton
-                text="Actualizar pedido"
+                text={t.common.updateOrder}
                 id={id}
                 isCredit={credito}
                 email={order.email}

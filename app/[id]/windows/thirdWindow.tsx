@@ -13,6 +13,8 @@ import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
@@ -26,15 +28,21 @@ type Props = {
   allProducts: Product[];
 };
 
-// Reusable sub-component for Store Credit
+// Reusable sub-component for Store Credit.
+// `t` and `locale` arrive as props: this is declared at module scope, outside
+// the component that reads the locale context, so it cannot call the hooks.
 const StoreCredit = ({
   totalPrice,
   isSelected,
   onClick,
+  t,
+  locale,
 }: {
   totalPrice: number;
   isSelected: boolean;
   onClick: () => void;
+  t: Dictionary;
+  locale: Locale;
 }) => (
   <div
     className={cn(
@@ -61,17 +69,15 @@ const StoreCredit = ({
             isSelected ? "text-white" : "text-black"
           )}
         >
-          Crédito en tienda
+          {t.third.storeCredit}
         </h3>
         <p className="bg-cyan-400 text-xs w-24 p-1 rounded-full font-bold text-center text-black">
-          +15% extra
+          {t.third.storeCreditBadge}
         </p>
       </div>
     </div>
     <p className={cn("text-sm", isSelected ? "text-white" : "text-black")}>
-      Recibe, cuando se acepte tu devolución, un cheque regalo para volver a
-      comprar en la tienda online de Shameless Collective, con hasta un +15%
-      extra de regalo sobre tu devolución.
+      {t.third.storeCreditBody}
     </p>
     <span
       className={cn(
@@ -85,20 +91,25 @@ const StoreCredit = ({
         isSelected ? "text-white" : "text-black"
       )}
     >
-      Reembolso total: {(totalPrice * 1.15).toFixed(2)} €
+      {t.third.totalRefund}: {formatEuros(totalPrice * 1.15, locale)}
     </p>
   </div>
 );
 
-// Reusable sub-component for Original Payment
+// Reusable sub-component for Original Payment.
+// Same module-scope constraint as StoreCredit: `t` and `locale` are props.
 const OriginalPayment = ({
   totalPrice,
   isSelected,
   onClick,
+  t,
+  locale,
 }: {
   totalPrice: number;
   isSelected: boolean;
   onClick: () => void;
+  t: Dictionary;
+  locale: Locale;
 }) => (
   <div
     className={cn(
@@ -125,13 +136,12 @@ const OriginalPayment = ({
             isSelected ? "text-white" : "text-black"
           )}
         >
-          Método de pago original
+          {t.third.originalPayment}
         </h3>
       </div>
     </div>
     <p className={cn("text-sm", isSelected ? "text-white" : "text-black")}>
-      Recibe tu dinero, cuando se acepte tu devolución, en el método de pago que
-      usaste en tu compra. Puede demorar hasta 15 días.
+      {t.third.originalPaymentBody}
     </p>
     <span
       className={cn(
@@ -145,7 +155,7 @@ const OriginalPayment = ({
         isSelected ? "text-white" : "text-black"
       )}
     >
-      Reembolso total: {totalPrice.toFixed(2)} €
+      {t.third.totalRefund}: {formatEuros(totalPrice, locale)}
     </p>
   </div>
 );
@@ -161,6 +171,8 @@ const ThirdWindowBase = ({
 }: Props) => {
   const [selected, setSelected] = useState<number>(0);
   const fees = useFees();
+  const t = useT();
+  const locale = useLocale();
 
   // Compute the total price after subtracting the "CAMBIO" items and shipping
   const totalPrice = useMemo(() => {
@@ -221,7 +233,7 @@ const ThirdWindowBase = ({
 
       {/* Title */}
       <h3 className="font-bold text-xl sm:text-2xl text-left mt-2 mb-4">
-        Elige tu reembolso
+        {t.third.title}
       </h3>
 
       {/* Two reembolso options side by side on large screens, stacked on mobile */}
@@ -233,6 +245,8 @@ const ThirdWindowBase = ({
             setSelected(0);
             setCredito(true);
           }}
+          t={t}
+          locale={locale}
         />
         <OriginalPayment
           totalPrice={totalPrice}
@@ -241,6 +255,8 @@ const ThirdWindowBase = ({
             setSelected(1);
             setCredito(false);
           }}
+          t={t}
+          locale={locale}
         />
       </div>
     </div>

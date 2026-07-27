@@ -9,6 +9,7 @@ import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
+import { useLocale, useT } from "@/lib/i18n/context";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -27,6 +28,8 @@ export const SecondWindowForm = ({
   onItemChange,
   allProducts,
 }: Props) => {
+  const t = useT();
+  const locale = useLocale();
   // useFormState returns [state, formAction]
   const [state, formAction] = useFormState(updateData, position);
 
@@ -85,19 +88,19 @@ export const SecondWindowForm = ({
       <input hidden name="id" value={order.id} readOnly />
       <FormInput
         name="name"
-        title="Nombre"
+        title={t.second.name}
         valueini={order.shippingName}
         icon={false}
       />
       <FormInput
         name="address"
-        title="Calle y número"
+        title={t.second.address}
         valueini={order.shippingAddress1}
         icon={false}
       />
       <FormInput
         name="address2"
-        title="Apartamento, local, etc (Opcional)"
+        title={t.second.address2}
         valueini={
           order.shippingAddress2?.toString() === "No information provided"
             ? ""
@@ -107,35 +110,35 @@ export const SecondWindowForm = ({
       />
       <FormInput
         name="zip"
-        title="Código postal"
+        title={t.second.zip}
         valueini={order.shippingZip?.toString()}
         icon={false}
       />
       <FormInput
         name="city"
-        title="Ciudad"
+        title={t.second.city}
         valueini={order.shippingCity?.toString()}
         icon={false}
       />
       <FormInput
         name="province"
-        title="Provincia"
+        title={t.second.province}
         valueini={order.shippingProvince?.toString()}
         icon={false}
       />
       <FormSelect
         name="country"
-        title="País"
+        title={t.second.country}
         options={SUPPORTED_COUNTRIES.map((c) => ({
           value: c.code,
-          label: c.nameEs,
+          label: locale === "en" ? c.nameEn : c.nameEs,
         }))}
         valueini={normalizeCountry(order.shippingCountry) ?? "ES"}
         required
       />
       <FormInput
         name="phone"
-        title="Teléfono"
+        title={t.second.phone}
         valueini={order.shippingPhone?.toString()}
         icon={false}
       />
@@ -152,7 +155,7 @@ export const SecondWindowForm = ({
         type="submit"
         className="bg-cyan-800 py-4 lg:-my-8 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
       >
-        Continuar
+        {t.common.continue}
       </button>
     </form>
   );

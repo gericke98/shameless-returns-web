@@ -1,7 +1,7 @@
 # Portal session for `/[id]`
 
 **Date:** 2026-07-27
-**Status:** Approved design — pending implementation plan
+**Status:** Implemented — 2026-07-27
 **Author:** Santiago Gericke (with Claude)
 
 ## Context & driver

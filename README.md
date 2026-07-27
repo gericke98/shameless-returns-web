@@ -109,6 +109,49 @@ To add a language:
    dictionary that is missing a key is a **build error** (TypeScript), not
    something that silently renders `undefined` at runtime.
 
+## Portal session (`/[id]`)
+
+The returns portal has no accounts. Ownership is proven once, at lookup, by
+order number **plus** the matching contact email — and `actions/order.ts`
+`getOrder` now records that proof as a signed cookie (`return_session`) instead
+of discarding it.
+
+- **Signed with `NEXTAUTH_SECRET`.** No new env var, no table, no migration.
+- **Two hours, absolute** from issue — not sliding. Long enough for a return
+  including a detour to Stripe and back; short enough to bound exposure on a
+  shared browser.
+- **One order per session.** Looking up a second order replaces the first.
+- Verified by `app/[id]/page.tsx` and by every customer-facing action. Absent,
+  expired, and issued-for-another-order are treated identically, so the response
+  never reveals whether an order id names a real order.
+
+Why it exists: `orders.id` is the raw Shopify order id — sequential and
+enumerable — and `/[id]` renders the customer's name, street address and phone.
+Before this, possession of a guessable URL was the only credential.
+
+Crypto lives in `lib/orderSession.ts` (pure, unit-tested) and the cookie layer in
+`lib/orderAccess.ts`. Design: `docs/superpowers/specs/2026-07-27-portal-session-design.md`.
+
+### Four functions are deliberately NOT session-gated
+
+**Do not "fix" this.** `updateFinalOrder`, `createShippingLabel`,
+`createInternationalReturn` and `createSendcloudReturn` are each reached from two
+callers: `returnFunction` (a customer, who has a session) and the Stripe webhook,
+which is an inbound request from Stripe with **no cookies**, authenticated by
+signature verification instead.
+
+Adding a session check to any of them breaks every **paid** return: the payment
+succeeds and the return is never created. Each carries a comment saying so.
+
+The gate belongs on the customer entry points, which is where it is.
+
+### Admin actions are separate
+
+`middleware.ts` guards the `/dashboard` **routes**, but a server action is not a
+route — it is an independently addressable endpoint, so rendering a button inside
+`/dashboard` protects the button and not the endpoint. Admin actions call
+`isAdmin()` from `lib/requireAdmin.ts`. **Any new admin action must too.**
+
 ## Deploy prerequisites for this branch
 
 This branch requires a database migration and a one-time data seed before

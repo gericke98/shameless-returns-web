@@ -5,8 +5,7 @@ import { SHIPPING_FEES_TAG } from "@/db/fees";
 import { shippingFees } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
 import { DEFAULT_FEE_KEY } from "@/lib/fees";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { isAdmin } from "@/lib/requireAdmin";
 import { revalidateTag } from "next/cache";
 import { parseEurosToCents } from "./parseEurosToCents";
 
@@ -14,9 +13,8 @@ export async function saveShippingFee(
   formData: FormData
 ): Promise<{ ok: boolean; error?: string }> {
   // middleware.ts guards the /dashboard route, but a server action is its own
-  // entry point and is not covered by route middleware.
-  const session = await getServerSession(authOptions);
-  if (session?.user?.role !== "admin") {
+  // entry point and is not covered by route middleware. See lib/requireAdmin.
+  if (!(await isAdmin())) {
     return { ok: false, error: "Not authorised" };
   }
 

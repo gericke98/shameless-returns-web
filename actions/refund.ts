@@ -14,9 +14,22 @@ import { revalidatePath } from "next/cache";
 import { getFeeTable } from "@/db/fees";
 import { normalizeCountry } from "@/lib/countries";
 import { centsToEuros, feesForCountry } from "@/lib/fees";
+import { isAdmin } from "@/lib/requireAdmin";
 
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
+
+  // This action mints gift cards and issues refunds, with `product` and `order`
+  // supplied by the caller — `product.price` feeds the gift-card value directly.
+  // It is a server action, so being rendered inside /dashboard protects the
+  // button, not this endpoint: middleware matches routes, and an action is not
+  // a route. Without this gate an anonymous caller could mint a card of any
+  // value. Return silently rather than throwing — the caller ignores the result,
+  // and an unauthenticated caller should learn nothing.
+  if (!(await isAdmin())) {
+    console.error("validateReturn: rejected a call without an admin session");
+    return;
+  }
   // For debugging purposes
   let result;
   let result2;

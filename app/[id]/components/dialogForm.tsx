@@ -259,7 +259,7 @@ export const FormProduct = ({
   const handleAnular = async () => {
     setIsSubmitting(true);
     try {
-      await anularOrder(orderProduct.variant_id.toString());
+      await anularOrder(orderProduct.id);
       setChanged(!changed);
       if (onItemChange) {
         // Create a proper structure with products array

@@ -22,6 +22,22 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
+// Cut the expensive half of that import graph away entirely.
+//
+// actions/amphoraReturn.ts and actions/sendcloudReturn.ts import db/drizzle,
+// which calls neon(process.env.DATABASE_URL!) at MODULE SCOPE, plus db/queries,
+// which loads the Shopify Node adapter. Resolving all of that made this file
+// (a) require a DATABASE_URL just to import, and (b) intermittently blow the 5s
+// default timeout under full-suite parallel load — roughly 1 run in 4.
+//
+// The functions under test — isInternationalOrder and euIso2ForReturn — are
+// pure string functions. They touch none of it.
+vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/queries", () => ({
+  getOrderById: async () => null,
+  getVariantSkusByIds: async () => [],
+}));
+
 describe("normalizeCountry", () => {
   it("accepts an ISO-2 code in any case", () => {
     expect(normalizeCountry("ES")).toBe("ES");

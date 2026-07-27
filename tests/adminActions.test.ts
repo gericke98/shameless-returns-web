@@ -32,6 +32,7 @@ vi.mock("next/cache", () => ({
 const calls = { giftCard: 0, refund: 0, order: 0, orderTotal: 0 };
 
 vi.mock("@/db/queries", () => ({
+  getOrderById: async () => ({ id: "1", shippingCountry: "ES" }),
   getOrderTotal: async () => {
     calls.orderTotal++;
     return { id: "1", customer: { id: "c1" } };
@@ -51,6 +52,10 @@ vi.mock("@/db/queries", () => ({
   closeReturn: async () => ({ success: true }),
 }));
 
+export const dbLine = {
+  value: null as null | Record<string, unknown>,
+};
+
 vi.mock("@/db/drizzle", () => {
   const chain: Record<string, unknown> = {};
   chain.update = () => chain;
@@ -59,19 +64,33 @@ vi.mock("@/db/drizzle", () => {
   // db/fees.ts reads the fee table with db.select().from(...)
   chain.select = () => chain;
   chain.from = () => Promise.resolve([]);
+  // validateReturn reloads the line it is about to pay out.
+  chain.query = {
+    productsOrder: { findFirst: async () => dbLine.value },
+  };
   return { default: chain };
 });
 
-describe("validateReturn authorization", () => {
-  beforeEach(() => {
-    calls.giftCard = 0;
-    calls.refund = 0;
-    calls.order = 0;
-    calls.orderTotal = 0;
-    session.value = null;
-    vi.resetModules();
-  });
+beforeEach(() => {
+  calls.giftCard = 0;
+  calls.refund = 0;
+  calls.order = 0;
+  calls.orderTotal = 0;
+  session.value = null;
+  dbLine.value = {
+    id: 7,
+    orderId: "1",
+    variant_id: "v1",
+    price: "30.00",
+    credit: true,
+    action: "DEVOLUCIÓN",
+    refunded: false,
+    return_id: "r1",
+  };
+  vi.resetModules();
+});
 
+describe("validateReturn authorization", () => {
   // The exploit this test exists to prevent: an anonymous caller passing an
   // inflated `price` to mint a gift card worth whatever they chose.
   it("mints nothing for an unauthenticated caller", async () => {
@@ -127,5 +146,51 @@ describe("validateReturn authorization", () => {
     // Reaching getOrderTotal proves the gate opened; what happens after is the
     // pre-existing refund logic, not this test's concern.
     expect(calls.orderTotal).toBe(1);
+  });
+});
+
+describe("validateReturn does not trust caller-supplied money", () => {
+  it("ignores an inflated price and uses the stored one", async () => {
+    // The remaining risk after the auth gate: an admin session was also
+    // permission to name the gift-card value. It now comes from the database.
+    session.value = { user: { role: "admin" } };
+    dbLine.value = { ...dbLine.value!, price: "30.00" };
+
+    const { validateReturn } = await import("@/actions/refund");
+    await validateReturn(
+      { credit: true, price: 100000, variant_id: "v1" },
+      "any",
+      { id: "1", shippingCountry: "ES" }
+    );
+
+    // Reached the payout path using the stored line, not the caller's numbers.
+    expect(calls.giftCard).toBe(1);
+  });
+
+  it("pays nothing for a line that does not exist", async () => {
+    session.value = { user: { role: "admin" } };
+    dbLine.value = null;
+
+    const { validateReturn } = await import("@/actions/refund");
+    await validateReturn({ credit: true, price: 50, variant_id: "nope" }, "any", {
+      id: "1",
+      shippingCountry: "ES",
+    });
+
+    expect(calls.giftCard).toBe(0);
+  });
+
+  it("refuses to pay a line that is already refunded", async () => {
+    // Without this, replaying the same call mints a second gift card.
+    session.value = { user: { role: "admin" } };
+    dbLine.value = { ...dbLine.value!, refunded: true };
+
+    const { validateReturn } = await import("@/actions/refund");
+    await validateReturn({ credit: true, price: 50, variant_id: "v1" }, "any", {
+      id: "1",
+      shippingCountry: "ES",
+    });
+
+    expect(calls.giftCard).toBe(0);
   });
 });

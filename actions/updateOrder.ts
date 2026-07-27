@@ -100,8 +100,22 @@ export async function updateOrder(formData: FormData) {
   revalidatePath("/", "layout");
 }
 
-export async function anularOrder(oldVariantId: string) {
-  if (!oldVariantId) return;
+/**
+ * Clear the return/exchange selection on ONE order line.
+ *
+ * Takes the `productsorder` row's own primary key, not a variant id. It used to
+ * take the latter and scope the write with `eq(productsOrder.variant_id, ...)`
+ * alone — but that column holds the Shopify PRODUCT VARIANT id, which is the
+ * same value in every order containing that product in that size. So a single
+ * call wiped the in-progress selection of every customer who had bought it, and
+ * because this is a server action reachable by anyone and a variant id is public
+ * storefront data, it needed no order id at all.
+ *
+ * Scoping by the row's primary key is the tightest available and matches how the
+ * sibling writes in this file are scoped.
+ */
+export async function anularOrder(productOrderId: number) {
+  if (!Number.isInteger(productOrderId) || productOrderId <= 0) return;
 
   await db
     .update(productsOrder)
@@ -113,7 +127,7 @@ export async function anularOrder(oldVariantId: string) {
       new_variant_title: null,
       new_variant_id: null,
     })
-    .where(eq(productsOrder.variant_id, oldVariantId));
+    .where(eq(productsOrder.id, productOrderId));
 
   revalidatePath("/", "layout");
 }

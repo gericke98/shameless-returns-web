@@ -8,6 +8,11 @@ describe("readLocale", () => {
   });
 
   it("defaults unrecognised, missing, or attacker-controlled values to es", () => {
+    // Pinned to the literal "es", not just DEFAULT_LOCALE: the requirement is
+    // that an absent/bad cookie yields Spanish specifically. Asserting only
+    // against the imported constant would stay green even if DEFAULT_LOCALE
+    // were changed to "en", which would silently violate the spec.
+    expect(readLocale(undefined)).toBe("es");
     expect(readLocale(undefined)).toBe(DEFAULT_LOCALE);
     expect(readLocale(null)).toBe(DEFAULT_LOCALE);
     expect(readLocale("")).toBe(DEFAULT_LOCALE);

@@ -31,7 +31,8 @@ type FormDataFields = {
   zip?: string;
   city?: string;
   province?: string;
-  country?: string;
+  // No `country`: the destination country is never taken from the form. See
+  // updateData below.
   phone?: string;
 };
 
@@ -50,7 +51,6 @@ function parseFormData(formData: FormData): FormDataFields {
     zip: formData.get("zip")?.toString(),
     city: formData.get("city")?.toString(),
     province: formData.get("province")?.toString(),
-    country: formData.get("country")?.toString(),
     phone: formData.get("phone")?.toString(),
   };
 }
@@ -125,15 +125,18 @@ export async function updateData(prevState: number, formData: FormData) {
     return prevState;
   }
 
-  // The country drives which carrier is used and which fee is charged, so it
-  // must be a supported ISO-2 code. The form is a <select> over
-  // SUPPORTED_COUNTRIES, so an unrecognised value means a tampered request —
-  // reject rather than writing arbitrary text.
-  const country = normalizeCountry(data.country);
-  if (!country) {
-    return prevState;
-  }
-
+  // NOTE: `shippingCountry` is deliberately absent from this payload.
+  //
+  // The country decides which carrier books the return (Correos domestically,
+  // Amphora internationally) and which `shipping_fees` row is charged, so it is
+  // not something the customer may supply. The address form renders it
+  // read-only, straight from the stored order, and this action never reads a
+  // `country` field — a tampered request simply has no effect on the column.
+  //
+  // This also removes the failure mode where an order whose stored country was
+  // not in SUPPORTED_COUNTRIES had the <select> pre-select España and, on
+  // Continue, overwrote the real destination with "ES" — which then booked a
+  // domestic label for a foreign address and charged the cheaper ES fee.
   await db
     .update(orders)
     .set({
@@ -143,7 +146,6 @@ export async function updateData(prevState: number, formData: FormData) {
       shippingZip: data.zip,
       shippingCity: data.city,
       shippingProvince: data.province,
-      shippingCountry: country,
       shippingPhone: data.phone,
     })
     .where(eq(orders.id, data.orderId));

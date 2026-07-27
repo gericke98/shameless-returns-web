@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import { EU_ISO2, SUPPORTED_COUNTRIES, normalizeCountry } from "@/lib/countries";
+import {
+  EU_ISO2,
+  SUPPORTED_COUNTRIES,
+  countryDisplayName,
+  normalizeCountry,
+} from "@/lib/countries";
+import { feesForCountry } from "@/lib/fees";
 
 // `db/queries.ts` wraps a query in React's `cache()`, which is only resolvable
 // under Next.js's "react-server" module condition (its own build pipeline).
@@ -69,6 +75,92 @@ describe("normalizeCountry", () => {
     expect(EU_ISO2.has("GB")).toBe(false);
   });
 
+  it("is exactly the 26 EU member states other than Spain", () => {
+    // Guards the invariant that widening SUPPORTED_COUNTRIES never widens the
+    // EU shipping lane. 27 member states minus Spain.
+    expect(EU_ISO2.size).toBe(26);
+  });
+
+  it("names non-EU destinations without enrolling them in the EU lane", () => {
+    for (const code of ["AD", "IS", "JP", "BR", "IL", "AE", "CO"]) {
+      expect(
+        SUPPORTED_COUNTRIES.some((c) => c.code === code),
+        `${code} should be nameable`
+      ).toBe(true);
+      expect(EU_ISO2.has(code), `${code} must not be an EU lane`).toBe(false);
+    }
+  });
+
+  it("resolves Andorra rather than falling through to Spain", () => {
+    expect(normalizeCountry("Andorra")).toBe("AD");
+    expect(normalizeCountry("AD")).toBe("AD");
+  });
+
+  it("gives every supported country a distinct code", () => {
+    const codes = SUPPORTED_COUNTRIES.map((c) => c.code);
+    expect(new Set(codes).size).toBe(codes.length);
+  });
+});
+
+describe("countryDisplayName", () => {
+  it("localizes a recognised stored country", () => {
+    expect(countryDisplayName("ES", "es")).toBe("España");
+    expect(countryDisplayName("Spain", "en")).toBe("Spain");
+    expect(countryDisplayName("Andorra", "es")).toBe("Andorra");
+    expect(countryDisplayName("JP", "en")).toBe("Japan");
+  });
+
+  it("shows an unnameable stored country verbatim, never Spain", () => {
+    // The address form renders this value read-only. Substituting a default
+    // here is exactly the bug: it would tell the customer their Wakandan
+    // order is going to Spain, and Spain is what the carrier would see.
+    expect(countryDisplayName("Wakanda", "es")).toBe("Wakanda");
+    expect(countryDisplayName("Wakanda", "en")).toBe("Wakanda");
+    expect(countryDisplayName(null, "es")).toBe("");
+  });
+});
+
+describe("an unnameable stored country still routes and prices safely", () => {
+  it("counts as international, so Amphora still handles it", async () => {
+    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    expect(normalizeCountry("Wakanda")).toBeNull();
+    expect(isInternationalOrder("Wakanda")).toBe(true);
+  });
+
+  it("falls back to the '*' fee row rather than the ES row", () => {
+    const table = {
+      "*": { returnFeeCents: 995, exchangeFeeCents: 0 },
+      ES: { returnFeeCents: 399, exchangeFeeCents: 0 },
+    };
+    expect(feesForCountry(table, normalizeCountry("Wakanda"))).toEqual(
+      table["*"]
+    );
+    // And a country we *can* name still has the option of its own row.
+    expect(feesForCountry(table, normalizeCountry("Andorra"))).toEqual(
+      table["*"]
+    );
+    expect(
+      feesForCountry(
+        { ...table, AD: { returnFeeCents: 700, exchangeFeeCents: 0 } },
+        normalizeCountry("Andorra")
+      ).returnFeeCents
+    ).toBe(700);
+  });
+
+  it("is never written back from the address form", () => {
+    // The country is display-only in secondWindowForm. updateData must not
+    // read a `country` field at all — that is what makes it impossible for a
+    // stored country to be replaced by a client-supplied one.
+    const source = readFileSync(
+      resolve(__dirname, "../actions/updateOrder.ts"),
+      "utf-8"
+    );
+    expect(source).not.toContain('formData.get("country")');
+    expect(source).not.toContain("shippingCountry:");
+  });
+});
+
+describe("lib/countries source hygiene", () => {
   it("uses explicit unicode escape sequences in the regex (not literal combining characters)", () => {
     // Read the source file and verify the regex uses \\u0300-\\u036f notation,
     // not the actual U+0300..U+036F characters (which are invisible and corrupt on copy).

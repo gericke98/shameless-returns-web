@@ -1,8 +1,7 @@
 import { updateData } from "@/actions/updateOrder";
 import { FormInput } from "@/components/formInput";
-import { FormSelect } from "@/components/formSelect";
 import { orders, productsOrder } from "@/db/schema";
-import { SUPPORTED_COUNTRIES, normalizeCountry } from "@/lib/countries";
+import { countryDisplayName } from "@/lib/countries";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
@@ -126,16 +125,23 @@ export const SecondWindowForm = ({
         valueini={order.shippingProvince?.toString()}
         icon={false}
       />
-      <FormSelect
-        name="country"
-        title={t.second.country}
-        options={SUPPORTED_COUNTRIES.map((c) => ({
-          value: c.code,
-          label: locale === "en" ? c.nameEn : c.nameEs,
-        }))}
-        valueini={normalizeCountry(order.shippingCountry) ?? "ES"}
-        required
-      />
+      {/*
+        Country is shown, not chosen. It decides the carrier (Correos vs
+        Amphora) and the shipping_fees row, so letting the customer set it
+        would both misroute parcels and let them pick their own price. It is
+        rendered straight from the stored order — `countryDisplayName` falls
+        back to the raw stored string for a country we cannot name, so an
+        Andorra order reads "Andorra" rather than being relabelled "España" —
+        and `updateData` never reads a `country` field, so there is no form
+        value to tamper with. There is deliberately no <input>, hidden or
+        otherwise, carrying this value back to the server.
+      */}
+      <div className="flex flex-col gap-2">
+        <span className="text-xs text-slate-600">{t.second.country}</span>
+        <p className="w-full p-2 border border-slate-200 rounded-md bg-gray-100 text-slate-700">
+          {countryDisplayName(order.shippingCountry, locale)}
+        </p>
+      </div>
       <FormInput
         name="phone"
         title={t.second.phone}

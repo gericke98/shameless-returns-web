@@ -43,17 +43,43 @@ export const SUPPORTED_COUNTRIES: readonly Country[] = [
   { code: "SK", nameEs: "Eslovaquia", nameEn: "Slovakia" },
   { code: "SI", nameEs: "Eslovenia", nameEn: "Slovenia" },
   { code: "SE", nameEs: "Suecia", nameEn: "Sweden" },
+
+  // --- Non-EU destinations. -------------------------------------------------
+  // This list is NOT a menu the customer picks from — the address form renders
+  // the stored country read-only. It is the set of countries the app can name
+  // and price *by ISO-2 code*. A country missing from here still works: it
+  // routes internationally (isInternationalOrder) and falls back to the '*' fee
+  // row; it just displays as its raw stored string and cannot have a per-country
+  // fee row. Andorra was the concrete gap.
+  //
+  // Adding a row here does NOT create an EU lane: EU_ISO2 below is a separate,
+  // fixed list and is the only thing euIso2ForReturn consults.
+  { code: "AD", nameEs: "Andorra", nameEn: "Andorra" },
   { code: "GB", nameEs: "Reino Unido", nameEn: "United Kingdom" },
   { code: "CH", nameEs: "Suiza", nameEn: "Switzerland" },
   { code: "NO", nameEs: "Noruega", nameEn: "Norway" },
+  { code: "IS", nameEs: "Islandia", nameEn: "Iceland" },
   { code: "US", nameEs: "Estados Unidos", nameEn: "United States" },
   { code: "CA", nameEs: "Canadá", nameEn: "Canada" },
   { code: "MX", nameEs: "México", nameEn: "Mexico" },
+  { code: "BR", nameEs: "Brasil", nameEn: "Brazil" },
+  { code: "AR", nameEs: "Argentina", nameEn: "Argentina" },
+  { code: "CL", nameEs: "Chile", nameEn: "Chile" },
+  { code: "CO", nameEs: "Colombia", nameEn: "Colombia" },
+  { code: "IL", nameEs: "Israel", nameEn: "Israel" },
+  { code: "AE", nameEs: "Emiratos Árabes Unidos", nameEn: "United Arab Emirates" },
+  { code: "JP", nameEs: "Japón", nameEn: "Japan" },
   { code: "AU", nameEs: "Australia", nameEn: "Australia" },
 ] as const;
 
 /** EU member states, excluding Spain (national/Correos). Used by the
- *  Sendcloud EU-only lane check. */
+ *  Sendcloud EU-only lane check.
+ *
+ *  Exactly 26 entries — the 27 member states minus Spain. This is NOT derived
+ *  from SUPPORTED_COUNTRIES and must never be: SUPPORTED_COUNTRIES is the
+ *  "what can the customer pick" list and includes non-EU destinations, while
+ *  this is the "is this an EU shipping lane" list. Adding a country to the
+ *  dropdown must not silently enrol it in the EU lane. */
 export const EU_ISO2: Set<string> = new Set([
   "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR",
   "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
@@ -106,4 +132,30 @@ export function normalizeCountry(
 
   const stripped = stripAccents(raw);
   return NAME_TO_ISO2[raw.toLowerCase()] ?? NAME_TO_ISO2[stripped] ?? null;
+}
+
+const BY_CODE: ReadonlyMap<string, Country> = new Map(
+  SUPPORTED_COUNTRIES.map((c) => [c.code, c] as const)
+);
+
+/** The country row for an ISO-2 code, or null when it is not one we can name. */
+export function countryByCode(code: string | null | undefined): Country | null {
+  if (!code) return null;
+  return BY_CODE.get(code) ?? null;
+}
+
+/**
+ * How to show a stored `orders.shippingCountry` to the customer.
+ *
+ * Localized display name when the stored value resolves to a supported code,
+ * otherwise the raw stored string. It must never invent a country: an Andorra
+ * order reads "Andorra", never "España".
+ */
+export function countryDisplayName(
+  stored: string | null | undefined,
+  locale: "es" | "en"
+): string {
+  const country = countryByCode(normalizeCountry(stored));
+  if (country) return locale === "en" ? country.nameEn : country.nameEs;
+  return String(stored ?? "").trim();
 }

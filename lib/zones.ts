@@ -48,17 +48,26 @@ export const ZONE_KEY_PATTERN = /^(\*|[A-Z]{2}(-[A-Z]{2})?)$/;
  * orders are peninsular, and a customer must not be billed an island rate
  * because their postcode failed to parse.
  *
- * KNOWN GAP: `shipping_zip` is customer-editable through `updateData`, so a
- * customer in Tenerife can enter a Madrid postcode and be charged EUR 5
- * instead of EUR 22. This is the same shape as the hole deliberately closed
- * for `shippingCountry`, which the address form renders read-only precisely
- * because it decides carrier and price — but the postcode has to stay
- * editable, since it is also where the return label is sent.
+ * `shipping_zip` is the COLLECTION address, not the original delivery address,
+ * and that is the right input. On a return the customer is the sender: the
+ * Correos request puts this postcode in <Remitente> and the warehouse in
+ * <Destinatario> (see actions/shipping.ts). The carrier prices the journey
+ * from where it collects the parcel, so the fee has to follow the same field.
  *
- * Not mitigated here: the exposure is 12 of 489 Spanish orders, and the only
- * sound fix is a separate immutable column holding the postcode as it was at
- * purchase, which is a migration. `shipping_province` is not a usable
- * cross-check — it is editable through the same form.
+ * That it is customer-editable through `updateData` is therefore correct
+ * rather than a hole. A customer who has moved to Madrid genuinely ships from
+ * Madrid and genuinely costs the peninsular rate; pricing them off a
+ * purchase-time postcode would bill them for a journey nobody makes. This is
+ * NOT the same situation as `shippingCountry`, which the address form keeps
+ * read-only — the country picks the carrier and the return lane, and changing
+ * it would misroute the parcel entirely.
+ *
+ * The residual risk is ordinary address fraud: declaring a peninsular
+ * postcode while the parcel actually sits in Tenerife. It is self-limiting,
+ * because the label is issued to the declared address, so the collection
+ * simply fails — and `requiresCustomsData` reads the same field to decide
+ * whether the CN23 block is needed, so a false postcode also produces a
+ * declaration Correos rejects at the customs boundary.
  */
 export function resolveZone(
   country: string | null | undefined,

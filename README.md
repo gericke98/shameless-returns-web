@@ -105,12 +105,20 @@ hold a major island and minor ones — so where a prefix spans two tariff rows
 the CSV carries the dearer one, keeping every row at or above cost. A Spanish
 address with an unparseable postcode resolves to peninsular.
 
-**Known gap:** `shipping_zip` is customer-editable through `updateData`, so a
-Tenerife customer can enter a Madrid postcode and pay €5 rather than €22. It
-is the same shape as the hole deliberately closed for `shippingCountry`, but
-the postcode has to stay editable because it is also where the label is sent.
-Closing it properly needs a separate immutable column holding the postcode as
-it was at purchase. Current exposure is 12 of 489 Spanish orders.
+The postcode it reads is the **collection** address, not the original delivery
+address. On a return the customer is the sender — the Correos request puts
+`shipping_zip` in `<Remitente>` and the warehouse in `<Destinatario>` — so the
+carrier prices the journey from wherever it collects the parcel, and the fee
+follows the same field. That `updateData` lets the customer change it is
+correct, not a gap: someone who has moved to Madrid genuinely ships from
+Madrid and genuinely costs the peninsular rate. This is unlike
+`shippingCountry`, which the address form keeps read-only because it picks the
+carrier and the return lane.
+
+The same prefixes appear independently in `requiresCustomsData`
+(`actions/shipping.ts`), which decides whether a CN23 customs block is needed
+— `35/38/51/52` but not `07`, since the Balearics are inside the EU customs
+territory while the Canaries and the enclaves are not.
 
 The `*` fallback is derived as the most expensive fee at each band rather than
 chosen, so it cannot go stale when the carrier republishes. It is deliberately

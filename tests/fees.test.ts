@@ -115,28 +115,28 @@ describe("resolveFee — Rule A, by net amount", () => {
   const es = TABLE.ES;
 
   it("charges nothing for an empty basket", () => {
-    expect(resolveFee(es, { hasItems: false, netAmount: 0, grams: 0 })).toEqual({
+    expect(resolveFee(es, { hasItems: false, netAmount: 0, grams: 0 })).toMatchObject({
       feeCents: 0,
       kind: "none",
     });
   });
 
   it("charges the return fee when money flows back to the customer", () => {
-    expect(resolveFee(es, { hasItems: true, netAmount: 42.5, grams: 0 })).toEqual({
+    expect(resolveFee(es, { hasItems: true, netAmount: 42.5, grams: 0 })).toMatchObject({
       feeCents: 400,
       kind: "return",
     });
   });
 
   it("charges the exchange fee when the customer owes money", () => {
-    expect(resolveFee(es, { hasItems: true, netAmount: -12, grams: 0 })).toEqual({
+    expect(resolveFee(es, { hasItems: true, netAmount: -12, grams: 0 })).toMatchObject({
       feeCents: 0,
       kind: "exchange",
     });
   });
 
   it("charges the exchange fee on an even swap", () => {
-    expect(resolveFee(TABLE.FR, { hasItems: true, netAmount: 0, grams: 0 })).toEqual({
+    expect(resolveFee(TABLE.FR, { hasItems: true, netAmount: 0, grams: 0 })).toMatchObject({
       feeCents: 600,
       kind: "exchange",
     });
@@ -146,14 +146,14 @@ describe("resolveFee — Rule A, by net amount", () => {
   // a pure exchange for a CHEAPER item leaves netAmount > 0, so Rule A
   // charges the return fee. Rule B charged the exchange fee here.
   it("charges the return fee on an exchange for a cheaper item", () => {
-    expect(resolveFee(TABLE.FR, { hasItems: true, netAmount: 5, grams: 0 })).toEqual({
+    expect(resolveFee(TABLE.FR, { hasItems: true, netAmount: 5, grams: 0 })).toMatchObject({
       feeCents: 900,
       kind: "return",
     });
   });
 
   it("ignores netAmount entirely when the basket is empty", () => {
-    expect(resolveFee(TABLE.FR, { hasItems: false, netAmount: 99, grams: 0 })).toEqual({
+    expect(resolveFee(TABLE.FR, { hasItems: false, netAmount: 99, grams: 0 })).toMatchObject({
       feeCents: 0,
       kind: "none",
     });
@@ -168,14 +168,14 @@ describe("resolveFee — Rule A, by net amount", () => {
     ];
 
     it("charges the heavier band's return fee for a heavy basket", () => {
-      expect(resolveFee(BANDED, { hasItems: true, netAmount: 50, grams: 2500 })).toEqual({
+      expect(resolveFee(BANDED, { hasItems: true, netAmount: 50, grams: 2500 })).toMatchObject({
         feeCents: 2100,
         kind: "return",
       });
     });
 
     it("charges the heavier band's exchange fee for a heavy even swap", () => {
-      expect(resolveFee(BANDED, { hasItems: true, netAmount: 0, grams: 2500 })).toEqual({
+      expect(resolveFee(BANDED, { hasItems: true, netAmount: 0, grams: 2500 })).toMatchObject({
         feeCents: 2000,
         kind: "exchange",
       });
@@ -193,10 +193,65 @@ describe("resolveFee — Rule A, by net amount", () => {
     });
 
     it("still charges nothing for an empty basket however heavy", () => {
-      expect(resolveFee(BANDED, { hasItems: false, netAmount: 0, grams: 9999 })).toEqual({
+      expect(resolveFee(BANDED, { hasItems: false, netAmount: 0, grams: 9999 })).toMatchObject({
         feeCents: 0,
         kind: "none",
+        returnLegCents: 0,
+        outboundLegCents: 0,
       });
+    });
+  });
+
+  describe("shipping legs, for display", () => {
+    // An exchange pays for two journeys, so the summary shows both. The split
+    // is derived rather than stored — outbound is whatever the exchange fee
+    // exceeds the return fee by.
+    const BANDS = [
+      { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 1100, exchangeFeeCents: 1820 },
+    ];
+
+    it("reports one leg for a return", () => {
+      const fee = resolveFee(BANDS, { hasItems: true, netAmount: 40, grams: 400 });
+      expect(fee).toMatchObject({
+        kind: "return",
+        feeCents: 1100,
+        returnLegCents: 1100,
+        outboundLegCents: 0,
+      });
+    });
+
+    it("splits an exchange into the parcel back and the replacement out", () => {
+      const fee = resolveFee(BANDS, { hasItems: true, netAmount: -5, grams: 400 });
+      expect(fee).toMatchObject({
+        kind: "exchange",
+        feeCents: 1820,
+        returnLegCents: 1100,
+        outboundLegCents: 720,
+      });
+    });
+
+    it("always has the legs add up to exactly what is charged", () => {
+      // The two rendered lines must reconcile to the amount taken, or the
+      // breakdown is lying about the total.
+      for (const netAmount of [50, 0, -50]) {
+        for (const grams of [0, 500, 4000]) {
+          const fee = resolveFee(BANDS, { hasItems: true, netAmount, grams });
+          expect(fee.returnLegCents + fee.outboundLegCents).toBe(fee.feeCents);
+        }
+      }
+    });
+
+    it("keeps the legs reconciling even if a row makes an exchange cheaper", () => {
+      // Nothing should be able to produce a negative line. A hand-edited
+      // dashboard row could invert the two fees; the whole amount then shows
+      // as the return leg rather than as a negative delivery.
+      const inverted = [
+        { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 1100, exchangeFeeCents: 900 },
+      ];
+      const fee = resolveFee(inverted, { hasItems: true, netAmount: -5, grams: 400 });
+      expect(fee.outboundLegCents).toBe(0);
+      expect(fee.returnLegCents).toBe(900);
+      expect(fee.returnLegCents + fee.outboundLegCents).toBe(fee.feeCents);
     });
   });
 });

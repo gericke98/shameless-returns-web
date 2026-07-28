@@ -3,29 +3,52 @@
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 
-const ShippingTitle = () => {
-  const t = useT();
-  return (
-    <h6 className="text-sm tracking-wide font-light">{t.summary.shipping}</h6>
-  );
-};
-
 // Previously `- {shippingCost}.00 €`, which hardcoded the decimals: a 4.50 fee
 // rendered as "4.5.00 €". formatEuros also gets the separator right per locale.
-const ShippingCost = ({ shippingCost }: { shippingCost: number }) => {
+const Line = ({ label, amount }: { label: string; amount: number }) => {
   const locale = useLocale();
   return (
-    <h6 className="text-sm font-light">- {formatEuros(shippingCost, locale)}</h6>
+    <div className="w-full h-full flex flex-row justify-between items-center">
+      <h6 className="text-sm tracking-wide font-light">{label}</h6>
+      <h6 className="text-sm font-light">- {formatEuros(amount, locale)}</h6>
+    </div>
   );
 };
 
-export const SummaryShipping = ({ shippingCost }: { shippingCost: number }) => {
+/**
+ * The shipping the customer is charged, broken into the journeys it pays for.
+ *
+ * A return is one journey and shows one line. An exchange is two — the
+ * customer's parcel back and the replacement out — and shows both, because a
+ * single line reading "Shipping 18.20 €" invites exactly the question this
+ * answers. The legs come from `resolveFee` and are derived by subtraction, so
+ * they add up to precisely the amount charged.
+ *
+ * An `outboundCost` of 0 means a pure return, not a free delivery, so the
+ * second line is omitted rather than rendered as zero. The first line is then
+ * labelled plain "Shipping": naming it "Return shipping" when there is no
+ * other leg to distinguish it from only raises the question of what the other
+ * one would have been.
+ */
+export const SummaryShipping = ({
+  returnCost,
+  outboundCost,
+}: {
+  returnCost: number;
+  outboundCost: number;
+}) => {
+  const t = useT();
+  const hasBothLegs = outboundCost > 0;
+
   return (
     <div className="w-full h-full flex flex-col pl-4 mt-4 gap-2">
-      <div className="w-full h-full flex flex-row justify-between items-center">
-        <ShippingTitle />
-        <ShippingCost shippingCost={shippingCost} />
-      </div>
+      <Line
+        label={hasBothLegs ? t.summary.returnShipping : t.summary.shipping}
+        amount={returnCost}
+      />
+      {hasBothLegs && (
+        <Line label={t.summary.deliveryShipping} amount={outboundCost} />
+      )}
     </div>
   );
 };

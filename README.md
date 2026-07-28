@@ -77,6 +77,23 @@ values behind any past charge are recoverable from git history. It carries the
 carrier's own cost alongside each fee, which is what makes the margin on a row
 auditable.
 
+**The fee is the carrier's cost rounded up to the whole euro.** No tiers, no
+subsidy, no anchor — which is what keeps it honest under the two orderings
+that matter: a heavier parcel is never cheaper than a lighter one, and a
+costlier destination is never cheaper than a cheaper one. Both are asserted in
+`tests/shippingFeeCoverage.test.ts`. An earlier scheme banded the ≤1 kg fee
+into four tiers and added the carrier's increment on top; the flattening let a
+costlier destination come out cheaper, which is a class of bug this rule does
+not have. Exchanges keep the historical €1.00 discount and so sit just below
+cost by design.
+
+The `*` fallback is derived as the most expensive fee at each band rather than
+chosen, so it cannot go stale when the carrier republishes. It is deliberately
+the worst case: an unpriced market should announce itself, not bleed quietly.
+The cost of that is Andorra, which is road-adjacent to Spain and would
+realistically be cheap, but appears in neither tariff tab and so inherits
+Israel's prices. It has never received an order.
+
 Weight matters because the carrier prices by it, steeply — a 2.5 kg return
 from the US costs €86.97 against €21.53 for the same parcel under a kilo.
 `max_grams` is the band's **inclusive** upper bound, bands are contiguous from

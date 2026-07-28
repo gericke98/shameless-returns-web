@@ -1,216 +1,216 @@
 country_code,zone,mode,max_grams,carrier_cost_cents,return_fee_cents,exchange_fee_cents
-AE,Emiratos Árabes Unidos,aéreo,1000,5026,2500,2400
-AE,Emiratos Árabes Unidos,aéreo,2000,6695,4200,4100
-AE,Emiratos Árabes Unidos,aéreo,3000,10084,7600,7500
-AE,Emiratos Árabes Unidos,aéreo,5000,10084,7600,7500
-AE,Emiratos Árabes Unidos,aéreo,2147483647,17280,14800,14700
-AR,Argentina,aéreo,1000,5026,2500,2400
-AR,Argentina,aéreo,2000,6695,4200,4100
-AR,Argentina,aéreo,3000,10084,7600,7500
-AR,Argentina,aéreo,5000,10084,7600,7500
-AR,Argentina,aéreo,2147483647,17280,14800,14700
-AT,Austria,terrestre,1000,1250,1500,1400
-AT,Austria,terrestre,2000,1402,1700,1600
-AT,Austria,terrestre,3000,1856,2100,2000
-AT,Austria,terrestre,5000,2726,3000,2900
-AT,Austria,terrestre,2147483647,3309,3600,3500
-AU,Australia,aéreo,1000,5026,2500,2400
-AU,Australia,aéreo,2000,6695,4200,4100
-AU,Australia,aéreo,3000,10084,7600,7500
-AU,Australia,aéreo,5000,10084,7600,7500
-AU,Australia,aéreo,2147483647,17280,14800,14700
-BE,Bélgica,terrestre,1000,1015,1000,900
-BE,Bélgica,terrestre,2000,1320,1300,1200
-BE,Bélgica,terrestre,3000,1346,1300,1200
-BE,Bélgica,terrestre,5000,2216,2200,2100
-BE,Bélgica,terrestre,2147483647,2509,2500,2400
-BG,Bulgaria,terrestre,1000,1786,1500,1400
-BG,Bulgaria,terrestre,2000,2180,1900,1800
-BG,Bulgaria,terrestre,3000,2182,1900,1800
-BG,Bulgaria,terrestre,5000,3057,2800,2700
-BG,Bulgaria,terrestre,2147483647,3635,3300,3200
-BR,Brasil,aéreo,1000,5026,2500,2400
-BR,Brasil,aéreo,2000,6695,4200,4100
-BR,Brasil,aéreo,3000,10084,7600,7500
-BR,Brasil,aéreo,5000,10084,7600,7500
-BR,Brasil,aéreo,2147483647,17280,14800,14700
-CA,Canadá,aéreo,1000,4519,2500,2400
-CA,Canadá,aéreo,2000,6635,4600,4500
-CA,Canadá,aéreo,3000,9599,7600,7500
-CA,Canadá,aéreo,5000,9603,7600,7500
-CA,Canadá,aéreo,2147483647,15826,13800,13700
-CH,Suiza,aéreo,1000,4310,2500,2400
-CH,Suiza,aéreo,2000,5135,3300,3200
-CH,Suiza,aéreo,3000,7115,5300,5200
-CH,Suiza,aéreo,5000,7115,5300,5200
-CH,Suiza,aéreo,2147483647,11120,9300,9200
-CL,Chile,aéreo,1000,5026,2500,2400
-CL,Chile,aéreo,2000,6695,4200,4100
-CL,Chile,aéreo,3000,10084,7600,7500
-CL,Chile,aéreo,5000,10084,7600,7500
-CL,Chile,aéreo,2147483647,17280,14800,14700
-CO,Colombia,aéreo,1000,5026,2500,2400
-CO,Colombia,aéreo,2000,6695,4200,4100
-CO,Colombia,aéreo,3000,10084,7600,7500
-CO,Colombia,aéreo,5000,10084,7600,7500
-CO,Colombia,aéreo,2147483647,17280,14800,14700
-CY,Chipre,aéreo,1000,5375,2500,2400
-CY,Chipre,aéreo,2000,7189,4300,4200
-CY,Chipre,aéreo,3000,11149,8300,8200
-CY,Chipre,aéreo,5000,11216,8300,8200
-CY,Chipre,aéreo,2147483647,18751,15900,15800
-CZ,Chequia,terrestre,1000,1250,1500,1400
-CZ,Chequia,terrestre,2000,1402,1700,1600
-CZ,Chequia,terrestre,3000,1856,2100,2000
-CZ,Chequia,terrestre,5000,2726,3000,2900
-CZ,Chequia,terrestre,2147483647,3309,3600,3500
-DE,Alemania,terrestre,1000,1015,1000,900
-DE,Alemania,terrestre,2000,1318,1300,1200
-DE,Alemania,terrestre,3000,1321,1300,1200
+AE,Emiratos Árabes Unidos,aéreo,1000,5026,5100,5000
+AE,Emiratos Árabes Unidos,aéreo,2000,6695,6700,6600
+AE,Emiratos Árabes Unidos,aéreo,3000,10084,10100,10000
+AE,Emiratos Árabes Unidos,aéreo,5000,10084,10100,10000
+AE,Emiratos Árabes Unidos,aéreo,2147483647,17280,17300,17200
+AR,Argentina,aéreo,1000,5026,5100,5000
+AR,Argentina,aéreo,2000,6695,6700,6600
+AR,Argentina,aéreo,3000,10084,10100,10000
+AR,Argentina,aéreo,5000,10084,10100,10000
+AR,Argentina,aéreo,2147483647,17280,17300,17200
+AT,Austria,terrestre,1000,1250,1300,1200
+AT,Austria,terrestre,2000,1402,1500,1400
+AT,Austria,terrestre,3000,1856,1900,1800
+AT,Austria,terrestre,5000,2726,2800,2700
+AT,Austria,terrestre,2147483647,3309,3400,3300
+AU,Australia,aéreo,1000,5026,5100,5000
+AU,Australia,aéreo,2000,6695,6700,6600
+AU,Australia,aéreo,3000,10084,10100,10000
+AU,Australia,aéreo,5000,10084,10100,10000
+AU,Australia,aéreo,2147483647,17280,17300,17200
+BE,Bélgica,terrestre,1000,1015,1100,1000
+BE,Bélgica,terrestre,2000,1320,1400,1300
+BE,Bélgica,terrestre,3000,1346,1400,1300
+BE,Bélgica,terrestre,5000,2216,2300,2200
+BE,Bélgica,terrestre,2147483647,2509,2600,2500
+BG,Bulgaria,terrestre,1000,1786,1800,1700
+BG,Bulgaria,terrestre,2000,2180,2200,2100
+BG,Bulgaria,terrestre,3000,2182,2200,2100
+BG,Bulgaria,terrestre,5000,3057,3100,3000
+BG,Bulgaria,terrestre,2147483647,3635,3700,3600
+BR,Brasil,aéreo,1000,5026,5100,5000
+BR,Brasil,aéreo,2000,6695,6700,6600
+BR,Brasil,aéreo,3000,10084,10100,10000
+BR,Brasil,aéreo,5000,10084,10100,10000
+BR,Brasil,aéreo,2147483647,17280,17300,17200
+CA,Canadá,aéreo,1000,4519,4600,4500
+CA,Canadá,aéreo,2000,6635,6700,6600
+CA,Canadá,aéreo,3000,9599,9600,9500
+CA,Canadá,aéreo,5000,9603,9700,9600
+CA,Canadá,aéreo,2147483647,15826,15900,15800
+CH,Suiza,aéreo,1000,4310,4400,4300
+CH,Suiza,aéreo,2000,5135,5200,5100
+CH,Suiza,aéreo,3000,7115,7200,7100
+CH,Suiza,aéreo,5000,7115,7200,7100
+CH,Suiza,aéreo,2147483647,11120,11200,11100
+CL,Chile,aéreo,1000,5026,5100,5000
+CL,Chile,aéreo,2000,6695,6700,6600
+CL,Chile,aéreo,3000,10084,10100,10000
+CL,Chile,aéreo,5000,10084,10100,10000
+CL,Chile,aéreo,2147483647,17280,17300,17200
+CO,Colombia,aéreo,1000,5026,5100,5000
+CO,Colombia,aéreo,2000,6695,6700,6600
+CO,Colombia,aéreo,3000,10084,10100,10000
+CO,Colombia,aéreo,5000,10084,10100,10000
+CO,Colombia,aéreo,2147483647,17280,17300,17200
+CY,Chipre,aéreo,1000,5375,5400,5300
+CY,Chipre,aéreo,2000,7189,7200,7100
+CY,Chipre,aéreo,3000,11149,11200,11100
+CY,Chipre,aéreo,5000,11216,11300,11200
+CY,Chipre,aéreo,2147483647,18751,18800,18700
+CZ,Chequia,terrestre,1000,1250,1300,1200
+CZ,Chequia,terrestre,2000,1402,1500,1400
+CZ,Chequia,terrestre,3000,1856,1900,1800
+CZ,Chequia,terrestre,5000,2726,2800,2700
+CZ,Chequia,terrestre,2147483647,3309,3400,3300
+DE,Alemania,terrestre,1000,1015,1100,1000
+DE,Alemania,terrestre,2000,1318,1400,1300
+DE,Alemania,terrestre,3000,1321,1400,1300
 DE,Alemania,terrestre,5000,1799,1800,1700
-DE,Alemania,terrestre,2147483647,2146,2100,2000
-DK,Dinamarca,terrestre,1000,1016,1000,900
-DK,Dinamarca,terrestre,2000,1318,1300,1200
-DK,Dinamarca,terrestre,3000,1320,1300,1200
+DE,Alemania,terrestre,2147483647,2146,2200,2100
+DK,Dinamarca,terrestre,1000,1016,1100,1000
+DK,Dinamarca,terrestre,2000,1318,1400,1300
+DK,Dinamarca,terrestre,3000,1320,1400,1300
 DK,Dinamarca,terrestre,5000,2474,2500,2400
-DK,Dinamarca,terrestre,2147483647,2727,2700,2600
-EE,Estonia,terrestre,1000,1786,1500,1400
-EE,Estonia,terrestre,2000,2180,1900,1800
-EE,Estonia,terrestre,3000,2182,1900,1800
-EE,Estonia,terrestre,5000,3057,2800,2700
-EE,Estonia,terrestre,2147483647,3635,3300,3200
+DK,Dinamarca,terrestre,2147483647,2727,2800,2700
+EE,Estonia,terrestre,1000,1786,1800,1700
+EE,Estonia,terrestre,2000,2180,2200,2100
+EE,Estonia,terrestre,3000,2182,2200,2100
+EE,Estonia,terrestre,5000,3057,3100,3000
+EE,Estonia,terrestre,2147483647,3635,3700,3600
 ES,España Peninsular,terrestre,1000,401,500,400
 ES,España Peninsular,terrestre,2000,416,500,400
-ES,España Peninsular,terrestre,3000,472,600,500
+ES,España Peninsular,terrestre,3000,472,500,400
 ES,España Peninsular,terrestre,5000,602,700,600
 ES,España Peninsular,terrestre,2147483647,817,900,800
-FI,Finlandia,terrestre,1000,1016,1000,900
-FI,Finlandia,terrestre,2000,1318,1300,1200
-FI,Finlandia,terrestre,3000,1320,1300,1200
+FI,Finlandia,terrestre,1000,1016,1100,1000
+FI,Finlandia,terrestre,2000,1318,1400,1300
+FI,Finlandia,terrestre,3000,1320,1400,1300
 FI,Finlandia,terrestre,5000,2474,2500,2400
-FI,Finlandia,terrestre,2147483647,2727,2700,2600
-FR,Francia,terrestre,1000,1053,1000,900
-FR,Francia,terrestre,2000,1320,1300,1200
-FR,Francia,terrestre,3000,1400,1300,1200
-FR,Francia,terrestre,5000,2037,2000,1900
-FR,Francia,terrestre,2147483647,2528,2500,2400
-GB,Reino Unido,terrestre,1000,1660,1500,1400
-GB,Reino Unido,terrestre,2000,1861,1700,1600
-GB,Reino Unido,terrestre,3000,1868,1700,1600
-GB,Reino Unido,terrestre,5000,2067,1900,1800
-GB,Reino Unido,terrestre,2147483647,2506,2300,2200
-GR,Grecia,terrestre,1000,1250,1500,1400
-GR,Grecia,terrestre,2000,1402,1700,1600
-GR,Grecia,terrestre,3000,1856,2100,2000
-GR,Grecia,terrestre,5000,2726,3000,2900
-GR,Grecia,terrestre,2147483647,3309,3600,3500
-HR,Croacia,terrestre,1000,1786,1500,1400
-HR,Croacia,terrestre,2000,2180,1900,1800
-HR,Croacia,terrestre,3000,2182,1900,1800
-HR,Croacia,terrestre,5000,3057,2800,2700
-HR,Croacia,terrestre,2147483647,3635,3300,3200
-HU,Hungría,terrestre,1000,1786,1500,1400
-HU,Hungría,terrestre,2000,2180,1900,1800
-HU,Hungría,terrestre,3000,2182,1900,1800
-HU,Hungría,terrestre,5000,3057,2800,2700
-HU,Hungría,terrestre,2147483647,3635,3300,3200
-IE,Irlanda,aéreo,1000,5375,2500,2400
-IE,Irlanda,aéreo,2000,7189,4300,4200
-IE,Irlanda,aéreo,3000,11149,8300,8200
-IE,Irlanda,aéreo,5000,11216,8300,8200
-IE,Irlanda,aéreo,2147483647,18751,15900,15800
-IL,Israel,aéreo,1000,8248,2500,2400
-IL,Israel,aéreo,2000,9932,4200,4100
-IL,Israel,aéreo,3000,13351,7600,7500
-IL,Israel,aéreo,5000,13346,7600,7500
-IL,Israel,aéreo,2147483647,20604,14900,14800
-IS,Islandia,aéreo,1000,5268,2500,2400
-IS,Islandia,aéreo,2000,7006,4200,4100
-IS,Islandia,aéreo,3000,10836,8100,8000
-IS,Islandia,aéreo,5000,10831,8100,8000
-IS,Islandia,aéreo,2147483647,18005,15200,15100
-IT,Italia,terrestre,1000,1015,1000,900
-IT,Italia,terrestre,2000,1318,1300,1200
-IT,Italia,terrestre,3000,1321,1300,1200
+FI,Finlandia,terrestre,2147483647,2727,2800,2700
+FR,Francia,terrestre,1000,1053,1100,1000
+FR,Francia,terrestre,2000,1320,1400,1300
+FR,Francia,terrestre,3000,1400,1400,1300
+FR,Francia,terrestre,5000,2037,2100,2000
+FR,Francia,terrestre,2147483647,2528,2600,2500
+GB,Reino Unido,terrestre,1000,1660,1700,1600
+GB,Reino Unido,terrestre,2000,1861,1900,1800
+GB,Reino Unido,terrestre,3000,1868,1900,1800
+GB,Reino Unido,terrestre,5000,2067,2100,2000
+GB,Reino Unido,terrestre,2147483647,2506,2600,2500
+GR,Grecia,terrestre,1000,1250,1300,1200
+GR,Grecia,terrestre,2000,1402,1500,1400
+GR,Grecia,terrestre,3000,1856,1900,1800
+GR,Grecia,terrestre,5000,2726,2800,2700
+GR,Grecia,terrestre,2147483647,3309,3400,3300
+HR,Croacia,terrestre,1000,1786,1800,1700
+HR,Croacia,terrestre,2000,2180,2200,2100
+HR,Croacia,terrestre,3000,2182,2200,2100
+HR,Croacia,terrestre,5000,3057,3100,3000
+HR,Croacia,terrestre,2147483647,3635,3700,3600
+HU,Hungría,terrestre,1000,1786,1800,1700
+HU,Hungría,terrestre,2000,2180,2200,2100
+HU,Hungría,terrestre,3000,2182,2200,2100
+HU,Hungría,terrestre,5000,3057,3100,3000
+HU,Hungría,terrestre,2147483647,3635,3700,3600
+IE,Irlanda,aéreo,1000,5375,5400,5300
+IE,Irlanda,aéreo,2000,7189,7200,7100
+IE,Irlanda,aéreo,3000,11149,11200,11100
+IE,Irlanda,aéreo,5000,11216,11300,11200
+IE,Irlanda,aéreo,2147483647,18751,18800,18700
+IL,Israel,aéreo,1000,8248,8300,8200
+IL,Israel,aéreo,2000,9932,10000,9900
+IL,Israel,aéreo,3000,13351,13400,13300
+IL,Israel,aéreo,5000,13346,13400,13300
+IL,Israel,aéreo,2147483647,20604,20700,20600
+IS,Islandia,aéreo,1000,5268,5300,5200
+IS,Islandia,aéreo,2000,7006,7100,7000
+IS,Islandia,aéreo,3000,10836,10900,10800
+IS,Islandia,aéreo,5000,10831,10900,10800
+IS,Islandia,aéreo,2147483647,18005,18100,18000
+IT,Italia,terrestre,1000,1015,1100,1000
+IT,Italia,terrestre,2000,1318,1400,1300
+IT,Italia,terrestre,3000,1321,1400,1300
 IT,Italia,terrestre,5000,1799,1800,1700
-IT,Italia,terrestre,2147483647,2146,2100,2000
-JP,Japón,aéreo,1000,5026,2500,2400
-JP,Japón,aéreo,2000,6695,4200,4100
-JP,Japón,aéreo,3000,10084,7600,7500
-JP,Japón,aéreo,5000,10084,7600,7500
-JP,Japón,aéreo,2147483647,17280,14800,14700
-LT,Lituania,terrestre,1000,1786,1500,1400
-LT,Lituania,terrestre,2000,2180,1900,1800
-LT,Lituania,terrestre,3000,2182,1900,1800
-LT,Lituania,terrestre,5000,3057,2800,2700
-LT,Lituania,terrestre,2147483647,3635,3300,3200
-LU,Luxemburgo,terrestre,1000,1250,1500,1400
-LU,Luxemburgo,terrestre,2000,1402,1700,1600
-LU,Luxemburgo,terrestre,3000,1856,2100,2000
-LU,Luxemburgo,terrestre,5000,2726,3000,2900
-LU,Luxemburgo,terrestre,2147483647,3309,3600,3500
-LV,Letonia,terrestre,1000,1786,1500,1400
-LV,Letonia,terrestre,2000,2180,1900,1800
-LV,Letonia,terrestre,3000,2182,1900,1800
-LV,Letonia,terrestre,5000,3057,2800,2700
-LV,Letonia,terrestre,2147483647,3635,3300,3200
-MT,Malta,aéreo,1000,5375,2500,2400
-MT,Malta,aéreo,2000,7189,4300,4200
-MT,Malta,aéreo,3000,11149,8300,8200
-MT,Malta,aéreo,5000,11216,8300,8200
-MT,Malta,aéreo,2147483647,18751,15900,15800
-MX,México,aéreo,1000,4519,2500,2400
-MX,México,aéreo,2000,6635,4600,4500
-MX,México,aéreo,3000,9599,7600,7500
-MX,México,aéreo,5000,9603,7600,7500
-MX,México,aéreo,2147483647,15826,13800,13700
-NL,Países Bajos,terrestre,1000,1015,1000,900
-NL,Países Bajos,terrestre,2000,1320,1300,1200
-NL,Países Bajos,terrestre,3000,1346,1300,1200
-NL,Países Bajos,terrestre,5000,2216,2200,2100
-NL,Países Bajos,terrestre,2147483647,2509,2500,2400
-NO,Noruega,aéreo,1000,4310,2500,2400
-NO,Noruega,aéreo,2000,5135,3300,3200
-NO,Noruega,aéreo,3000,7115,5300,5200
-NO,Noruega,aéreo,5000,7115,5300,5200
-NO,Noruega,aéreo,2147483647,11120,9300,9200
-PL,Polonia,terrestre,1000,1250,1500,1400
-PL,Polonia,terrestre,2000,1402,1700,1600
-PL,Polonia,terrestre,3000,1856,2100,2000
-PL,Polonia,terrestre,5000,2726,3000,2900
-PL,Polonia,terrestre,2147483647,3309,3600,3500
+IT,Italia,terrestre,2147483647,2146,2200,2100
+JP,Japón,aéreo,1000,5026,5100,5000
+JP,Japón,aéreo,2000,6695,6700,6600
+JP,Japón,aéreo,3000,10084,10100,10000
+JP,Japón,aéreo,5000,10084,10100,10000
+JP,Japón,aéreo,2147483647,17280,17300,17200
+LT,Lituania,terrestre,1000,1786,1800,1700
+LT,Lituania,terrestre,2000,2180,2200,2100
+LT,Lituania,terrestre,3000,2182,2200,2100
+LT,Lituania,terrestre,5000,3057,3100,3000
+LT,Lituania,terrestre,2147483647,3635,3700,3600
+LU,Luxemburgo,terrestre,1000,1250,1300,1200
+LU,Luxemburgo,terrestre,2000,1402,1500,1400
+LU,Luxemburgo,terrestre,3000,1856,1900,1800
+LU,Luxemburgo,terrestre,5000,2726,2800,2700
+LU,Luxemburgo,terrestre,2147483647,3309,3400,3300
+LV,Letonia,terrestre,1000,1786,1800,1700
+LV,Letonia,terrestre,2000,2180,2200,2100
+LV,Letonia,terrestre,3000,2182,2200,2100
+LV,Letonia,terrestre,5000,3057,3100,3000
+LV,Letonia,terrestre,2147483647,3635,3700,3600
+MT,Malta,aéreo,1000,5375,5400,5300
+MT,Malta,aéreo,2000,7189,7200,7100
+MT,Malta,aéreo,3000,11149,11200,11100
+MT,Malta,aéreo,5000,11216,11300,11200
+MT,Malta,aéreo,2147483647,18751,18800,18700
+MX,México,aéreo,1000,4519,4600,4500
+MX,México,aéreo,2000,6635,6700,6600
+MX,México,aéreo,3000,9599,9600,9500
+MX,México,aéreo,5000,9603,9700,9600
+MX,México,aéreo,2147483647,15826,15900,15800
+NL,Países Bajos,terrestre,1000,1015,1100,1000
+NL,Países Bajos,terrestre,2000,1320,1400,1300
+NL,Países Bajos,terrestre,3000,1346,1400,1300
+NL,Países Bajos,terrestre,5000,2216,2300,2200
+NL,Países Bajos,terrestre,2147483647,2509,2600,2500
+NO,Noruega,aéreo,1000,4310,4400,4300
+NO,Noruega,aéreo,2000,5135,5200,5100
+NO,Noruega,aéreo,3000,7115,7200,7100
+NO,Noruega,aéreo,5000,7115,7200,7100
+NO,Noruega,aéreo,2147483647,11120,11200,11100
+PL,Polonia,terrestre,1000,1250,1300,1200
+PL,Polonia,terrestre,2000,1402,1500,1400
+PL,Polonia,terrestre,3000,1856,1900,1800
+PL,Polonia,terrestre,5000,2726,2800,2700
+PL,Polonia,terrestre,2147483647,3309,3400,3300
 PT,Portugal,terrestre,1000,903,1000,900
-PT,Portugal,terrestre,2000,1070,1200,1100
-PT,Portugal,terrestre,3000,1087,1200,1100
+PT,Portugal,terrestre,2000,1070,1100,1000
+PT,Portugal,terrestre,3000,1087,1100,1000
 PT,Portugal,terrestre,5000,1605,1700,1600
 PT,Portugal,terrestre,2147483647,1943,2000,1900
-RO,Rumanía,terrestre,1000,1786,1500,1400
-RO,Rumanía,terrestre,2000,2180,1900,1800
-RO,Rumanía,terrestre,3000,2182,1900,1800
-RO,Rumanía,terrestre,5000,3057,2800,2700
-RO,Rumanía,terrestre,2147483647,3635,3300,3200
-SE,Suecia,terrestre,1000,1250,1500,1400
-SE,Suecia,terrestre,2000,1402,1700,1600
-SE,Suecia,terrestre,3000,1856,2100,2000
-SE,Suecia,terrestre,5000,2726,3000,2900
-SE,Suecia,terrestre,2147483647,3309,3600,3500
-SI,Eslovenia,terrestre,1000,1786,1500,1400
-SI,Eslovenia,terrestre,2000,2180,1900,1800
-SI,Eslovenia,terrestre,3000,2182,1900,1800
-SI,Eslovenia,terrestre,5000,3057,2800,2700
-SI,Eslovenia,terrestre,2147483647,3635,3300,3200
-SK,Eslovaquia,terrestre,1000,1786,1500,1400
-SK,Eslovaquia,terrestre,2000,2180,1900,1800
-SK,Eslovaquia,terrestre,3000,2182,1900,1800
-SK,Eslovaquia,terrestre,5000,3057,2800,2700
-SK,Eslovaquia,terrestre,2147483647,3635,3300,3200
-US,Estados Unidos de América,aéreo,1000,2153,2500,2400
-US,Estados Unidos de América,aéreo,2000,2250,2600,2500
-US,Estados Unidos de América,aéreo,3000,8697,9000,8900
-US,Estados Unidos de América,aéreo,5000,8699,9000,8900
-US,Estados Unidos de América,aéreo,2147483647,13715,14100,14000
-UY,Uruguay,aéreo,1000,5026,2500,2400
-UY,Uruguay,aéreo,2000,6695,4200,4100
-UY,Uruguay,aéreo,3000,10084,7600,7500
-UY,Uruguay,aéreo,5000,10084,7600,7500
-UY,Uruguay,aéreo,2147483647,17280,14800,14700
+RO,Rumanía,terrestre,1000,1786,1800,1700
+RO,Rumanía,terrestre,2000,2180,2200,2100
+RO,Rumanía,terrestre,3000,2182,2200,2100
+RO,Rumanía,terrestre,5000,3057,3100,3000
+RO,Rumanía,terrestre,2147483647,3635,3700,3600
+SE,Suecia,terrestre,1000,1250,1300,1200
+SE,Suecia,terrestre,2000,1402,1500,1400
+SE,Suecia,terrestre,3000,1856,1900,1800
+SE,Suecia,terrestre,5000,2726,2800,2700
+SE,Suecia,terrestre,2147483647,3309,3400,3300
+SI,Eslovenia,terrestre,1000,1786,1800,1700
+SI,Eslovenia,terrestre,2000,2180,2200,2100
+SI,Eslovenia,terrestre,3000,2182,2200,2100
+SI,Eslovenia,terrestre,5000,3057,3100,3000
+SI,Eslovenia,terrestre,2147483647,3635,3700,3600
+SK,Eslovaquia,terrestre,1000,1786,1800,1700
+SK,Eslovaquia,terrestre,2000,2180,2200,2100
+SK,Eslovaquia,terrestre,3000,2182,2200,2100
+SK,Eslovaquia,terrestre,5000,3057,3100,3000
+SK,Eslovaquia,terrestre,2147483647,3635,3700,3600
+US,Estados Unidos de América,aéreo,1000,2153,2200,2100
+US,Estados Unidos de América,aéreo,2000,2250,2300,2200
+US,Estados Unidos de América,aéreo,3000,8697,8700,8600
+US,Estados Unidos de América,aéreo,5000,8699,8700,8600
+US,Estados Unidos de América,aéreo,2147483647,13715,13800,13700
+UY,Uruguay,aéreo,1000,5026,5100,5000
+UY,Uruguay,aéreo,2000,6695,6700,6600
+UY,Uruguay,aéreo,3000,10084,10100,10000
+UY,Uruguay,aéreo,5000,10084,10100,10000
+UY,Uruguay,aéreo,2147483647,17280,17300,17200

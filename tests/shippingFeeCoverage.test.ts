@@ -132,19 +132,40 @@ describe("shipping fee coverage", () => {
     expect(Array.from(shapes)).toHaveLength(1);
   });
 
-  // NOT asserted: that within a band, a costlier destination is always
-  // charged more than a cheaper one.
-  //
-  // Banding deliberately maps a range of costs onto one price — the <=1kg
-  // band covers carrier costs from 2153 (US) to 8248 (IL) at a single 2500 —
-  // so ordering by cost is already flattened before weight enters. Heavier
-  // bands then add each carrier's own raw increment on top of that flattened
-  // base, which can reorder neighbours: AE costs 6695 at 2kg and is charged
-  // 4200, while MX costs 6635 and is charged 4600.
-  //
-  // Restoring strict cross-country ordering would mean un-banding the <=1kg
-  // row, i.e. charging Israel its real 8248 rather than the agreed 2500. That
-  // is a pricing decision, not a test fix.
+  it("never prices a cheaper destination above a more expensive one", () => {
+    // Holds because every fee is the carrier's own cost rounded up to the
+    // whole euro, and ceil is monotonic. It did NOT hold under the earlier
+    // scheme, which banded the <=1kg fee into four tiers and then added raw
+    // increments on top: that flattening let AE (cost 6695 at 2kg) come out
+    // cheaper than MX (cost 6635). Charging cost directly removes the class
+    // of bug rather than papering over the instance.
+    const byBand = new Map<number, TariffRow[]>();
+    for (const row of tariff) {
+      byBand.set(row.maxGrams, [...(byBand.get(row.maxGrams) ?? []), row]);
+    }
+
+    for (const [maxGrams, rows] of Array.from(byBand.entries())) {
+      const sorted = rows.sort((a, b) => a.carrierCostCents - b.carrierCostCents);
+      for (let i = 1; i < sorted.length; i++) {
+        expect(
+          sorted[i].returnFeeCents,
+          `at ${maxGrams}g: ${sorted[i].countryCode} (cost ${sorted[i].carrierCostCents}) ` +
+            `charged less than ${sorted[i - 1].countryCode} (cost ${sorted[i - 1].carrierCostCents})`
+        ).toBeGreaterThanOrEqual(sorted[i - 1].returnFeeCents);
+      }
+    }
+  });
+
+  it("covers the carrier's cost on every return", () => {
+    // The whole point of charging cost: no row may be below it. Exchanges keep
+    // the historical EUR 1.00 discount and so are allowed to sit just under.
+    for (const row of tariff) {
+      expect(
+        row.returnFeeCents,
+        `${row.countryCode} at ${row.maxGrams}g is below carrier cost`
+      ).toBeGreaterThanOrEqual(row.carrierCostCents);
+    }
+  });
 
   it("keeps peninsular Spain the cheapest destination in every band", () => {
     // The one ordering that is a business invariant rather than an artefact:

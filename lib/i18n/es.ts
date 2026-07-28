@@ -93,6 +93,8 @@ export const es = {
     newProducts: "Nuevos productos",
     andLogistics: "& Logística",
     shipping: "Envío",
+    returnShipping: "Envío de devolución",
+    deliveryShipping: "Envío de los nuevos productos",
     bonus: "Bonificaciones - Crédito en tienda",
     totalRefund: "Total reembolso",
     totalToPay: "Total a pagar",

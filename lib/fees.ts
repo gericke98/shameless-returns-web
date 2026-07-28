@@ -93,16 +93,45 @@ export function feesForWeight(bands: CountryBands, grams: number): CountryFees {
 export function resolveFee(
   bands: CountryBands,
   basket: Basket
-): { feeCents: number; kind: FeeKind } {
-  if (!basket.hasItems) return { feeCents: 0, kind: "none" };
+): {
+  feeCents: number;
+  kind: FeeKind;
+  /** The customer's parcel coming back. Always present when a fee applies. */
+  returnLegCents: number;
+  /** Delivering the replacement. Zero unless this is an exchange. */
+  outboundLegCents: number;
+} {
+  if (!basket.hasItems) {
+    return { feeCents: 0, kind: "none", returnLegCents: 0, outboundLegCents: 0 };
+  }
   // Weight selects the band; Rule A then selects which of its two fees
   // applies. The two are independent — a heavier parcel does not change
   // whether this is a return or an exchange.
   const fees = feesForWeight(bands, basket.grams);
+
   if (basket.netAmount > 0) {
-    return { feeCents: fees.returnFeeCents, kind: "return" };
+    return {
+      feeCents: fees.returnFeeCents,
+      kind: "return",
+      returnLegCents: fees.returnFeeCents,
+      outboundLegCents: 0,
+    };
   }
-  return { feeCents: fees.exchangeFeeCents, kind: "exchange" };
+
+  // An exchange is two journeys and its fee is the sum of both, so the split
+  // is recoverable rather than stored. Clamped and derived by subtraction so
+  // the two legs always add up to exactly what is charged, even if a
+  // hand-edited row ever made the exchange fee the cheaper of the two.
+  const outboundLegCents = Math.max(
+    0,
+    fees.exchangeFeeCents - fees.returnFeeCents
+  );
+  return {
+    feeCents: fees.exchangeFeeCents,
+    kind: "exchange",
+    returnLegCents: fees.exchangeFeeCents - outboundLegCents,
+    outboundLegCents,
+  };
 }
 
 /**

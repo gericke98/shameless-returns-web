@@ -62,8 +62,14 @@ export const SummaryComponent = ({
   const totalPriceCambio = basket.exchangePrice;
 
   const fees = useFees();
-  const { feeCents } = resolveFee(fees, basket);
+  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(
+    fees,
+    basket
+  );
   const shippingCost = centsToEuros(feeCents);
+  // Split for display only. The charge is feeCents; these two add up to it.
+  const returnLegCost = centsToEuros(returnLegCents);
+  const outboundLegCost = centsToEuros(outboundLegCents);
 
   const totalPrice = basket.netAmount - shippingCost;
 
@@ -166,7 +172,10 @@ export const SummaryComponent = ({
               />
             ))}
             {showsShipping && (
-                <SummaryShipping shippingCost={shippingCost} />
+                <SummaryShipping
+                  returnCost={returnLegCost}
+                  outboundCost={outboundLegCost}
+                />
               )}
           </AccordionContent>
         </AccordionItem>

@@ -92,6 +92,8 @@ export const en: Dictionary = {
     newProducts: "New items",
     andLogistics: "& Shipping",
     shipping: "Shipping",
+    returnShipping: "Return shipping",
+    deliveryShipping: "Delivery of new items",
     bonus: "Bonus - Store credit",
     totalRefund: "Total refund",
     totalToPay: "Total to pay",

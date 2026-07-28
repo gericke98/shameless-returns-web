@@ -134,6 +134,60 @@ export function resolveFee(
   };
 }
 
+/** One row of the Stripe checkout, mirroring a row of the on-site summary. */
+export type CheckoutLine = {
+  readonly kind:
+    | "difference"
+    | "shipping"
+    | "returnShipping"
+    | "deliveryShipping";
+  readonly amountCents: number;
+};
+
+/**
+ * Break the amount owed into the lines the summary showed.
+ *
+ * Stripe was sent a single "Returns & Exchanges Fee" carrying the whole total,
+ * which is wrong whenever the customer is also paying a price difference: swap
+ * a 39.90 item for a 59.90 one and 20.00 of that "fee" is the item, not
+ * shipping.
+ *
+ * Returns [] when the amount cannot be decomposed exactly — the caller then
+ * falls back to a single line. That happens when the basket carries a credit
+ * (a cheaper replacement leaves netAmount > 0, reducing the fee), because
+ * Stripe line items cannot be negative, and it would also catch a cent of
+ * float drift between the two ways of arriving at the total.
+ *
+ * The exact-sum check is the point: itemising must never change what is
+ * charged, only how it is described.
+ */
+export function checkoutLines(
+  basket: Basket,
+  fee: { returnLegCents: number; outboundLegCents: number },
+  amountCents: number
+): readonly CheckoutLine[] {
+  const differenceCents = Math.round(Math.max(0, -basket.netAmount) * 100);
+
+  const lines: CheckoutLine[] = [];
+  if (differenceCents > 0) {
+    lines.push({ kind: "difference", amountCents: differenceCents });
+  }
+  if (fee.returnLegCents > 0) {
+    lines.push({
+      // Only worth calling it the *return* leg when there is another leg to
+      // tell it apart from.
+      kind: fee.outboundLegCents > 0 ? "returnShipping" : "shipping",
+      amountCents: fee.returnLegCents,
+    });
+  }
+  if (fee.outboundLegCents > 0) {
+    lines.push({ kind: "deliveryShipping", amountCents: fee.outboundLegCents });
+  }
+
+  const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
+  return total === amountCents && lines.length > 0 ? lines : [];
+}
+
 /**
  * Do not chain arithmetic on the result — summing two euro values converted
  * here can reintroduce binary float drift, exactly what the "money is

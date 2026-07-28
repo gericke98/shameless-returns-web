@@ -6,7 +6,14 @@ import { loadBasket } from "@/lib/loadBasket";
 import { normalizeCountry } from "@/lib/countries";
 import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
-import { centsToEuros, feesForCountry, resolveFee } from "@/lib/fees";
+import {
+  centsToEuros,
+  checkoutLines,
+  feesForCountry,
+  resolveFee,
+  type CheckoutLine,
+} from "@/lib/fees";
+import { dictionaries, readLocale } from "@/lib/i18n";
 
 function absoluteUrl(path: string) {
   return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
@@ -46,7 +53,7 @@ export const createStripeUrl = async (
     feeTable,
     resolveZone(order.shippingCountry, order.shippingZip)
   );
-  const { feeCents } = resolveFee(fees, basket);
+  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(fees, basket);
 
   // netAmount is what the customer is owed; the fee reduces it. A negative
   // total means the customer owes us that much.
@@ -62,24 +69,41 @@ export const createStripeUrl = async (
   // required" — the same contract as the >= 0 case above.
   if (amountCents < 50) return { data: null };
 
+  // Itemise the checkout the same way the on-site summary itemises it, so the
+  // customer is not asked to approve a single "fee" that silently bundles a
+  // price difference and two shipping legs. checkoutLines returns [] when the
+  // amount cannot be decomposed exactly, and the total is always amountCents
+  // either way — this changes the description, never the charge.
+  const locale = readLocale(order.locale);
+  const t = dictionaries[locale];
+  const LINE_LABEL: Record<CheckoutLine["kind"], string> = {
+    difference: t.summary.newProducts,
+    shipping: t.summary.shipping,
+    returnShipping: t.summary.returnShipping,
+    deliveryShipping: t.summary.deliveryShipping,
+  };
+
+  const lines = checkoutLines(basket, { returnLegCents, outboundLegCents }, amountCents);
+  const stripeLines = lines.length
+    ? lines.map((line) => ({ name: LINE_LABEL[line.kind], amountCents: line.amountCents }))
+    : [{ name: "Returns & Exchanges Fee", amountCents }];
+
   const isCreditMeta = isCredit ? "true" : "false";
   const stripeSession = await stripe.checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
     customer_email: email,
-    line_items: [
-      {
-        quantity: 1,
-        price_data: {
-          currency: "EUR",
-          product_data: {
-            name: "Returns & Exchanges Fee",
-            description: "Shameless Collective",
-          },
-          unit_amount: amountCents,
+    line_items: stripeLines.map((line) => ({
+      quantity: 1,
+      price_data: {
+        currency: "EUR",
+        product_data: {
+          name: line.name,
+          description: "Shameless Collective",
         },
+        unit_amount: line.amountCents,
       },
-    ],
+    })),
     metadata: {
       id: id,
       isCredit: isCreditMeta,

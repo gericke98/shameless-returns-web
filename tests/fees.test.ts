@@ -5,6 +5,7 @@ import {
   centsToEuros,
   feesForCountry,
   feesForWeight,
+  checkoutLines,
   resolveFee,
   type FeeTable,
 } from "@/lib/fees";
@@ -371,5 +372,64 @@ describe("parcel weight", () => {
     const items = Array.from({ length: 5 }, () => line({ action: "DEVOLUCIÓN" }));
     const b = valueBasket(items, [weighted("v1", 423)]);
     expect(b.grams).toBeGreaterThan(2000);
+  });
+});
+
+describe("checkoutLines", () => {
+  // Stripe used to get one "Returns & Exchanges Fee" carrying everything,
+  // including any price difference. These lines mirror the on-site summary so
+  // the customer approves the same breakdown they were shown.
+  const legs = (returnLegCents: number, outboundLegCents: number) => ({
+    returnLegCents,
+    outboundLegCents,
+  });
+  const basket = (netAmount: number) => ({ hasItems: true, netAmount, grams: 500 });
+
+  it("splits an even exchange into its two shipping legs", () => {
+    expect(checkoutLines(basket(0), legs(1100, 720), 1820)).toEqual([
+      { kind: "returnShipping", amountCents: 1100 },
+      { kind: "deliveryShipping", amountCents: 720 },
+    ]);
+  });
+
+  it("adds a line for the price difference on a dearer replacement", () => {
+    // 20.00 more for the new item, on top of the 18.20 of shipping.
+    expect(checkoutLines(basket(-20), legs(1100, 720), 3820)).toEqual([
+      { kind: "difference", amountCents: 2000 },
+      { kind: "returnShipping", amountCents: 1100 },
+      { kind: "deliveryShipping", amountCents: 720 },
+    ]);
+  });
+
+  it("calls it plain shipping on a return, with no second leg", () => {
+    expect(checkoutLines(basket(-5), legs(1100, 0), 1600)).toEqual([
+      { kind: "difference", amountCents: 500 },
+      { kind: "shipping", amountCents: 1100 },
+    ]);
+  });
+
+  it("declines to itemise when the basket carries a credit", () => {
+    // A cheaper replacement leaves netAmount > 0, which reduces the fee.
+    // Stripe line items cannot be negative, so the caller falls back to one
+    // line rather than charging a different total.
+    expect(checkoutLines(basket(5), legs(1100, 0), 600)).toEqual([]);
+  });
+
+  it("declines to itemise rather than charge a different total", () => {
+    // The guard that makes this safe: if the parts do not add up to the
+    // amount, emit nothing and let the caller send a single correct line.
+    expect(checkoutLines(basket(0), legs(1100, 720), 9999)).toEqual([]);
+  });
+
+  it("always sums to exactly the amount charged, or returns nothing", () => {
+    for (const netAmount of [-40, -20, -0.01, 0, 5, 40]) {
+      for (const [ret, out] of [[1100, 720], [500, 0], [8300, 2583]]) {
+        const amountCents = Math.round((ret + out) / 1 - netAmount * 100);
+        const lines = checkoutLines(basket(netAmount), legs(ret, out), amountCents);
+        if (lines.length === 0) continue;
+        const total = lines.reduce((s, l) => s + l.amountCents, 0);
+        expect(total, `netAmount=${netAmount} legs=${ret}/${out}`).toBe(amountCents);
+      }
+    }
   });
 });

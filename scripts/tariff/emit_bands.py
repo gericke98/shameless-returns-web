@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 XLSX = os.path.join(HERE, "tarifas.xlsx")
 OUT = os.path.join(ROOT, "data", "return-tariff.csv")
+OUTBOUND = os.path.join(ROOT, "data", "outbound-rates.csv")
 
 UNBOUNDED = 2147483647
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -110,9 +111,21 @@ def main():
     for key, zone, mode in SUB_ZONES:
         mapping.setdefault(key, (zone, mode))
 
+    # Outbound delivery, in EUR cents, from data/outbound-rates.csv (produced
+    # by outbound.mjs). An exchange is TWO journeys — the parcel back and the
+    # replacement out — so it costs the return leg plus a delivery. Before
+    # this, an exchange was charged EUR 1 LESS than a return, which is one
+    # journey, so the two-leg trip was the cheaper of the two.
+    with open(OUTBOUND, newline="") as fh:
+        outbound = {r["country_code"]: int(r["eur_cents"]) for r in csv.DictReader(fh)}
+
     out = [HEADER]
     for code in sorted(mapping):
         zone, mode = mapping[code]
+        if code not in outbound:
+            raise SystemExit(
+                f"{code} has no outbound rate — re-run scripts/tariff/outbound.mjs"
+            )
         previous = 0
         for max_grams, kg in BANDS:
             cost = cost_at(zone, kg)
@@ -122,7 +135,10 @@ def main():
             # the parcel gets heavier.
             fee = max(fee, previous)
             previous = fee
-            out.append([code, zone, mode, max_grams, round(cost * 100), fee, fee - 100])
+            # Outbound is a flat per-zone delivery price, so it does not vary
+            # with the parcel's weight the way the return leg does.
+            exchange = fee + outbound[code]
+            out.append([code, zone, mode, max_grams, round(cost * 100), fee, exchange])
 
     with open(OUT, "w", newline="") as fh:
         # csv.writer defaults to CRLF. The repo is LF, and without this every

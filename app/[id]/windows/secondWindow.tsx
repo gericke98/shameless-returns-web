@@ -2,7 +2,10 @@
 
 import { memo, useEffect, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
+import Image from "next/image";
+import Link from "next/link";
 import { IoLocationSharp } from "react-icons/io5";
+import CorreosLogo from "@/public/correos.webp";
 import { SecondWindowForm } from "../components/secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
@@ -49,8 +52,8 @@ const SecondWindowBase = ({
   // exchange read "Cost: 18.20 €" for a drop-off that costs 11.00 €.
   const { returnLegCents, outboundLegCents } = resolveFee(fees, basket);
 
-  // Domestic parcels are collected from the customer's address; only
-  // international ones are dropped off at a point. Read from the stored
+  // Spain drops the parcel at a Correos point; everything else is collected
+  // from the customer's address through Amphora. Read from the stored
   // country, which the address form renders read-only for exactly this kind
   // of reason — it decides the carrier and the flow, not just the wording.
   const isInternational = isInternationalOrder(order.shippingCountry);
@@ -92,13 +95,23 @@ const SecondWindowBase = ({
 
           {/* Info Container */}
           <div className="w-full flex flex-col p-2 sm:p-3">
-            {/* No carrier logo: it is no longer a Correos point, and a logo
-                asserts a carrier far more loudly than copy does. The pin in
-                the black panel to the left already marks the method, so
-                nothing replaces it here. */}
-            <h5 className="text-xs sm:text-sm font-semibold">
-              {isInternational ? t.second.dropoff : t.second.pickup}
-            </h5>
+            <div className="flex flex-row items-center gap-2">
+              {/* Correos only brands the domestic method, because Correos only
+                  carries the domestic method. An international return is
+                  collected by whoever Amphora routes it to, so naming a
+                  carrier there would be wrong. */}
+              {!isInternational && (
+                <Image
+                  src={CorreosLogo}
+                  alt="Logo correos"
+                  width={35}
+                  height={40}
+                />
+              )}
+              <h5 className="text-xs sm:text-sm font-semibold">
+                {isInternational ? t.second.pickup : t.second.dropoff}
+              </h5>
+            </div>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
                 {t.second.cost}:{" "}
@@ -120,17 +133,26 @@ const SecondWindowBase = ({
           <div className="flex flex-row items-center gap-2">
             <IoLocationSharp size={30} color="black" />
             <h3 className="font-bold text-base sm:text-lg">
-              {isInternational ? t.second.dropoffTitle : t.second.pickupTitle}
+              {isInternational ? t.second.pickupTitle : t.second.dropoffTitle}
             </h3>
           </div>
 
-          {/* The drop-off copy used to carry a "See locations" link to the
-              Correos office locator. Removed with the rest of the Correos
-              branding rather than left pointing at the wrong carrier's map —
-              a link is the same claim the text was. Restore it with the new
-              locator URL when there is one. */}
+          {/* The locator link belongs to the domestic flow only — it points at
+              Correos offices, which are no use to someone in Italy whose
+              parcel is being collected from their door. */}
           <p className="mt-2 text-sm sm:text-base font-light">
-            {isInternational ? t.second.dropoffBody : t.second.pickupBody}
+            {isInternational ? t.second.pickupBody : t.second.dropoffBody}
+            {!isInternational && (
+              <>
+                {" "}
+                <Link
+                  href="https://www.correos.es/es/es/herramientas/oficinas-buzones-citypaq/detalle"
+                  className="text-blue-500 font-semibold"
+                >
+                  {t.second.dropoffLink}
+                </Link>
+              </>
+            )}
           </p>
 
           {/* Form */}

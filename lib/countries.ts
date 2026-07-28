@@ -1,7 +1,7 @@
 // The single source of truth for "what country is this string".
 //
 // Three interpretations previously coexisted: COUNTRY_NAME_TO_ISO2 in
-// sendcloudReturn.ts, an inline lowercase compare in isInternationalOrder,
+// an inline lowercase compare in isInternationalOrder,
 // and a "spain" | "españa" check in actions/order.ts. They are all replaced
 // by normalizeCountry().
 //
@@ -52,8 +52,6 @@ export const SUPPORTED_COUNTRIES: readonly Country[] = [
   // row; it just displays as its raw stored string and cannot have a per-country
   // fee row. Andorra was the concrete gap.
   //
-  // Adding a row here does NOT create an EU lane: EU_ISO2 below is a separate,
-  // fixed list and is the only thing euIso2ForReturn consults.
   { code: "AD", nameEs: "Andorra", nameEn: "Andorra" },
   { code: "GB", nameEs: "Reino Unido", nameEn: "United Kingdom" },
   { code: "CH", nameEs: "Suiza", nameEn: "Switzerland" },
@@ -73,19 +71,6 @@ export const SUPPORTED_COUNTRIES: readonly Country[] = [
   { code: "AU", nameEs: "Australia", nameEn: "Australia" },
 ] as const;
 
-/** EU member states, excluding Spain (national/Correos). Used by the
- *  Sendcloud EU-only lane check.
- *
- *  Exactly 26 entries — the 27 member states minus Spain. This is NOT derived
- *  from SUPPORTED_COUNTRIES and must never be: SUPPORTED_COUNTRIES is the
- *  "what can the customer pick" list and includes non-EU destinations, while
- *  this is the "is this an EU shipping lane" list. Adding a country to the
- *  dropdown must not silently enrol it in the EU lane. */
-export const EU_ISO2: Set<string> = new Set([
-  "AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR",
-  "HU", "IE", "IT", "LV", "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK",
-  "SI", "SE",
-]);
 
 const VALID_CODES = new Set(SUPPORTED_COUNTRIES.map((c) => c.code));
 

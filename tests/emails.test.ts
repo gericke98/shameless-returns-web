@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildAmphoraEmail,
   buildCorreosEmail,
-  buildSendcloudEmail,
 } from "@/lib/emails";
 
 // Marker phrases that must appear in one language and never in the other.
@@ -15,10 +14,6 @@ const CORREOS_MARKERS = {
 const AMPHORA_MARKERS = {
   es: ["Hola <strong>", "Nuestro mensajero", "Saludos,"],
   en: ["Hello <strong>", "Our courier will", "Best regards"],
-};
-const SENDCLOUD_MARKERS = {
-  es: ["Hola <strong>", "etiqueta de devolución prepagada", "Saludos,"],
-  en: ["Hello <strong>", "pre-paid return label", "Best regards"],
 };
 
 function expectSingleLanguage(
@@ -119,57 +114,6 @@ describe("buildAmphoraEmail", () => {
       expect(buildAmphoraEmail("Ana", locale, tracking).HtmlBody).not.toContain(
         "<hr"
       );
-    }
-  });
-});
-
-describe("buildSendcloudEmail", () => {
-  const labelUrl = "https://app.example/api/return-label/42?sig=abc";
-
-  it("emits Spanish only", () => {
-    const { HtmlBody } = buildSendcloudEmail("Ana", "es", labelUrl, "TRK9");
-    expectSingleLanguage(HtmlBody, "es", SENDCLOUD_MARKERS);
-  });
-
-  it("emits English only", () => {
-    const { HtmlBody } = buildSendcloudEmail("Ana", "en", labelUrl, "TRK9");
-    expectSingleLanguage(HtmlBody, "en", SENDCLOUD_MARKERS);
-  });
-
-  it("localizes the subject, the button and the tracking line", () => {
-    const es = buildSendcloudEmail("Ana", "es", labelUrl, "TRK9");
-    const en = buildSendcloudEmail("Ana", "en", labelUrl, "TRK9");
-
-    expect(es.Subject).toBe("Tu etiqueta de devolución está lista");
-    expect(en.Subject).toBe("Your return label is ready");
-
-    expect(es.HtmlBody).toContain("Descarga e imprime tu etiqueta");
-    expect(en.HtmlBody).toContain("Download &amp; print your return label");
-
-    expect(es.HtmlBody).toContain("Número de seguimiento");
-    expect(en.HtmlBody).toContain("Tracking number");
-  });
-
-  it("keeps the label link in both the HTML and the text body", () => {
-    for (const locale of ["es", "en"] as const) {
-      const email = buildSendcloudEmail("Ana", locale, labelUrl, null);
-      expect(email.HtmlBody).toContain(labelUrl);
-      expect(email.TextBody).toContain(labelUrl);
-    }
-  });
-
-  it("omits the tracking line when there is no tracking number", () => {
-    const es = buildSendcloudEmail("Ana", "es", labelUrl, null).HtmlBody;
-    expect(es).not.toContain("Número de seguimiento");
-    const en = buildSendcloudEmail("Ana", "en", labelUrl, null).HtmlBody;
-    expect(en).not.toContain("Tracking number");
-  });
-
-  it("has no language separator", () => {
-    for (const locale of ["es", "en"] as const) {
-      expect(
-        buildSendcloudEmail("Ana", locale, labelUrl, "TRK9").HtmlBody
-      ).not.toContain("<hr");
     }
   });
 });

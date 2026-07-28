@@ -11,7 +11,6 @@ import {
   wasItemReturned,
 } from "@/utils/order-utils";
 import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
-import { euIso2ForReturn } from "@/actions/sendcloudReturn";
 import { isInternationalOrder } from "@/actions/amphoraReturn";
 import { normalizeCountry } from "@/lib/countries";
 import { issueOrderAccess } from "@/lib/orderAccess";
@@ -132,22 +131,19 @@ function validateOrderDetails(
     return { message: "Please enter a valid mail address" };
   }
 
-  // Validate country. Spain is always allowed (national Correos). In-scope EU
-  // lanes are allowed only when Sendcloud international returns are enabled —
-  // they route to the Sendcloud drop-off flow (same euIso2ForReturn scope the
-  // shipment router uses). Everything else (non-EU) still gets the contact
-  // message, since those lanes aren't handled yet (customs / RGR).
+  // Validate country. Spain is always allowed (national Correos). Everything
+  // else is allowed only when Amphora international returns are enabled, which
+  // covers EU and non-EU alike; with the flag off, those customers get the
+  // contact message rather than a return they cannot ship.
+  //
+  // There was a third case here for an EU-only Sendcloud lane. Removing it
+  // narrows nothing: Amphora already covers every country it did.
   const rawCountry = order.shipping_address.country;
   const isSpain = normalizeCountry(rawCountry) === "ES";
-  // Amphora handles ALL international (EU + non-EU) when enabled.
   const isAmphoraIntl =
     isInternationalOrder(rawCountry) &&
     process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
-  // Sendcloud (EU-only) kept as a dormant fallback — allowed only if its flag is on.
-  const isEnabledEuLane =
-    euIso2ForReturn(rawCountry) !== null &&
-    process.env.SENDCLOUD_INTL_RETURNS_ENABLED === "true";
-  if (!isSpain && !isAmphoraIntl && !isEnabledEuLane) {
+  if (!isSpain && !isAmphoraIntl) {
     return {
       message: `For orders outside of mainland Spain, please contact hello@shamelesscollective.com with your order number`,
     };

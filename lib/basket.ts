@@ -65,8 +65,7 @@ export function applyGlobalDiscount(
  * since the order was placed — every one of the 217 live variants carries a
  * weight. Zero would be the dangerous default: it makes a parcel look lighter
  * than it is and drops it into a cheaper band, so an unknown item would
- * *reduce* the fee. This is the value already declared to Sendcloud per unit,
- * and sits between the catalogue's median (423g) and p75 (550g).
+ * *reduce* the fee. It sits between the catalogue's median (423g) and p75 (550g).
  */
 export const FALLBACK_ITEM_GRAMS = 500;
 

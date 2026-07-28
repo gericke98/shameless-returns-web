@@ -66,6 +66,7 @@ export const SUPPORTED_COUNTRIES: readonly Country[] = [
   { code: "AR", nameEs: "Argentina", nameEn: "Argentina" },
   { code: "CL", nameEs: "Chile", nameEn: "Chile" },
   { code: "CO", nameEs: "Colombia", nameEn: "Colombia" },
+  { code: "UY", nameEs: "Uruguay", nameEn: "Uruguay" },
   { code: "IL", nameEs: "Israel", nameEn: "Israel" },
   { code: "AE", nameEs: "Emiratos Árabes Unidos", nameEn: "United Arab Emirates" },
   { code: "JP", nameEs: "Japón", nameEn: "Japan" },

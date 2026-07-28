@@ -870,6 +870,32 @@ export async function getVariantSkusByIds(
   }
 }
 
+/**
+ * Normalise a Shopify `Weight` to grams.
+ *
+ * The whole catalogue is currently in GRAMS, but the field carries its own
+ * unit and a merchant can change it in the Shopify admin at any time. Reading
+ * `value` directly would then silently divide a parcel's weight by 1000 and
+ * quietly undercharge every heavy return, so the unit is honoured rather than
+ * assumed. An unrecognised unit returns null — the same "unknown" the callers
+ * already handle — instead of a wrong number.
+ */
+function toGrams(weight: { value: number; unit: string } | null | undefined) {
+  if (!weight || typeof weight.value !== "number") return null;
+  switch (weight.unit) {
+    case "GRAMS":
+      return weight.value;
+    case "KILOGRAMS":
+      return weight.value * 1000;
+    case "POUNDS":
+      return weight.value * 453.59237;
+    case "OUNCES":
+      return weight.value * 28.349523125;
+    default:
+      return null;
+  }
+}
+
 export async function getProducts() {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
@@ -898,6 +924,18 @@ export async function getProducts() {
                   price
                   title
                   inventoryQuantity
+                  # Drives the weight band a return is priced in. Lives under
+                  # inventoryItem because ProductVariant.weight is deprecated.
+                  # Needs the read_inventory scope in addition to
+                  # read_products.
+                  inventoryItem {
+                    measurement {
+                      weight {
+                        value
+                        unit
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -938,6 +976,9 @@ export async function getProducts() {
           product.image = {
             src: "", // Provide a default empty string if no image exists
           };
+        }
+        for (const edge of product.variants?.edges ?? []) {
+          edge.node.grams = toGrams(edge.node.inventoryItem?.measurement?.weight);
         }
         return product;
       }

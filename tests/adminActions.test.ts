@@ -32,7 +32,11 @@ vi.mock("next/cache", () => ({
 const calls = { giftCard: 0, refund: 0, order: 0, orderTotal: 0 };
 
 vi.mock("@/db/queries", () => ({
-  getOrderById: async () => ({ id: "1", shippingCountry: "ES" }),
+  getOrderById: async () => ({ id: "1", shippingCountry: "ES", products: [] }),
+  // Reached via loadBasket, which validateReturn uses to weigh the return
+  // parcel — the weight picks the fee band. An empty catalogue is enough:
+  // these tests assert authorisation, not pricing.
+  getProducts: async () => [],
   getOrderTotal: async () => {
     calls.orderTotal++;
     return { id: "1", customer: { id: "c1" } };

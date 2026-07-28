@@ -25,6 +25,13 @@ export async function saveShippingFee(
     return { ok: false, error: `Unsupported country: ${rawCountry}` };
   }
 
+  // Part of the primary key, so a bad value would silently create a new band
+  // rather than update the intended one.
+  const maxGrams = Number(formData.get("maxGrams"));
+  if (!Number.isInteger(maxGrams) || maxGrams <= 0) {
+    return { ok: false, error: "Weight band is missing or invalid" };
+  }
+
   const returnFeeCents = parseEurosToCents(String(formData.get("returnFee") ?? ""));
   const exchangeFeeCents = parseEurosToCents(String(formData.get("exchangeFee") ?? ""));
   if (returnFeeCents === null || exchangeFeeCents === null) {
@@ -34,9 +41,12 @@ export async function saveShippingFee(
   try {
     await db
       .insert(shippingFees)
-      .values({ countryCode, returnFeeCents, exchangeFeeCents, updatedAt: new Date() })
+      .values({ countryCode, maxGrams, returnFeeCents, exchangeFeeCents, updatedAt: new Date() })
       .onConflictDoUpdate({
-        target: shippingFees.countryCode,
+        // Must name both key columns. Targeting country_code alone no longer
+        // matches the primary key, so the upsert would raise instead of
+        // updating — and if it did match, it would overwrite the wrong band.
+        target: [shippingFees.countryCode, shippingFees.maxGrams],
         set: { returnFeeCents, exchangeFeeCents, updatedAt: new Date() },
       });
   } catch (err) {
@@ -44,7 +54,7 @@ export async function saveShippingFee(
     // raw DB error text (connection strings, constraint names, etc.) to the
     // client. revalidateTag must stay out of this catch block: it must never
     // fire against a write that did not land.
-    console.error("saveShippingFee: upsert failed", { countryCode, err });
+    console.error("saveShippingFee: upsert failed", { countryCode, maxGrams, err });
     return { ok: false, error: "Could not save this fee. Please try again." };
   }
 

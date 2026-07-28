@@ -5,7 +5,7 @@ import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 import { LastWindow } from "./lastWindow";
 import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee, type CountryFees } from "@/lib/fees";
+import { centsToEuros, resolveFee, type CountryBands } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 
 // Valuation comes from lib/basket.ts — the same function payments.ts charges
@@ -14,7 +14,7 @@ import { valueBasket } from "@/lib/basket";
 const calculatePrices = (
   items: OrderItem[],
   allProducts: Product[],
-  fees: CountryFees
+  fees: CountryBands
 ): Prices => {
   const basket = valueBasket(items, allProducts);
   const { feeCents } = resolveFee(fees, basket);

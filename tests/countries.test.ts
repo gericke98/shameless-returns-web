@@ -7,7 +7,7 @@ import {
   countryDisplayName,
   normalizeCountry,
 } from "@/lib/countries";
-import { feesForCountry } from "@/lib/fees";
+import { UNBOUNDED_MAX_GRAMS, feesForCountry } from "@/lib/fees";
 
 // `db/queries.ts` wraps a query in React's `cache()`, which is only resolvable
 // under Next.js's "react-server" module condition (its own build pipeline).
@@ -144,10 +144,10 @@ describe("an unnameable stored country still routes and prices safely", () => {
   });
 
   it("falls back to the '*' fee row rather than the ES row", () => {
-    const table = {
-      "*": { returnFeeCents: 995, exchangeFeeCents: 0 },
-      ES: { returnFeeCents: 399, exchangeFeeCents: 0 },
-    };
+    const band = (returnFeeCents: number) => [
+      { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents, exchangeFeeCents: 0 },
+    ];
+    const table = { "*": band(995), ES: band(399) };
     expect(feesForCountry(table, normalizeCountry("Wakanda"))).toEqual(
       table["*"]
     );
@@ -157,9 +157,9 @@ describe("an unnameable stored country still routes and prices safely", () => {
     );
     expect(
       feesForCountry(
-        { ...table, AD: { returnFeeCents: 700, exchangeFeeCents: 0 } },
+        { ...table, AD: band(700) },
         normalizeCountry("Andorra")
-      ).returnFeeCents
+      )[0].returnFeeCents
     ).toBe(700);
   });
 

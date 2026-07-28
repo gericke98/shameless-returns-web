@@ -62,19 +62,91 @@ migration section below for why and for the statements applied so far.
 
 ### Shipping fees
 
-Return/exchange shipping fees are per-country rows in the `shipping_fees`
-table, edited by ops at `/dashboard/shipping-fees` — no deploy required. Each
-row has a country code plus a return fee and an exchange fee, both in
-integer cents. The `*` row is the fallback used for any country that does
-not have its own row (see `feesForCountry` in `lib/fees.ts`); if the `*` row
-is also missing, the fee resolves to zero rather than `NaN`.
+Return/exchange shipping fees are rows in the `shipping_fees` table, one per
+(destination country, weight band), edited by ops at
+`/dashboard/shipping-fees` — no deploy required. Each row has a country code,
+a `max_grams` upper bound, and a return and exchange fee in integer cents. The
+`*` rows are the fallback for any country without its own (see
+`feesForCountry` in `lib/fees.ts`); if `*` is missing too, the fee resolves to
+zero rather than `NaN`.
+
+Fees come from the carrier tariff committed at `data/return-tariff.csv` and
+are applied with `scripts/seed-shipping-fees-by-country.ts`. The CSV is the
+source of truth in the repo, so a price change is a reviewable diff and the
+values behind any past charge are recoverable from git history. It carries the
+carrier's own cost alongside each fee, which is what makes the margin on a row
+auditable.
+
+**The fee is the carrier's cost rounded up to the whole euro.** No tiers, no
+subsidy, no anchor — which is what keeps it honest under the two orderings
+that matter: a heavier parcel is never cheaper than a lighter one, and a
+costlier destination is never cheaper than a cheaper one. Both are asserted in
+`tests/shippingFeeCoverage.test.ts`. An earlier scheme banded the ≤1 kg fee
+into four tiers and added the carrier's increment on top; the flattening let a
+costlier destination come out cheaper, which is a class of bug this rule does
+not have. Exchanges keep the historical €1.00 discount and so sit just below
+cost by design.
+
+The `*` fallback is derived as the most expensive fee at each band rather than
+chosen, so it cannot go stale when the carrier republishes. It is deliberately
+the worst case: an unpriced market should announce itself, not bleed quietly.
+The cost of that is Andorra, which is road-adjacent to Spain and would
+realistically be cheap, but appears in neither tariff tab and so inherits
+Israel's prices. It has never received an order.
+
+Weight matters because the carrier prices by it, steeply — a 2.5 kg return
+from the US costs €86.97 against €21.53 for the same parcel under a kilo.
+`max_grams` is the band's **inclusive** upper bound, bands are contiguous from
+zero, and the heaviest carries `UNBOUNDED_MAX_GRAMS` so no parcel can fall
+through unpriced. `tests/shippingFeeCoverage.test.ts` fails the build if a
+destination is missing, has no unbounded band, or gets cheaper as it gets
+heavier.
+
+The parcel's weight is summed by `parcelGrams` (`lib/basket.ts`) from the
+catalogue weight of the items the customer selected — the originals they ship
+back, not an exchange replacement, which travels separately. Weights come from
+the current variant via `inventoryItem.measurement.weight`, never from
+`line_items[].grams`: Shopify freezes that onto the line at purchase time, so
+it still reports whatever the catalogue said when the order was placed. A
+variant that has since been deleted falls back to `FALLBACK_ITEM_GRAMS` rather
+than zero — zero would make an unknown item *reduce* the fee.
 
 The old `NEXT_PUBLIC_SHIPPING_RETURN_COST` and
 `NEXT_PUBLIC_SHIPPING_EXCHANGE_COST` environment variables are **gone**.
 Nothing under `app/`, `components/`, `lib/`, `actions/`, or `db/` reads them
 anymore — the only remaining reference is `scripts/seed-shipping-fees.ts`,
-and it only reads them once, to seed the table with the values that were
-already in effect (see "Deploy prerequisites" below).
+which is superseded and already refuses to run because those variables no
+longer exist in any environment. Do not resurrect it: it writes a single
+unbounded band per country at one flat price, which would erase both the
+per-country and the per-weight rows.
+
+### Applying the weight-band migration
+
+`shipping_fees` gained `max_grams` and its primary key moved from
+`country_code` to `(country_code, max_grams)`. Apply this before deploying:
+
+```sql
+-- Existing rows become the unbounded top band, so prices do not change until
+-- the narrower bands are seeded.
+ALTER TABLE shipping_fees
+  ADD COLUMN max_grams integer NOT NULL DEFAULT 2147483647;
+
+ALTER TABLE shipping_fees DROP CONSTRAINT shipping_fees_pkey;
+ALTER TABLE shipping_fees ADD PRIMARY KEY (country_code, max_grams);
+
+-- Every future row must state its band explicitly.
+ALTER TABLE shipping_fees ALTER COLUMN max_grams DROP DEFAULT;
+```
+
+Then seed: `npx tsx scripts/seed-shipping-fees-by-country.ts --dry-run` to
+review, then without the flag to write.
+
+**Order matters.** Reads stay compatible across the migration — the old code
+does `SELECT *` and ignores the extra column — but the currently deployed
+`saveShippingFee` upserts with `target: country_code`, which stops matching
+the primary key the moment it changes. Between running the SQL and deploying,
+the ops dashboard's Save button will fail. Migrate and deploy together, or
+accept that window.
 
 The Stripe charge is derived server-side from this table (see
 `actions/payments.ts`), so the browser can no longer influence the amount

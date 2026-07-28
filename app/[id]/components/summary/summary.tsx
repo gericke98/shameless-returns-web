@@ -67,6 +67,19 @@ export const SummaryComponent = ({
 
   const totalPrice = basket.netAmount - shippingCost;
 
+  // The second section holds replacement items and the shipping fee, and its
+  // heading has to describe whichever of those it actually contains. A pure
+  // return has no replacements, so calling it "New items & Shipping" named a
+  // row that was not there.
+  //
+  // One value drives the heading, the amount and the shipping line, because
+  // they previously disagreed: the heading appended "& Shipping" only when
+  // there were DEVOLUCIÓN items, while the amount added the fee whenever
+  // anything was selected. An exchange-only basket was charged shipping under
+  // a heading that did not mention it.
+  const hasNewItems = itemsToCambio.length > 0;
+  const showsShipping = shipping && itemsToDevolver.length > 0;
+
   const creditBonus = credito ? totalPrice * 0.15 : 0;
   const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
 
@@ -123,17 +136,19 @@ export const SummaryComponent = ({
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
               <span className="font-medium text-left w-full">
-                {t.summary.newProducts}{" "}
-                {shipping && itemsToDev.length > 0 && t.summary.andLogistics}
+                {hasNewItems
+                  ? `${t.summary.newProducts}${
+                      showsShipping ? ` ${t.summary.andLogistics}` : ""
+                    }`
+                  : t.summary.shipping}
                 <span className="font-normal text-xs text-gray-600"></span>
               </span>
 
               {/* Right side (total, right-aligned) */}
               <span className="font-semibold text-sm text-right mt-1 sm:mt-0 w-full">
-                {(totalPriceCambio > 0 || shipping) && "-"}
+                {(totalPriceCambio > 0 || showsShipping) && "-"}
                 {formatEuros(
-                  shipping &&
-                    (itemsToDev.length > 0 || itemsToCambio.length > 0)
+                  showsShipping
                     ? totalPriceCambio + shippingCost
                     : totalPriceCambio,
                   locale
@@ -150,8 +165,7 @@ export const SummaryComponent = ({
                 newProduct={findProductByVariantId(item.new_variant_id)}
               />
             ))}
-            {shipping &&
-              (itemsToDev.length > 0 || itemsToCambio.length > 0) && (
+            {showsShipping && (
                 <SummaryShipping shippingCost={shippingCost} />
               )}
           </AccordionContent>

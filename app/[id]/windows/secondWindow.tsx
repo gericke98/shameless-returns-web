@@ -2,14 +2,11 @@
 
 import { memo, useEffect, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
-import Image from "next/image";
 import { IoLocationSharp } from "react-icons/io5";
-import Link from "next/link";
 import { SecondWindowForm } from "../components/secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
-import CorreosLogo from "@/public/correos.webp";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
@@ -45,11 +42,10 @@ const SecondWindowBase = ({
   );
   const fees = useFees();
   // The legs are shown separately because this screen is about choosing a
-  // RETURN METHOD. Only the return leg is the cost of dropping a parcel at a
-  // Correos point; the rest is delivering the replacement, which happens
-  // whatever method is chosen. Billing the combined figure against the method
-  // overstated it — an Italian exchange read "Cost: 18.20 €" for a drop-off
-  // that costs 11.00 €.
+  // RETURN METHOD. Only the return leg is the cost of the drop-off; the rest
+  // is delivering the replacement, which happens whatever method is chosen.
+  // Billing the combined figure against the method overstated it — an Italian
+  // exchange read "Cost: 18.20 €" for a drop-off that costs 11.00 €.
   const { returnLegCents, outboundLegCents } = resolveFee(fees, basket);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -89,19 +85,13 @@ const SecondWindowBase = ({
 
           {/* Info Container */}
           <div className="w-full flex flex-col p-2 sm:p-3">
-            <div className="flex flex-row items-center gap-2">
-              <Image
-                src={CorreosLogo}
-                alt="Logo correos"
-                width={35}
-                height={40}
-                // Show the image on all screens, or hide on small if you want
-                // className="hidden lg:block"
-              />
-              <h5 className="text-xs sm:text-sm font-semibold">
-                {t.second.correosDropoff}
-              </h5>
-            </div>
+            {/* No carrier logo: the drop-off is no longer a Correos point, and
+                a logo asserts a carrier far more loudly than copy does. The
+                pin in the black panel to the left already marks this as a
+                drop-off, so nothing replaces it here. */}
+            <h5 className="text-xs sm:text-sm font-semibold">
+              {t.second.dropoff}
+            </h5>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
                 {t.second.cost}:{" "}
@@ -127,14 +117,13 @@ const SecondWindowBase = ({
             </h3>
           </div>
 
+          {/* The "See locations" link pointed at the Correos office locator.
+              Removed with the rest of the Correos branding rather than left
+              pointing at the wrong carrier's map — a link is the same claim as
+              the text was. Restore it with the new locator URL when there is
+              one. */}
           <p className="mt-2 text-sm sm:text-base font-light">
-            {t.second.dropoffBody}{" "}
-            <Link
-              href="https://www.correos.es/es/es/herramientas/oficinas-buzones-citypaq/detalle"
-              className="text-blue-500 font-semibold"
-            >
-              {t.second.dropoffLink}
-            </Link>
+            {t.second.dropoffBody}
           </p>
 
           {/* Form */}

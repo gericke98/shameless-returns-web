@@ -61,12 +61,11 @@ export const es = {
     title: "Método de devolución",
     subtitle:
       "Escoge el método de envío que quieres usar para devolver los productos seleccionados",
-    correosDropoff: "Entrega en punto de recogida Correos",
+    dropoff: "Entrega en punto de recogida",
     cost: "Coste",
     dropoffTitle: "Entrega en punto de recogida",
     dropoffBody:
-      "Valida tu dirección de envío para poder generar la etiqueta de devolución que recibirás en tu email, con la que podrás llevar tu paquete a un punto de recogida de Correos.",
-    dropoffLink: "Ver listado",
+      "Valida tu dirección de envío para poder generar la etiqueta de devolución que recibirás en tu email. En la etiqueta te indicaremos dónde entregar tu paquete.",
     name: "Nombre",
     address: "Calle y número",
     address2: "Apartamento, local, etc (Opcional)",

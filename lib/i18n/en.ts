@@ -60,12 +60,11 @@ export const en: Dictionary = {
   second: {
     title: "Return method",
     subtitle: "Choose the shipping method you want to use to return the selected items",
-    correosDropoff: "Drop off at a Correos pickup point",
+    dropoff: "Drop off at a pickup point",
     cost: "Cost",
     dropoffTitle: "Drop off at a pickup point",
     dropoffBody:
-      "Confirm your shipping address so we can generate the return label you will receive by email, which you can use to drop your parcel at a Correos pickup point.",
-    dropoffLink: "See locations",
+      "Confirm your shipping address so we can generate the return label you will receive by email. Your label will tell you where to drop your parcel off.",
     name: "Name",
     address: "Street and number",
     address2: "Apartment, unit, etc. (Optional)",

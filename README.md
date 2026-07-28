@@ -84,8 +84,21 @@ costlier destination is never cheaper than a cheaper one. Both are asserted in
 `tests/shippingFeeCoverage.test.ts`. An earlier scheme banded the ≤1 kg fee
 into four tiers and added the carrier's increment on top; the flattening let a
 costlier destination come out cheaper, which is a class of bug this rule does
-not have. Exchanges keep the historical €1.00 discount and so sit just below
-cost by design.
+not have.
+
+**An exchange is charged for two journeys**, because it is two: the customer's
+parcel back, and the replacement out. So `exchange fee = return fee + outbound
+delivery`, where the outbound leg is the store's own published delivery price
+for that zone, pulled from Shopify's delivery profiles into
+`data/outbound-rates.csv`. It is a flat per-zone price, so the gap between the
+return and exchange fee is identical at every weight — asserted, along with
+reconciliation against that file.
+
+This also makes the two paths cost the same. In Italy an exchange is €18.20,
+and returning then reordering is €11.00 + €7.20 delivery = €18.20, so the
+pricing no longer nudges customers toward one or the other. Before this,
+exchanges were charged €1 *less* than returns despite being twice the freight,
+which left every one of them short by a whole delivery — €6.10 on average.
 
 `country_code` is really a **zone** key, not strictly an ISO-2 country. For
 almost every destination the two coincide; Spain is the exception, because it

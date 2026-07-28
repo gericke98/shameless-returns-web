@@ -1,0 +1,47 @@
+country_code,delivery_zone,amount,currency,eur_cents
+AE,UAE,220.0,AED,5163
+AR,LATAM,29.9,USD,2583
+AT,austria,7.0,EUR,700
+AU,Oceanía,25.0,AUD,1527
+BE,Europa zona 1,7.0,EUR,700
+BG,Bulgaria,8.5,EUR,850
+BR,LATAM,29.9,USD,2583
+CA,Canada,29.9,CAD,5163
+CH,Suiza,7.5,EUR,750
+CL,LATAM,29.9,USD,2583
+CO,LATAM,29.9,USD,2583
+CY,Chipre,7.5,EUR,750
+CZ,Rep. Checa,7.5,EUR,750
+DE,Alemania,6.0,EUR,600
+DK,Denmark,7.5,EUR,750
+EE,Estonia,8.5,EUR,850
+ES,España Peninsular,3.5,EUR,350
+ES-CM,España - Canarias,13.0,EUR,1300
+ES-CN,España - Canarias,13.0,EUR,1300
+ES-IB,España - Islas,7.7,EUR,770
+FI,Finland,7.5,EUR,750
+FR,Francia,7.1,EUR,710
+GB,United Kingdom,9.9,GBP,1142
+GR,Greece,7.5,EUR,750
+HR,Croatia,7.5,EUR,750
+HU,Hungría,8.5,EUR,850
+IE,Ireland,7.5,EUR,750
+IL,Israel,29.9,USD,2583
+IS,MENA and Eastern Europe,29.9,USD,2583
+IT,Italia,7.2,EUR,720
+JP,Japan,3500.0,JPY,1894
+LT,Lituania,8.5,EUR,850
+LU,Luxemburgo,7.5,EUR,750
+LV,Letonia,7.5,EUR,750
+MT,Malta,7.5,EUR,750
+MX,LATAM,29.9,USD,2583
+NL,Holanda,6.81,EUR,681
+NO,Noruega,7.5,EUR,750
+PL,Polonia,8.33,EUR,833
+PT,Portugal,5.0,EUR,500
+RO,Rumania,8.5,EUR,850
+SE,Sweden,7.5,EUR,750
+SI,Slovenia,7.5,EUR,750
+SK,Slovakia,7.5,EUR,750
+US,USA,15.0,USD,1296
+UY,Uruguay,1151.75,UYU,2462

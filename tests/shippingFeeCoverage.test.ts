@@ -121,11 +121,51 @@ describe("shipping fee coverage", () => {
     }
   });
 
-  it("keeps the exchange fee below the return fee", () => {
-    // The flat rates encoded a EUR 1.00 exchange discount (500/400) as a
-    // retention incentive. Banding must not silently invert it.
+  it("charges more for an exchange than for a return", () => {
+    // An exchange is TWO journeys — the parcel back and the replacement out —
+    // against a return's one. The old flat rates had this backwards, charging
+    // EUR 1 LESS for the exchange, which made the two-leg trip the cheaper of
+    // the two and left every exchange short by a whole delivery.
     for (const row of tariff) {
-      expect(row.exchangeFeeCents, row.countryCode).toBeLessThan(row.returnFeeCents);
+      expect(
+        row.exchangeFeeCents,
+        `${row.countryCode} at ${row.maxGrams}g charges no more to also ship a replacement`
+      ).toBeGreaterThan(row.returnFeeCents);
+    }
+  });
+
+  it("adds the same outbound delivery at every weight", () => {
+    // Outbound is a flat per-zone delivery price, so the gap between the
+    // return and exchange fee must not vary with the parcel's weight. A
+    // difference here means the two legs got entangled.
+    for (const [countryCode, bands] of Array.from(bandsByCountry(tariff).entries())) {
+      const deltas = new Set(bands.map((b) => b.exchangeFeeCents - b.returnFeeCents));
+      expect(
+        Array.from(deltas),
+        `${countryCode} adds a different outbound cost per band`
+      ).toHaveLength(1);
+    }
+  });
+
+  it("matches the committed outbound rates", () => {
+    // The exchange fee is return + outbound, so it must reconcile against the
+    // rates outbound.mjs pulled from Shopify. Catches the two files drifting
+    // apart when one is regenerated and the other is not.
+    const outbound = new Map(
+      readFileSync(resolve(process.cwd(), "data/outbound-rates.csv"), "utf8")
+        .trim()
+        .split("\n")
+        .slice(1)
+        .map((line) => {
+          const cols = line.split(",");
+          return [cols[0], Number(cols[4])] as const;
+        })
+    );
+    for (const row of tariff) {
+      expect(
+        row.exchangeFeeCents - row.returnFeeCents,
+        `${row.countryCode} does not match data/outbound-rates.csv`
+      ).toBe(outbound.get(row.countryCode));
     }
   });
 

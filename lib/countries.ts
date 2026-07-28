@@ -160,3 +160,23 @@ export function countryDisplayName(
   if (country) return locale === "en" ? country.nameEn : country.nameEs;
   return String(stored ?? "").trim();
 }
+
+/**
+ * Spain (including Canarias, Ceuta and Melilla) stays on the domestic Correos
+ * flow; everything else routes internationally.
+ *
+ * Lives here rather than in actions/amphoraReturn.ts — which re-exports it —
+ * because the return-method screen is a client component and needs the same
+ * predicate. That module imports the Neon client and the Amphora API, so a
+ * client bundle must not reach it.
+ *
+ * An unrecognised country counts as international, matching the original
+ * behaviour: anything not in the Spain list was international.
+ */
+export function isInternationalOrder(
+  shippingCountry: string | null | undefined
+): boolean {
+  const raw = String(shippingCountry ?? "").trim();
+  if (!raw) return false;
+  return normalizeCountry(raw) !== "ES";
+}

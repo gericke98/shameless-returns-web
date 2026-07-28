@@ -60,6 +60,12 @@ export const en: Dictionary = {
   second: {
     title: "Return method",
     subtitle: "Choose the shipping method you want to use to return the selected items",
+    // Domestic returns are collected from the customer's address; only
+    // international ones are dropped off at a point.
+    pickup: "Pickup from your address",
+    pickupTitle: "Pickup from your address",
+    pickupBody:
+      "Confirm your address so we can arrange the collection. The carrier will pick your parcel up there.",
     dropoff: "Drop off at a pickup point",
     cost: "Cost",
     dropoffTitle: "Drop off at a pickup point",

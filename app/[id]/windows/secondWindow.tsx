@@ -10,6 +10,7 @@ import { FaArrowAltCircleLeft } from "react-icons/fa";
 import { useFees } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
+import { isInternationalOrder } from "@/lib/countries";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 
@@ -47,6 +48,12 @@ const SecondWindowBase = ({
   // Billing the combined figure against the method overstated it — an Italian
   // exchange read "Cost: 18.20 €" for a drop-off that costs 11.00 €.
   const { returnLegCents, outboundLegCents } = resolveFee(fees, basket);
+
+  // Domestic parcels are collected from the customer's address; only
+  // international ones are dropped off at a point. Read from the stored
+  // country, which the address form renders read-only for exactly this kind
+  // of reason — it decides the carrier and the flow, not just the wording.
+  const isInternational = isInternationalOrder(order.shippingCountry);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -85,12 +92,12 @@ const SecondWindowBase = ({
 
           {/* Info Container */}
           <div className="w-full flex flex-col p-2 sm:p-3">
-            {/* No carrier logo: the drop-off is no longer a Correos point, and
-                a logo asserts a carrier far more loudly than copy does. The
-                pin in the black panel to the left already marks this as a
-                drop-off, so nothing replaces it here. */}
+            {/* No carrier logo: it is no longer a Correos point, and a logo
+                asserts a carrier far more loudly than copy does. The pin in
+                the black panel to the left already marks the method, so
+                nothing replaces it here. */}
             <h5 className="text-xs sm:text-sm font-semibold">
-              {t.second.dropoff}
+              {isInternational ? t.second.dropoff : t.second.pickup}
             </h5>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
@@ -113,17 +120,17 @@ const SecondWindowBase = ({
           <div className="flex flex-row items-center gap-2">
             <IoLocationSharp size={30} color="black" />
             <h3 className="font-bold text-base sm:text-lg">
-              {t.second.dropoffTitle}
+              {isInternational ? t.second.dropoffTitle : t.second.pickupTitle}
             </h3>
           </div>
 
-          {/* The "See locations" link pointed at the Correos office locator.
-              Removed with the rest of the Correos branding rather than left
-              pointing at the wrong carrier's map — a link is the same claim as
-              the text was. Restore it with the new locator URL when there is
-              one. */}
+          {/* The drop-off copy used to carry a "See locations" link to the
+              Correos office locator. Removed with the rest of the Correos
+              branding rather than left pointing at the wrong carrier's map —
+              a link is the same claim the text was. Restore it with the new
+              locator URL when there is one. */}
           <p className="mt-2 text-sm sm:text-base font-light">
-            {t.second.dropoffBody}
+            {isInternational ? t.second.dropoffBody : t.second.pickupBody}
           </p>
 
           {/* Form */}

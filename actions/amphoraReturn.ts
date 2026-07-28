@@ -19,14 +19,10 @@ import {
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
 /** Spain (incl. Canarias/Ceuta/Melilla) stays on the Correos flow; everything
- *  else is routed to Amphora. Accepts the stored country name or an ISO code.
- *  An unrecognised country is treated as international, matching the previous
- *  behaviour (anything not in the Spain list was international). */
-export function isInternationalOrder(shippingCountry: string | null | undefined): boolean {
-  const raw = String(shippingCountry ?? "").trim();
-  if (!raw) return false;
-  return normalizeCountry(raw) !== "ES";
-}
+ *  else is routed to Amphora. Re-exported from lib/countries.ts, which is pure
+ *  — the return-method screen is a client component and needs the same rule,
+ *  and must not import this module (Neon client, Amphora API). */
+export { isInternationalOrder } from "@/lib/countries";
 
 async function sendAmphoraConfirmationEmail(
   recipientEmail: string,

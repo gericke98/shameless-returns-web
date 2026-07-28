@@ -45,7 +45,16 @@ export function signOrderSession(orderId: string, expiresAt: number): string {
     );
   }
 
-  const payload: Payload = { orderId, exp: expiresAt };
+  // String() is load-bearing, not defensive noise. `orderId` reaches here from
+  // `db/queries.ts` getOrderQuery, which returns `await response.json()` — an
+  // `any` that TypeScript never checks. OrderData declares `id: string`, but
+  // Shopify's Admin REST API sends the order id as a JSON *number*.
+  //
+  // Without this, the payload held a number while verification compared it to
+  // `params.id` from the URL, which is always a string. That mismatch locked
+  // every customer out of the portal, silently, because the gate is designed to
+  // fail closed without explaining why. Normalise to the wire form here.
+  const payload: Payload = { orderId: String(orderId), exp: expiresAt };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${encoded}.${sign(encoded, key)}`;
 }
@@ -87,6 +96,15 @@ export function verifyOrderSession(
   }
 
   if (typeof payload?.orderId !== "string" || typeof payload?.exp !== "number") {
+    // Reaching here means a payload WE signed has the wrong shape — the HMAC
+    // was already verified above, and an attacker cannot forge that. So this is
+    // never attacker noise; it is always our own bug, and it is exactly how the
+    // numeric-order-id outage stayed invisible. Log it loudly, then still fail
+    // closed.
+    console.error(
+      "verifyOrderSession: own signature, malformed payload — this is a bug, not an attack",
+      { orderIdType: typeof payload?.orderId, expType: typeof payload?.exp }
+    );
     return false;
   }
   if (payload.exp <= now) return false;

@@ -108,3 +108,52 @@ describe("signOrderSession / verifyOrderSession", () => {
     expect(ORDER_SESSION_TTL_MS).toBe(2 * 60 * 60 * 1000);
   });
 });
+
+describe("signOrderSession with an id that is not really a string", () => {
+  // This locked every customer out of the portal in production.
+  //
+  // `db/queries.ts` getOrderQuery returns `await response.json()`, so its
+  // result is `any` — TypeScript checks nothing at that boundary. The
+  // OrderData type declares `id: string`, but Shopify's Admin REST API sends
+  // the order id as a JSON *number*. `actions/order.ts` then handed that
+  // number straight to issueOrderAccess.
+  //
+  // Signing put a number in the payload; verifying compared it against
+  // `params.id` from the URL, which is always a string. Every legitimate
+  // customer was bounced to the lookup page with "Vuelve a buscar tu pedido
+  // para continuar." — and because the gate fails closed and silent by
+  // design, it looked identical to an expired session.
+  const NUMERIC_ID = 13182814978374;
+
+  it("verifies against the string form of a numeric order id", () => {
+    const token = signOrderSession(
+      // Exactly what the untyped Shopify boundary hands us.
+      NUMERIC_ID as unknown as string,
+      NOW + ORDER_SESSION_TTL_MS
+    );
+    expect(verifyOrderSession(token, String(NUMERIC_ID), NOW)).toBe(true);
+  });
+
+  it("puts a string in the payload no matter what it was given", () => {
+    const token = signOrderSession(
+      NUMERIC_ID as unknown as string,
+      NOW + ORDER_SESSION_TTL_MS
+    );
+    const payload = JSON.parse(
+      Buffer.from(token.split(".")[0], "base64url").toString()
+    );
+    expect(payload.orderId).toBe("13182814978374");
+    expect(typeof payload.orderId).toBe("string");
+  });
+
+  it("still refuses a session for a different order after coercion", () => {
+    // Coercing the type must not blur which order the session is for.
+    const token = signOrderSession(
+      NUMERIC_ID as unknown as string,
+      NOW + ORDER_SESSION_TTL_MS
+    );
+    expect(verifyOrderSession(token, "13182814978375", NOW)).toBe(false);
+    expect(verifyOrderSession(token, "1318281497837", NOW)).toBe(false);
+    expect(verifyOrderSession(token, "", NOW)).toBe(false);
+  });
+});

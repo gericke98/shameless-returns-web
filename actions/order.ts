@@ -85,15 +85,20 @@ export async function getOrder(
     // The order number and contact email have now been checked, so record that
     // proof before handing the customer a URL that depends on it. redirect()
     // throws by design, so this must come first.
-    await issueOrderAccess(order.id);
+    //
+    // String(): `order` came from getOrderQuery, which returns untyped JSON.
+    // Shopify sends `id` as a number despite OrderData declaring `string`, and
+    // the session has to match `params.id` from the URL. See lib/orderSession.ts.
+    await issueOrderAccess(String(order.id));
     redirect(`/${order.id}`);
   }
 
   // 5. Save order to database
   await saveOrderToDatabase(order);
 
-  // 6. Same as the exists branch above: issue the session before redirecting.
-  await issueOrderAccess(order.id);
+  // 6. Same as the exists branch above: issue the session before redirecting,
+  // and String() the Shopify-supplied id for the same reason.
+  await issueOrderAccess(String(order.id));
   redirect(`/${order.id}`);
 }
 /**

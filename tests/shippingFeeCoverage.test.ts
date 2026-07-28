@@ -3,6 +3,7 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import { SUPPORTED_COUNTRIES } from "@/lib/countries";
 import { UNBOUNDED_MAX_GRAMS } from "@/lib/fees";
+import { SUB_ZONES, ZONE_KEY_PATTERN } from "@/lib/zones";
 
 // Guards the gap that shipped to production once already: shipping_fees held
 // only '*' and 'ES', so every international destination was charged the
@@ -73,15 +74,46 @@ describe("shipping fee coverage", () => {
   it("offers every priced country in the storefront", () => {
     // The inverse gap is just as real: Uruguay received orders while absent
     // from SUPPORTED_COUNTRIES, so it shipped but could not be selected.
+    //
+    // Sub-zones are compared on their parent country. ES-CN is not a country
+    // a customer picks — it is resolved from the postal code of an address
+    // already in Spain.
     const supported = new Set(SUPPORTED_COUNTRIES.map((c) => c.code));
-    const orphaned = Array.from(priced).filter((code) => !supported.has(code));
+    const orphaned = Array.from(priced)
+      .map((code) => code.split("-")[0])
+      .filter((code) => !supported.has(code));
 
     expect(orphaned, `priced but not selectable: ${orphaned.join(", ")}`).toEqual([]);
   });
 
-  it("uses ISO-2 codes and positive integer cents throughout", () => {
+  it("prices every sub-zone resolveZone can return", () => {
+    // A zone the resolver produces but the tariff does not price would fall
+    // through to '*' — which is the worst-case air rate, so a customer in
+    // Mallorca would be billed as if their parcel were flying to Israel.
+    const missing = SUB_ZONES.filter((zone) => !priced.has(zone));
+    expect(missing, `resolvable but unpriced: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("prices every Spanish sub-zone above peninsular Spain", () => {
+    // The whole point: islands and enclaves cost more to reach. If a sub-zone
+    // ever came out at or below peninsular, it would be cheaper to declare an
+    // island address than a Madrid one.
+    const byZone = bandsByCountry(tariff);
+    const peninsular = byZone.get("ES")!;
+    for (const zone of SUB_ZONES) {
+      byZone.get(zone)!.forEach((band, i) => {
+        expect(
+          band.returnFeeCents,
+          `${zone} at ${band.maxGrams}g is not dearer than peninsular ES`
+        ).toBeGreaterThan(peninsular[i].returnFeeCents);
+      });
+    }
+  });
+
+  it("uses valid zone keys and positive integer cents throughout", () => {
     for (const row of tariff) {
-      expect(row.countryCode).toMatch(/^[A-Z]{2}$/);
+      // ISO-2, or COUNTRY-XX for a sub-zone like ES-CN.
+      expect(row.countryCode).toMatch(ZONE_KEY_PATTERN);
       for (const field of ["carrierCostCents", "returnFeeCents", "exchangeFeeCents"] as const) {
         expect(Number.isInteger(row[field]), `${row.countryCode}.${field}`).toBe(true);
         expect(row[field], `${row.countryCode}.${field}`).toBeGreaterThan(0);

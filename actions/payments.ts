@@ -4,6 +4,7 @@ import { stripe } from "@/lib/stripe";
 import { getFeeTable } from "@/db/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { normalizeCountry } from "@/lib/countries";
+import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry, resolveFee } from "@/lib/fees";
 
@@ -41,7 +42,10 @@ export const createStripeUrl = async (
 
   const { order, basket } = loaded;
   const feeTable = await getFeeTable();
-  const fees = feesForCountry(feeTable, normalizeCountry(order.shippingCountry));
+  const fees = feesForCountry(
+    feeTable,
+    resolveZone(order.shippingCountry, order.shippingZip)
+  );
   const { feeCents } = resolveFee(fees, basket);
 
   // netAmount is what the customer is owed; the fee reduces it. A negative

@@ -11,6 +11,7 @@ import {
 import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
+import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
@@ -330,7 +331,7 @@ export async function updateFinalOrder(
   const feeTable = await getFeeTable();
   const orderFees = feesForCountry(
     feeTable,
-    normalizeCountry(dbOrder?.shippingCountry)
+    resolveZone(dbOrder?.shippingCountry, dbOrder?.shippingZip)
   );
   // One parcel, one weight: the band comes from the whole return, not from
   // any single product in it.

@@ -5,6 +5,13 @@ import { FeesTable } from "./FeesTable";
 
 export const dynamic = "force-dynamic";
 
+/** Postal-code zones within Spain, in the order ops would expect to read them. */
+const SUB_ZONE_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ["ES-IB", "Spain — Balearic Islands (07)"],
+  ["ES-CN", "Spain — Canary Islands (35, 38)"],
+  ["ES-CM", "Spain — Ceuta & Melilla (51, 52)"],
+];
+
 /** "≤ 1 kg" / "> 5 kg" — the band's upper bound, in the units ops thinks in. */
 function bandLabel(maxGrams: number, previousMaxGrams: number | null) {
   if (maxGrams >= UNBOUNDED_MAX_GRAMS) {
@@ -52,6 +59,13 @@ export default async function ShippingFeesPage() {
         table[c.code]?.length ? table[c.code] : fallback,
         Boolean(table[c.code]?.length)
       )
+    ),
+    // Spanish sub-zones. Not in SUPPORTED_COUNTRIES because a customer never
+    // picks them — they are resolved from the postal code of a Spanish
+    // address. Without these rows the ops table would silently omit the most
+    // expensive destinations in the country.
+    ...SUB_ZONE_LABELS.flatMap(([zone, label]) =>
+      rowsFor(zone, label, table[zone]?.length ? table[zone] : fallback, Boolean(table[zone]?.length))
     ),
   ];
 

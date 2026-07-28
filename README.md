@@ -87,6 +87,31 @@ costlier destination come out cheaper, which is a class of bug this rule does
 not have. Exchanges keep the historical €1.00 discount and so sit just below
 cost by design.
 
+`country_code` is really a **zone** key, not strictly an ISO-2 country. For
+almost every destination the two coincide; Spain is the exception, because it
+is one country and several carrier zones:
+
+| Zone | Postal prefixes | ≤1 kg |
+|---|---|---:|
+| `ES` | everything else | €5 |
+| `ES-IB` | 07 | €9 |
+| `ES-CN` | 35, 38 | €22 |
+| `ES-CM` | 51, 52 | €45 |
+
+`resolveZone` (`lib/zones.ts`) maps a delivery address to one of these; every
+fee lookup goes through it. Two digits is all the tariff can distinguish — 07
+covers Mallorca as well as the minor Balearics, and both Canarian provinces
+hold a major island and minor ones — so where a prefix spans two tariff rows
+the CSV carries the dearer one, keeping every row at or above cost. A Spanish
+address with an unparseable postcode resolves to peninsular.
+
+**Known gap:** `shipping_zip` is customer-editable through `updateData`, so a
+Tenerife customer can enter a Madrid postcode and pay €5 rather than €22. It
+is the same shape as the hole deliberately closed for `shippingCountry`, but
+the postcode has to stay editable because it is also where the label is sent.
+Closing it properly needs a separate immutable column holding the postcode as
+it was at purchase. Current exposure is 12 of 489 Spanish orders.
+
 The `*` fallback is derived as the most expensive fee at each band rather than
 chosen, so it cannot go stale when the carrier republishes. It is deliberately
 the worst case: an unpriced market should announce itself, not bleed quietly.

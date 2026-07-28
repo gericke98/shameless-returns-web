@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { shippingFees } from "../db/schema";
 import { DEFAULT_FEE_KEY, UNBOUNDED_MAX_GRAMS } from "../lib/fees";
+import { ZONE_KEY_PATTERN } from "../lib/zones";
 
 // db/drizzle opens the Neon connection at module scope, so importing it
 // eagerly would make --dry-run require a DATABASE_URL it never uses. Loaded
@@ -62,9 +63,11 @@ function parseTariff(): TariffRow[] {
         throw new Error(`data/return-tariff.csv line ${i + 2}: bad ${k} in "${line}"`);
       }
     }
-    if (!/^[A-Z]{2}$/.test(row.countryCode)) {
+    // Not strictly ISO-2: Spain's islands and enclaves are their own zones
+    // (ES-IB, ES-CN, ES-CM) because the carrier prices them separately.
+    if (!ZONE_KEY_PATTERN.test(row.countryCode) || row.countryCode === DEFAULT_FEE_KEY) {
       throw new Error(
-        `data/return-tariff.csv line ${i + 2}: "${row.countryCode}" is not an ISO-2 code`
+        `data/return-tariff.csv line ${i + 2}: "${row.countryCode}" is not a valid zone key`
       );
     }
     return row;

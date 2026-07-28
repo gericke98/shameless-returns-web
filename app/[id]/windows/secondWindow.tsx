@@ -44,7 +44,13 @@ const SecondWindowBase = ({
     [allProducts, items]
   );
   const fees = useFees();
-  const { feeCents } = resolveFee(fees, basket);
+  // The legs are shown separately because this screen is about choosing a
+  // RETURN METHOD. Only the return leg is the cost of dropping a parcel at a
+  // Correos point; the rest is delivering the replacement, which happens
+  // whatever method is chosen. Billing the combined figure against the method
+  // overstated it — an Italian exchange read "Cost: 18.20 €" for a drop-off
+  // that costs 11.00 €.
+  const { returnLegCents, outboundLegCents } = resolveFee(fees, basket);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -98,8 +104,15 @@ const SecondWindowBase = ({
             </div>
             <div className="mt-1">
               <h5 className="text-xxs sm:text-xs">
-                {t.second.cost}: {formatEuros(centsToEuros(feeCents), locale)}
+                {t.second.cost}:{" "}
+                {formatEuros(centsToEuros(returnLegCents), locale)}
               </h5>
+              {outboundLegCents > 0 && (
+                <h5 className="text-xxs sm:text-xs text-gray-600">
+                  + {t.summary.deliveryShipping}:{" "}
+                  {formatEuros(centsToEuros(outboundLegCents), locale)}
+                </h5>
+              )}
             </div>
           </div>
         </div>

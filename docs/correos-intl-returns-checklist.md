@@ -1,3 +1,9 @@
+> **Superseded (2026-07-29):** the Sendcloud lane referenced below no longer
+> exists. `actions/sendcloudReturn.ts`, its label-proxy route, its email and the
+> `SENDCLOUD_*` env vars were removed once Amphora took every international
+> destination — international returns are collected, not dropped off. The
+> Sendcloud comparisons here are kept as the record of why that call was made.
+
 # Pre-launch Checklist — International Returns via Correos-Direct (S0159)
 
 Status: **Blocked on CorreosID auth** · Owner: Santiago · Last updated: 2026-07-22

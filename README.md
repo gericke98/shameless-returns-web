@@ -269,13 +269,13 @@ Policy lives in `lib/rateLimit.ts` (pure, unit-tested); the counting in
 
 **Requires a migration** — see Deploy prerequisites below.
 
-### Four functions are deliberately NOT session-gated
+### Three functions are deliberately NOT session-gated
 
-**Do not "fix" this.** `updateFinalOrder`, `createShippingLabel`,
-`createInternationalReturn` and `createSendcloudReturn` are each reached from two
-callers: `returnFunction` (a customer, who has a session) and the Stripe webhook,
-which is an inbound request from Stripe with **no cookies**, authenticated by
-signature verification instead.
+**Do not "fix" this.** `updateFinalOrder`, `createShippingLabel` and
+`createInternationalReturn` are each reached from two callers: `returnFunction`
+(a customer, who has a session) and the Stripe webhook, which is an inbound
+request from Stripe with **no cookies**, authenticated by signature
+verification instead.
 
 Adding a session check to any of them breaks every **paid** return: the payment
 succeeds and the return is never created. Each carries a comment saying so.

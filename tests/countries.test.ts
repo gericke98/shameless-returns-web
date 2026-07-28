@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import {
-  EU_ISO2,
   SUPPORTED_COUNTRIES,
   countryDisplayName,
   normalizeCountry,
@@ -13,7 +12,7 @@ import { UNBOUNDED_MAX_GRAMS, feesForCountry } from "@/lib/fees";
 // under Next.js's "react-server" module condition (its own build pipeline).
 // Plain vitest/node resolves the default "react" export, which does not
 // include `cache` in this React 18 build. The two tests below import
-// actions/amphoraReturn.ts and actions/sendcloudReturn.ts, which transitively
+// actions/amphoraReturn.ts, which transitively
 // import db/queries.ts purely to reach `getOrderById`/`getVariantSkusByIds` —
 // neither is called by the functions under test. Stub `cache` as a pass-through
 // so the module graph loads; no behavior under test depends on memoization.
@@ -24,13 +23,13 @@ vi.mock("react", async (importOriginal) => {
 
 // Cut the expensive half of that import graph away entirely.
 //
-// actions/amphoraReturn.ts and actions/sendcloudReturn.ts import db/drizzle,
+// actions/amphoraReturn.ts imports db/drizzle,
 // which calls neon(process.env.DATABASE_URL!) at MODULE SCOPE, plus db/queries,
 // which loads the Shopify Node adapter. Resolving all of that made this file
 // (a) require a DATABASE_URL just to import, and (b) intermittently blow the 5s
 // default timeout under full-suite parallel load — roughly 1 run in 4.
 //
-// The functions under test — isInternationalOrder and euIso2ForReturn — are
+// The function under test — isInternationalOrder — is
 // pure string functions. They touch none of it.
 vi.mock("@/db/drizzle", () => ({ default: {} }));
 vi.mock("@/db/queries", () => ({
@@ -85,25 +84,12 @@ describe("normalizeCountry", () => {
     }
   });
 
-  it("keeps the EU set free of Spain", () => {
-    expect(EU_ISO2.has("ES")).toBe(false);
-    expect(EU_ISO2.has("FR")).toBe(true);
-    expect(EU_ISO2.has("GB")).toBe(false);
-  });
-
-  it("is exactly the 26 EU member states other than Spain", () => {
-    // Guards the invariant that widening SUPPORTED_COUNTRIES never widens the
-    // EU shipping lane. 27 member states minus Spain.
-    expect(EU_ISO2.size).toBe(26);
-  });
-
-  it("names non-EU destinations without enrolling them in the EU lane", () => {
+  it("names the non-EU destinations the dropdown offers", () => {
     for (const code of ["AD", "IS", "JP", "BR", "IL", "AE", "CO"]) {
       expect(
         SUPPORTED_COUNTRIES.some((c) => c.code === code),
         `${code} should be nameable`
       ).toBe(true);
-      expect(EU_ISO2.has(code), `${code} must not be an EU lane`).toBe(false);
     }
   });
 
@@ -206,11 +192,4 @@ describe("country helpers keep their previous semantics", () => {
     expect(isInternationalOrder(null)).toBe(false);
   });
 
-  it("keeps Spain and non-EU out of the Sendcloud EU lane", async () => {
-    const { euIso2ForReturn } = await import("@/actions/sendcloudReturn");
-    expect(euIso2ForReturn("Spain")).toBeNull();
-    expect(euIso2ForReturn("United Kingdom")).toBeNull();
-    expect(euIso2ForReturn("France")).toBe("FR");
-    expect(euIso2ForReturn("Portugal")).toBe("PT");
-  });
 });

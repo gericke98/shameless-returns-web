@@ -1,9 +1,9 @@
-// Seed one shipping_fees row per destination we actually ship to, from the
-// carrier tariff committed at data/return-tariff.csv.
+// Seed shipping_fees from the carrier tariff committed at
+// data/return-tariff.csv — one row per (destination, weight band).
 //
-// Supersedes seed-shipping-fees.ts, which wrote only '*' and 'ES' from the
-// NEXT_PUBLIC_SHIPPING_* env vars and so left every international destination
-// falling through to the Spanish domestic rate.
+// Supersedes seed-shipping-fees.ts, which wrote a single flat pair for '*' and
+// 'ES' from the NEXT_PUBLIC_SHIPPING_* env vars and so charged the Spanish
+// domestic rate at every destination and every weight.
 //
 // The tariff is read from a committed CSV rather than from Google Sheets at
 // runtime, so a price change arrives as a reviewable diff and the values that
@@ -14,17 +14,21 @@ import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { shippingFees } from "../db/schema";
-import { DEFAULT_FEE_KEY } from "../lib/fees";
+import { DEFAULT_FEE_KEY, UNBOUNDED_MAX_GRAMS } from "../lib/fees";
 
 // db/drizzle opens the Neon connection at module scope, so importing it
 // eagerly would make --dry-run require a DATABASE_URL it never uses. Loaded
 // lazily instead, only on the path that actually writes.
 const connect = async () => (await import("../db/drizzle")).default;
 
+const HEADER =
+  "country_code,zone,mode,max_grams,carrier_cost_cents,return_fee_cents,exchange_fee_cents";
+
 type TariffRow = {
   countryCode: string;
   zone: string;
   mode: string;
+  maxGrams: number;
   carrierCostCents: number;
   returnFeeCents: number;
   exchangeFeeCents: number;
@@ -36,18 +40,19 @@ function parseTariff(): TariffRow[] {
 
   // Fail loudly on a reshaped file rather than silently seeding wrong columns —
   // these values are what customers get charged.
-  const expected =
-    "country_code,zone,mode,carrier_cost_1kg_cents,return_fee_cents,exchange_fee_cents";
-  if (header.trim() !== expected) {
-    throw new Error(`data/return-tariff.csv header changed.\n  expected: ${expected}\n  found:    ${header}`);
+  if (header.trim() !== HEADER) {
+    throw new Error(
+      `data/return-tariff.csv header changed.\n  expected: ${HEADER}\n  found:    ${header}`
+    );
   }
 
-  return lines.filter(Boolean).map((line, i) => {
-    const [countryCode, zone, mode, cost, ret, exc] = line.split(",");
-    const row = {
+  const rows = lines.filter(Boolean).map((line, i) => {
+    const [countryCode, zone, mode, maxGrams, cost, ret, exc] = line.split(",");
+    const row: TariffRow = {
       countryCode: countryCode?.trim(),
       zone: zone?.trim(),
       mode: mode?.trim(),
+      maxGrams: Number(maxGrams),
       carrierCostCents: Number(cost),
       returnFeeCents: Number(ret),
       exchangeFeeCents: Number(exc),
@@ -58,110 +63,111 @@ function parseTariff(): TariffRow[] {
       }
     }
     if (!/^[A-Z]{2}$/.test(row.countryCode)) {
-      throw new Error(`data/return-tariff.csv line ${i + 2}: "${row.countryCode}" is not an ISO-2 code`);
+      throw new Error(
+        `data/return-tariff.csv line ${i + 2}: "${row.countryCode}" is not an ISO-2 code`
+      );
     }
     return row;
   });
+
+  // A country whose heaviest band stops short of UNBOUNDED_MAX_GRAMS leaves
+  // every parcel above it unpriced. feesForWeight would fall back to the
+  // heaviest band, which is survivable but silent — catch it here instead.
+  const byCountry = new Map<string, TariffRow[]>();
+  for (const row of rows) {
+    const list = byCountry.get(row.countryCode) ?? [];
+    list.push(row);
+    byCountry.set(row.countryCode, list);
+  }
+  for (const [countryCode, bands] of Array.from(byCountry.entries())) {
+    if (!bands.some((b: TariffRow) => b.maxGrams === UNBOUNDED_MAX_GRAMS)) {
+      throw new Error(
+        `${countryCode} has no unbounded band — a heavy enough parcel would be unpriced`
+      );
+    }
+  }
+
+  return rows;
 }
 
 /**
- * Fees for the '*' row — every destination NOT listed in the tariff.
+ * Bands for the '*' row — every destination NOT listed in the tariff.
  *
- * TODO(santiago): decide this deliberately; it is the one value in this file
- * that is a policy call rather than a transcription of the carrier sheet.
+ * The most expensive fee seen at each band, across every country. Derived
+ * rather than chosen, because the alternative is a hand-picked constant that
+ * silently goes stale the next time the carrier republishes.
  *
- * Today '*' is 500/400 — the Spanish domestic rate, i.e. the CHEAPEST row in
- * the whole tariff. That means the moment Shopify accepts an order from a
- * market we have not priced, its returns ship at the largest possible loss,
- * silently, until somebody notices. Andorra is already one such destination:
- * it is absent from both tariff tabs.
+ * Erring expensive is deliberate. The '*' row used to be 500/400 — the
+ * cheapest in the tariff — so the moment Shopify accepted an order from a
+ * market we had not priced, its returns shipped at the largest possible loss,
+ * silently. An unlisted destination should announce itself, not bleed.
  *
- * The trade-off, concretely:
- *   - Cheap default  -> new markets are never blocked, and every one of them
- *                       loses money quietly. Current behaviour.
- *   - Expensive      -> an unpriced destination is obvious to the customer
- *     default           immediately (they see a high fee and complain), which
- *                       surfaces the gap fast, but overcharges a customer who
- *                       did nothing wrong.
- *
- * The most expensive tariff row is Israel at 8248 cents; the rest-of-world air
- * tier sits at 5268. Returning `{ returnFeeCents: 2500, exchangeFeeCents: 2400 }`
- * would put unlisted destinations in the same band as the other air routes.
+ * Known cost: Andorra is road-adjacent to Spain and would realistically be
+ * cheap, but it appears in neither tariff tab and so lands here. It has never
+ * received an order; revisit if that changes or the carrier quotes it.
  */
-function defaultFees(): { returnFeeCents: number; exchangeFeeCents: number } | null {
-  // Chosen 2026-07-28: the air band. Every destination in the carrier tariff
-  // that is not listed in data/return-tariff.csv is an air route costing
-  // 4519-8248 cents, so an unlisted country belongs in the same band its
-  // neighbours landed in. This also makes an unpriced market visible — the
-  // customer sees a high fee and complains — instead of shipping at the
-  // largest possible loss in silence, which is what 500/400 did.
-  //
-  // Known cost: Andorra is road-adjacent to Spain and would realistically be
-  // cheap, so 2500 overcharges it. It has never received an order; revisit if
-  // that changes or if the carrier quotes it.
-  return { returnFeeCents: 2500, exchangeFeeCents: 2400 };
+function defaultBands(rows: TariffRow[]) {
+  const byBand = new Map<number, { returnFeeCents: number; exchangeFeeCents: number }>();
+  for (const row of rows) {
+    const current = byBand.get(row.maxGrams);
+    byBand.set(row.maxGrams, {
+      returnFeeCents: Math.max(current?.returnFeeCents ?? 0, row.returnFeeCents),
+      exchangeFeeCents: Math.max(current?.exchangeFeeCents ?? 0, row.exchangeFeeCents),
+    });
+  }
+  return Array.from(byBand.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([maxGrams, fees]) => ({ countryCode: DEFAULT_FEE_KEY, maxGrams, ...fees }));
 }
+
+const kg = (grams: number) =>
+  grams >= UNBOUNDED_MAX_GRAMS ? "  any" : `${(grams / 1000).toFixed(1)}kg`;
 
 async function main() {
   const dryRun = process.argv.includes("--dry-run");
   const rows = parseTariff();
-  const fallback = defaultFees();
-
-  // Report the parsed tariff before demanding the policy call, so --dry-run is
-  // useful while '*' is still undecided.
-  if (dryRun) {
-    for (const r of rows) {
-      console.log(
-        `would upsert ${r.countryCode} return=${r.returnFeeCents}c exchange=${r.exchangeFeeCents}c` +
-          `  (${r.mode} ${r.zone}, carrier cost ${r.carrierCostCents}c)`
-      );
-    }
-    console.log(`\n${rows.length} countries parsed from data/return-tariff.csv`);
-  }
-
-  if (!fallback) {
-    throw new Error(
-      `defaultFees() returns null — the '${DEFAULT_FEE_KEY}' row is undecided. ` +
-        `See the TODO in this file; nothing has been written.`
-    );
-  }
 
   const all = [
     ...rows.map((r) => ({
       countryCode: r.countryCode,
+      maxGrams: r.maxGrams,
       returnFeeCents: r.returnFeeCents,
       exchangeFeeCents: r.exchangeFeeCents,
     })),
-    { countryCode: DEFAULT_FEE_KEY, ...fallback },
+    ...defaultBands(rows),
   ];
 
   if (dryRun) {
-    console.log(
-      `would upsert ${DEFAULT_FEE_KEY}  return=${fallback.returnFeeCents}c ` +
-        `exchange=${fallback.exchangeFeeCents}c  (fallback for unlisted destinations)`
-    );
-    console.log(`\ndry run: ${all.length} rows, nothing written`);
+    for (const row of all) {
+      console.log(
+        `would upsert ${row.countryCode.padEnd(2)} ${kg(row.maxGrams)}  ` +
+          `return=${row.returnFeeCents}c exchange=${row.exchangeFeeCents}c`
+      );
+    }
+    const countries = new Set(all.map((r) => r.countryCode)).size;
+    console.log(`\ndry run: ${all.length} rows across ${countries} destinations, nothing written`);
     return;
   }
 
   const db = await connect();
   for (const row of all) {
-    const label = `${row.countryCode.padEnd(2)} return=${row.returnFeeCents}c exchange=${row.exchangeFeeCents}c`;
     await db
       .insert(shippingFees)
       .values(row)
       .onConflictDoUpdate({
-        target: shippingFees.countryCode,
+        // Both key columns. Targeting country_code alone no longer matches the
+        // primary key, and would overwrite the wrong band if it did.
+        target: [shippingFees.countryCode, shippingFees.maxGrams],
         set: {
           returnFeeCents: row.returnFeeCents,
           exchangeFeeCents: row.exchangeFeeCents,
           updatedAt: new Date(),
         },
       });
-    console.log(`upserted ${label}`);
   }
 
-  console.log(`\n${all.length} rows written (${rows.length} countries + '${DEFAULT_FEE_KEY}')`);
+  const countries = new Set(all.map((r) => r.countryCode)).size;
+  console.log(`${all.length} rows written across ${countries} destinations`);
   // No revalidateTag from a plain script — getFeeTable's 300s ceiling picks
   // these up within five minutes. Publish through the dashboard if you need
   // a price live immediately.

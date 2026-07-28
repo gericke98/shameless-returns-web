@@ -12,6 +12,7 @@ import RegaloBlack from "@/public/giftBlack.svg";
 import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
 import { useFees } from "../feesContext";
+import { parcelGrams } from "@/lib/basket";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
@@ -204,9 +205,13 @@ const ThirdWindowBase = ({
       }, 0);
 
     let result = totalPriceDevolver - totalPriceCambio;
+    const active = items.filter((item) => item.action && !item.confirmed);
     const { feeCents } = resolveFee(fees, {
-      hasItems: items.some((item) => item.action && !item.confirmed),
+      hasItems: active.length > 0,
       netAmount: result,
+      // Same function the server charges from, so the price shown here and
+      // the Stripe amount cannot disagree about how heavy the parcel is.
+      grams: parcelGrams(active, allProducts),
     });
 
     if (shipping) {

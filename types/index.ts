@@ -14,6 +14,11 @@ export type ProductVariant = {
   price: string;
   title: string;
   inventoryQuantity: number;
+  /** Variant weight in grams, normalised from whatever unit Shopify reports.
+   *  Null when the variant carries no weight — see `parcelGrams` in
+   *  lib/basket.ts for how that is handled rather than silently treated as
+   *  weightless. */
+  grams: number | null;
 };
 
 export type ProductImage = {

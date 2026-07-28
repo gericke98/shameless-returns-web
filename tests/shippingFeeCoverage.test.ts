@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { SUPPORTED_COUNTRIES } from "@/lib/countries";
+import { UNBOUNDED_MAX_GRAMS } from "@/lib/fees";
 
 // Guards the gap that shipped to production once already: shipping_fees held
 // only '*' and 'ES', so every international destination was charged the
@@ -20,6 +21,7 @@ const UNPRICED_BY_DECISION = new Set(["AD"]);
 
 type TariffRow = {
   countryCode: string;
+  maxGrams: number;
   carrierCostCents: number;
   returnFeeCents: number;
   exchangeFeeCents: number;
@@ -32,14 +34,28 @@ function readTariff(): TariffRow[] {
     .split("\n")
     .slice(1)
     .map((line) => {
-      const [countryCode, , , cost, ret, exc] = line.split(",");
+      const [countryCode, , , maxGrams, cost, ret, exc] = line.split(",");
       return {
         countryCode,
+        maxGrams: Number(maxGrams),
         carrierCostCents: Number(cost),
         returnFeeCents: Number(ret),
         exchangeFeeCents: Number(exc),
       };
     });
+}
+
+function bandsByCountry(tariff: TariffRow[]) {
+  const map = new Map<string, TariffRow[]>();
+  for (const row of tariff) {
+    const list = map.get(row.countryCode) ?? [];
+    list.push(row);
+    map.set(row.countryCode, list);
+  }
+  for (const list of Array.from(map.values())) {
+    list.sort((a, b) => a.maxGrams - b.maxGrams);
+  }
+  return map;
 }
 
 describe("shipping fee coverage", () => {
@@ -81,16 +97,70 @@ describe("shipping fee coverage", () => {
     }
   });
 
-  it("never prices a cheaper destination above a more expensive one", () => {
-    // Bands are derived from carrier cost, so the mapping must stay monotonic:
-    // if A costs less than B to ship, A must not be charged more than B.
-    const sorted = [...tariff].sort((a, b) => a.carrierCostCents - b.carrierCostCents);
-    for (let i = 1; i < sorted.length; i++) {
-      expect(
-        sorted[i].returnFeeCents,
-        `${sorted[i].countryCode} (cost ${sorted[i].carrierCostCents}) charged less than ` +
-          `${sorted[i - 1].countryCode} (cost ${sorted[i - 1].carrierCostCents})`
-      ).toBeGreaterThanOrEqual(sorted[i - 1].returnFeeCents);
+  it("gives every destination an unbounded top band", () => {
+    // Without one, a heavy enough parcel matches no band. feesForWeight would
+    // fall back to the heaviest, which is survivable but silent — and the
+    // silence is the problem, since it undercharges exactly the parcels that
+    // cost the most to ship.
+    const missing = Array.from(bandsByCountry(tariff).entries())
+      .filter(([, bands]) => !bands.some((b) => b.maxGrams === UNBOUNDED_MAX_GRAMS))
+      .map(([countryCode]) => countryCode);
+
+    expect(missing, `no unbounded band: ${missing.join(", ")}`).toEqual([]);
+  });
+
+  it("never charges less for a heavier parcel to the same destination", () => {
+    for (const [countryCode, bands] of Array.from(bandsByCountry(tariff).entries())) {
+      for (let i = 1; i < bands.length; i++) {
+        expect(
+          bands[i].returnFeeCents,
+          `${countryCode}: ${bands[i].maxGrams}g cheaper than ${bands[i - 1].maxGrams}g`
+        ).toBeGreaterThanOrEqual(bands[i - 1].returnFeeCents);
+      }
+    }
+  });
+
+  it("gives every destination the same set of bands", () => {
+    // Uniform bands keep the dashboard a rectangle and make "is X pricier
+    // than Y" answerable. A country with its own thresholds would still work
+    // at runtime, but nobody would notice it drifting.
+    const shapes = new Set(
+      Array.from(bandsByCountry(tariff).values()).map((bands) =>
+        bands.map((b) => b.maxGrams).join("|")
+      )
+    );
+    expect(Array.from(shapes)).toHaveLength(1);
+  });
+
+  // NOT asserted: that within a band, a costlier destination is always
+  // charged more than a cheaper one.
+  //
+  // Banding deliberately maps a range of costs onto one price — the <=1kg
+  // band covers carrier costs from 2153 (US) to 8248 (IL) at a single 2500 —
+  // so ordering by cost is already flattened before weight enters. Heavier
+  // bands then add each carrier's own raw increment on top of that flattened
+  // base, which can reorder neighbours: AE costs 6695 at 2kg and is charged
+  // 4200, while MX costs 6635 and is charged 4600.
+  //
+  // Restoring strict cross-country ordering would mean un-banding the <=1kg
+  // row, i.e. charging Israel its real 8248 rather than the agreed 2500. That
+  // is a pricing decision, not a test fix.
+
+  it("keeps peninsular Spain the cheapest destination in every band", () => {
+    // The one ordering that is a business invariant rather than an artefact:
+    // domestic must never cost more than international.
+    const byBand = bandsByCountry(tariff);
+    const spain = byBand.get("ES");
+    expect(spain, "ES must be priced").toBeDefined();
+
+    for (const [countryCode, bands] of Array.from(byBand.entries())) {
+      if (countryCode === "ES") continue;
+      bands.forEach((band, i) => {
+        expect(
+          band.returnFeeCents,
+          `${countryCode} band ${band.maxGrams}g is cheaper than ES`
+        ).toBeGreaterThanOrEqual(spain![i].returnFeeCents);
+      });
     }
   });
 });

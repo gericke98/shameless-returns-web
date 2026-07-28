@@ -14,7 +14,8 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getFeeTable } from "@/db/fees";
 import { normalizeCountry } from "@/lib/countries";
-import { centsToEuros, feesForCountry } from "@/lib/fees";
+import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
+import { loadBasket } from "@/lib/loadBasket";
 import { isAdmin } from "@/lib/requireAdmin";
 
 export async function validateReturn(product: any, status: string, order: any) {
@@ -75,9 +76,14 @@ export async function validateReturn(product: any, status: string, order: any) {
         // larger gift card.
         normalizeCountry(dbOrder?.shippingCountry)
       );
+      // The band is chosen by the weight of the whole return parcel, not of
+      // this one line — the customer ships one box, and the carrier prices
+      // that box. A missing basket falls back to the lightest band, which
+      // deducts the least and so favours the customer.
+      const loaded = await loadBasket(String(order?.id ?? ""));
+      const fees = feesForWeight(orderFees, loaded?.basket.grams ?? 0);
       const giftCardValue =
-        (Number(trustedLine.price) - centsToEuros(orderFees.returnFeeCents)) *
-        1.15;
+        (Number(trustedLine.price) - centsToEuros(fees.returnFeeCents)) * 1.15;
       const resultGiftCard = await processGiftCardReturn(
         customerId,
         giftCardValue,

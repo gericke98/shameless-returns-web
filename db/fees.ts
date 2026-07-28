@@ -5,7 +5,7 @@
 import { unstable_cache } from "next/cache";
 import db from "./drizzle";
 import { shippingFees } from "./schema";
-import type { CountryFees, FeeTable } from "@/lib/fees";
+import type { FeeBand, FeeTable } from "@/lib/fees";
 
 export const SHIPPING_FEES_TAG = "shipping-fees";
 
@@ -29,12 +29,19 @@ export const SHIPPING_FEES_TAG = "shipping-fees";
 export const getFeeTable = unstable_cache(
   async (): Promise<FeeTable> => {
     const rows = await db.select().from(shippingFees);
-    const table: Record<string, CountryFees> = {};
+    const table: Record<string, FeeBand[]> = {};
     for (const row of rows) {
-      table[row.countryCode] = {
+      (table[row.countryCode] ??= []).push({
+        maxGrams: row.maxGrams,
         returnFeeCents: row.returnFeeCents,
         exchangeFeeCents: row.exchangeFeeCents,
-      };
+      });
+    }
+    // feesForWeight returns the first band a parcel fits, so ascending order
+    // is a precondition rather than a nicety. Sorting here means neither the
+    // query nor any caller has to remember it.
+    for (const bands of Object.values(table)) {
+      bands.sort((a, b) => a.maxGrams - b.maxGrams);
     }
     return table;
   },

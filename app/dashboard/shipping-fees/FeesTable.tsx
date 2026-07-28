@@ -5,13 +5,22 @@ import { useState } from "react";
 
 type Row = {
   countryCode: string;
+  maxGrams: number;
   label: string;
+  /** Human-readable weight band, e.g. "≤ 1 kg". */
+  bandLabel: string;
   returnFeeCents: number;
   exchangeFeeCents: number;
   hasRow: boolean;
 };
 
 const toEuros = (cents: number) => (cents / 100).toFixed(2);
+
+// A country now has several rows, one per weight band, so the country code
+// alone no longer identifies a row. Saving Germany's 1kg band must not
+// disable its 5kg band.
+const rowKey = (row: Pick<Row, "countryCode" | "maxGrams">) =>
+  `${row.countryCode}:${row.maxGrams}`;
 
 // Each row is its own <form>, so in-flight tracking is per-row rather than a
 // single global flag — saving Germany's row must not disable France's.
@@ -28,23 +37,23 @@ export const FeesTable = ({ rows }: { rows: Row[] }) => {
   const [status, setStatus] = useState<Record<string, string>>({});
 
   const onSave =
-    (countryCode: string) => async (e: React.FormEvent<HTMLFormElement>) => {
+    (key: string) => async (e: React.FormEvent<HTMLFormElement>) => {
       e.preventDefault();
       // Gate the submit handler itself, not just the button's `disabled`
       // attribute: pressing Enter inside a text input fires `onSubmit`
       // directly and does not consult the button's disabled state.
-      if (saving[countryCode]) return;
+      if (saving[key]) return;
 
       const formData = new FormData(e.currentTarget);
-      setSaving((prev) => ({ ...prev, [countryCode]: true }));
+      setSaving((prev) => ({ ...prev, [key]: true }));
       try {
         const result = await saveShippingFee(formData);
         setStatus((prev) => ({
           ...prev,
-          [countryCode]: result.ok ? "Saved" : result.error ?? "Failed",
+          [key]: result.ok ? "Saved" : result.error ?? "Failed",
         }));
       } finally {
-        setSaving((prev) => ({ ...prev, [countryCode]: false }));
+        setSaving((prev) => ({ ...prev, [key]: false }));
       }
     };
 
@@ -53,6 +62,7 @@ export const FeesTable = ({ rows }: { rows: Row[] }) => {
       <thead>
         <tr className="border-b text-left">
           <th className="py-2">Country</th>
+          <th className="py-2">Weight</th>
           <th className="py-2">Return fee (€)</th>
           <th className="py-2">Exchange fee (€)</th>
           <th className="py-2" />
@@ -61,21 +71,26 @@ export const FeesTable = ({ rows }: { rows: Row[] }) => {
       </thead>
       <tbody>
         {rows.map((row) => {
-          const isSaving = Boolean(saving[row.countryCode]);
+          const key = rowKey(row);
+          const isSaving = Boolean(saving[key]);
           return (
-            <tr key={row.countryCode} className="border-b">
+            <tr key={key} className="border-b">
               <td className="py-2">
                 {row.label}
                 {!row.hasRow && (
                   <span className="ml-2 text-xs text-gray-500">inherited</span>
                 )}
               </td>
+              <td className="py-2 whitespace-nowrap text-gray-600">
+                {row.bandLabel}
+              </td>
               <td colSpan={4}>
                 <form
-                  onSubmit={onSave(row.countryCode)}
+                  onSubmit={onSave(key)}
                   className="flex items-center gap-3 py-1"
                 >
                   <input type="hidden" name="countryCode" value={row.countryCode} />
+                  <input type="hidden" name="maxGrams" value={row.maxGrams} />
                   <input
                     name="returnFee"
                     defaultValue={toEuros(row.returnFeeCents)}
@@ -97,7 +112,7 @@ export const FeesTable = ({ rows }: { rows: Row[] }) => {
                   >
                     {isSaving ? "Saving…" : "Save"}
                   </button>
-                  <span className="text-xs text-gray-600">{status[row.countryCode]}</span>
+                  <span className="text-xs text-gray-600">{status[key]}</span>
                 </form>
               </td>
             </tr>

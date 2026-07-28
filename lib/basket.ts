@@ -58,6 +58,47 @@ export function applyGlobalDiscount(
  * their replacement variant (falling back to the original price when the
  * variant cannot be found).
  */
+/**
+ * Weight a variant contributes when the catalogue does not say.
+ *
+ * Only reachable for a variant that has been deleted or archived in Shopify
+ * since the order was placed — every one of the 217 live variants carries a
+ * weight. Zero would be the dangerous default: it makes a parcel look lighter
+ * than it is and drops it into a cheaper band, so an unknown item would
+ * *reduce* the fee. This is the value already declared to Sendcloud per unit,
+ * and sits between the catalogue's median (423g) and p75 (550g).
+ */
+export const FALLBACK_ITEM_GRAMS = 500;
+
+/**
+ * Weight of the parcel the customer ships back, in grams.
+ *
+ * The parcel holds the items being sent back — the ORIGINAL variants — even
+ * for an exchange, where the replacement travels separately in the other
+ * direction and is not part of this shipment.
+ *
+ * Unlike the price sums below, this multiplies by quantity: two units of a
+ * garment genuinely weigh twice as much, whatever the line's price represents.
+ */
+export function parcelGrams(
+  items: OrderItem[],
+  discountedProducts: Product[]
+): number {
+  const byVariantId = new Map<string, ProductVariant>();
+  for (const product of discountedProducts) {
+    for (const edge of product.variants.edges) {
+      byVariantId.set(String(edge.node.id), edge.node);
+    }
+  }
+
+  return items.reduce((sum, item) => {
+    const variant = byVariantId.get(String(item.variant_id));
+    const grams = variant?.grams ?? FALLBACK_ITEM_GRAMS;
+    const quantity = Math.max(1, Number(item.quantity) || 1);
+    return sum + grams * quantity;
+  }, 0);
+}
+
 export function valueBasket(
   items: OrderItem[],
   discountedProducts: Product[]
@@ -66,6 +107,7 @@ export function valueBasket(
   exchangePrice: number;
   netAmount: number;
   hasItems: boolean;
+  grams: number;
 } {
   const active = items.filter((item) => item.action && !item.confirmed);
 
@@ -94,5 +136,6 @@ export function valueBasket(
     exchangePrice,
     netAmount: returnPrice - exchangePrice,
     hasItems: active.length > 0,
+    grams: parcelGrams(active, discountedProducts),
   };
 }

@@ -7,6 +7,7 @@ import {
   boolean,
   timestamp,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 // Creo una tabla que contenga las orders que han sido editadas
@@ -78,18 +79,37 @@ export const users = pgTable("users", {
 });
 
 /**
- * Return/exchange shipping fee per destination country.
+ * Return/exchange shipping fee per destination country and parcel weight.
  *
- * One row per ISO-2 country, plus a single row with country_code = '*' that
- * every unlisted or unrecognised country falls back to. Amounts are integer
- * cents — never floats, which is how you end up charging 4.199999999.
+ * One row per (ISO-2 country, weight band), plus the same bands under
+ * country_code = '*' that every unlisted or unrecognised country falls back
+ * to. Amounts are integer cents — never floats, which is how you end up
+ * charging 4.199999999.
+ *
+ * `max_grams` is the INCLUSIVE upper bound of the band. Bands for a country
+ * must be contiguous from zero, and the heaviest one carries
+ * UNBOUNDED_MAX_GRAMS so that no parcel can ever fall through unpriced —
+ * a parcel with no matching band would otherwise resolve to a zero fee.
+ *
+ * Weight matters because the carrier prices by it, steeply: a 2.5kg return
+ * from the US costs 86.97 EUR against 21.53 EUR for the same parcel under
+ * 1kg. Before this column the whole table charged the sub-1kg price at every
+ * weight, which was accurate for the ~86% of parcels under a kilo and badly
+ * wrong for multi-garment baskets.
  */
-export const shippingFees = pgTable("shipping_fees", {
-  countryCode: text("country_code").primaryKey(),
-  returnFeeCents: integer("return_fee_cents").notNull(),
-  exchangeFeeCents: integer("exchange_fee_cents").notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+export const shippingFees = pgTable(
+  "shipping_fees",
+  {
+    countryCode: text("country_code").notNull(),
+    maxGrams: integer("max_grams").notNull(),
+    returnFeeCents: integer("return_fee_cents").notNull(),
+    exchangeFeeCents: integer("exchange_fee_cents").notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.countryCode, table.maxGrams] }),
+  })
+);
 
 /**
  * Failed order-lookup attempts, for rate limiting.

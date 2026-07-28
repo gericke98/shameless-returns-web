@@ -10,7 +10,16 @@ export type CountryFees = {
   readonly exchangeFeeCents: number;
 };
 
-export type FeeTable = Readonly<Record<string, CountryFees>>;
+/** A fee pair that applies up to and including `maxGrams` of parcel weight. */
+export type FeeBand = CountryFees & {
+  readonly maxGrams: number;
+};
+
+/** A country's bands, ascending by maxGrams. Order is a precondition of
+ *  `feesForWeight` — it returns the first band the parcel fits. */
+export type CountryBands = readonly FeeBand[];
+
+export type FeeTable = Readonly<Record<string, CountryBands>>;
 
 export type FeeKind = "return" | "exchange" | "none";
 
@@ -20,24 +29,58 @@ export type Basket = {
   /** Value returned minus value of replacement items, in euros. Positive
    *  means the customer is owed money. */
   readonly netAmount: number;
+  /** Weight of the parcel the customer ships back, in grams. The carrier
+   *  prices by this, so it decides which band applies. */
+  readonly grams: number;
 };
 
 /** Row that every unlisted or unrecognised country falls back to. */
 export const DEFAULT_FEE_KEY = "*";
 
+/**
+ * The heaviest band's upper bound — "no parcel is heavier than this".
+ *
+ * Postgres `integer` tops out here, and 2147483 kg is comfortably beyond any
+ * parcel a courier would accept. Every country must have exactly one band at
+ * this value, or a heavy enough parcel would match no band and resolve to a
+ * zero fee.
+ */
+export const UNBOUNDED_MAX_GRAMS = 2147483647;
+
 const ZERO: CountryFees = { returnFeeCents: 0, exchangeFeeCents: 0 };
 
 /**
- * Pick the fee pair for a country. An unknown, unlisted or null country
- * falls back to the '*' row; if that row is missing too, fees are zero
- * rather than NaN — undercharging is recoverable, a NaN checkout is not.
+ * Pick the band list for a country. An unknown, unlisted or null country
+ * falls back to the '*' bands; if those are missing too, the result is empty
+ * and `feesForWeight` yields zero rather than NaN — undercharging is
+ * recoverable, a NaN checkout is not.
  */
 export function feesForCountry(
   table: FeeTable,
   country: string | null | undefined
-): CountryFees {
-  if (country && table[country]) return table[country];
-  return table[DEFAULT_FEE_KEY] ?? ZERO;
+): CountryBands {
+  if (country && table[country]?.length) return table[country];
+  return table[DEFAULT_FEE_KEY] ?? [];
+}
+
+/**
+ * The fee pair for a parcel of `grams`: the first band whose upper bound it
+ * fits under.
+ *
+ * A negative or non-finite weight is treated as the lightest band rather than
+ * throwing — a bad weight should not be able to block a return, and the
+ * lightest band is the one a zero-weight parcel would honestly get.
+ */
+export function feesForWeight(bands: CountryBands, grams: number): CountryFees {
+  if (bands.length === 0) return ZERO;
+  const safe = Number.isFinite(grams) && grams > 0 ? grams : 0;
+  for (const band of bands) {
+    if (safe <= band.maxGrams) return band;
+  }
+  // Only reachable if the heaviest band is below UNBOUNDED_MAX_GRAMS, which
+  // the seed and its test forbid. Charging the heaviest band beats charging
+  // nothing.
+  return bands[bands.length - 1];
 }
 
 /**
@@ -48,10 +91,14 @@ export function feesForCountry(
  * otherwise       -> the customer owes or breaks even: exchange fee.
  */
 export function resolveFee(
-  fees: CountryFees,
+  bands: CountryBands,
   basket: Basket
 ): { feeCents: number; kind: FeeKind } {
   if (!basket.hasItems) return { feeCents: 0, kind: "none" };
+  // Weight selects the band; Rule A then selects which of its two fees
+  // applies. The two are independent — a heavier parcel does not change
+  // whether this is a return or an exchange.
+  const fees = feesForWeight(bands, basket.grams);
   if (basket.netAmount > 0) {
     return { feeCents: fees.returnFeeCents, kind: "return" };
   }

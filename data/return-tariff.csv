@@ -1,0 +1,44 @@
+country_code,zone,mode,carrier_cost_1kg_cents,return_fee_cents,exchange_fee_cents
+AE,Emiratos Árabes Unidos,aéreo,5026,2500,2400
+AR,Argentina,aéreo,5026,2500,2400
+AT,Austria,terrestre,1250,1500,1400
+AU,Australia,aéreo,5026,2500,2400
+BE,Bélgica,terrestre,1015,1000,900
+BG,Bulgaria,terrestre,1786,1500,1400
+BR,Brasil,aéreo,5026,2500,2400
+CA,Canadá,aéreo,4519,2500,2400
+CH,Suiza,aéreo,4310,2500,2400
+CL,Chile,aéreo,5026,2500,2400
+CO,Colombia,aéreo,5026,2500,2400
+CY,Chipre,aéreo,5375,2500,2400
+CZ,Chequia,terrestre,1250,1500,1400
+DE,Alemania,terrestre,1015,1000,900
+DK,Dinamarca,terrestre,1016,1000,900
+EE,Estonia,terrestre,1786,1500,1400
+ES,España Peninsular,terrestre,401,500,400
+FI,Finlandia,terrestre,1016,1000,900
+FR,Francia,terrestre,1053,1000,900
+GB,Reino Unido,terrestre,1660,1500,1400
+GR,Grecia,terrestre,1250,1500,1400
+HR,Croacia,terrestre,1786,1500,1400
+HU,Hungría,terrestre,1786,1500,1400
+IE,Irlanda,aéreo,5375,2500,2400
+IL,Israel,aéreo,8248,2500,2400
+IS,Islandia,aéreo,5268,2500,2400
+IT,Italia,terrestre,1015,1000,900
+JP,Japón,aéreo,5026,2500,2400
+LT,Lituania,terrestre,1786,1500,1400
+LU,Luxemburgo,terrestre,1250,1500,1400
+LV,Letonia,terrestre,1786,1500,1400
+MT,Malta,aéreo,5375,2500,2400
+MX,México,aéreo,4519,2500,2400
+NL,Países Bajos,terrestre,1015,1000,900
+NO,Noruega,aéreo,4310,2500,2400
+PL,Polonia,terrestre,1250,1500,1400
+PT,Portugal,terrestre,903,1000,900
+RO,Rumanía,terrestre,1786,1500,1400
+SE,Suecia,terrestre,1250,1500,1400
+SI,Eslovenia,terrestre,1786,1500,1400
+SK,Eslovaquia,terrestre,1786,1500,1400
+US,Estados Unidos de América,aéreo,2153,2500,2400
+UY,Uruguay,aéreo,5026,2500,2400

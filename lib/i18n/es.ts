@@ -61,17 +61,19 @@ export const es = {
     title: "Método de devolución",
     subtitle:
       "Escoge el método de envío que quieres usar para devolver los productos seleccionados",
-    // Domestic returns are collected from the customer's address; only
-    // international ones are dropped off at a point.
+    // Two different flows, not two wordings for one: a Spanish parcel is
+    // dropped at a Correos point, an international one is collected from the
+    // customer's address by whoever Amphora routes it to.
     pickup: "Recogida a domicilio",
     pickupTitle: "Recogida a domicilio",
     pickupBody:
       "Valida tu dirección para que podamos organizar la recogida. El transportista pasará a recoger tu paquete en esa dirección.",
-    dropoff: "Entrega en punto de recogida",
+    dropoff: "Entrega en punto de recogida Correos",
     cost: "Coste",
     dropoffTitle: "Entrega en punto de recogida",
     dropoffBody:
-      "Valida tu dirección de envío para poder generar la etiqueta de devolución que recibirás en tu email. En la etiqueta te indicaremos dónde entregar tu paquete.",
+      "Valida tu dirección de envío para poder generar la etiqueta de devolución que recibirás en tu email, con la que podrás llevar tu paquete a un punto de recogida de Correos.",
+    dropoffLink: "Ver listado",
     name: "Nombre",
     address: "Calle y número",
     address2: "Apartamento, local, etc (Opcional)",

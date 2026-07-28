@@ -60,17 +60,19 @@ export const en: Dictionary = {
   second: {
     title: "Return method",
     subtitle: "Choose the shipping method you want to use to return the selected items",
-    // Domestic returns are collected from the customer's address; only
-    // international ones are dropped off at a point.
+    // Two different flows, not two wordings for one: a Spanish parcel is
+    // dropped at a Correos point, an international one is collected from the
+    // customer's address by whoever Amphora routes it to.
     pickup: "Pickup from your address",
     pickupTitle: "Pickup from your address",
     pickupBody:
       "Confirm your address so we can arrange the collection. The carrier will pick your parcel up there.",
-    dropoff: "Drop off at a pickup point",
+    dropoff: "Drop off at a Correos pickup point",
     cost: "Cost",
     dropoffTitle: "Drop off at a pickup point",
     dropoffBody:
-      "Confirm your shipping address so we can generate the return label you will receive by email. Your label will tell you where to drop your parcel off.",
+      "Confirm your shipping address so we can generate the return label you will receive by email, which you can use to drop your parcel at a Correos pickup point.",
+    dropoffLink: "See locations",
     name: "Name",
     address: "Street and number",
     address2: "Apartment, unit, etc. (Optional)",

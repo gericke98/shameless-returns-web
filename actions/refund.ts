@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getFeeTable } from "@/db/fees";
 import { normalizeCountry } from "@/lib/countries";
+import { resolveZone } from "@/lib/zones";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { isAdmin } from "@/lib/requireAdmin";
@@ -74,7 +75,7 @@ export async function validateReturn(product: any, status: string, order: any) {
         feeTable,
         // From the database, not the caller's object: a lower fee here means a
         // larger gift card.
-        normalizeCountry(dbOrder?.shippingCountry)
+        resolveZone(dbOrder?.shippingCountry, dbOrder?.shippingZip)
       );
       // The band is chosen by the weight of the whole return parcel, not of
       // this one line — the customer ships one box, and the carrier prices

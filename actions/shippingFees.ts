@@ -5,6 +5,7 @@ import { SHIPPING_FEES_TAG } from "@/db/fees";
 import { shippingFees } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
 import { DEFAULT_FEE_KEY } from "@/lib/fees";
+import { SUB_ZONES } from "@/lib/zones";
 import { isAdmin } from "@/lib/requireAdmin";
 import { revalidateTag } from "next/cache";
 import { parseEurosToCents } from "./parseEurosToCents";
@@ -19,10 +20,15 @@ export async function saveShippingFee(
   }
 
   const rawCountry = String(formData.get("countryCode") ?? "");
+  // Sub-zones (ES-CN and friends) are not countries and would not survive
+  // normalizeCountry, but they are legitimate fee-table keys — they are
+  // resolved from the postal code rather than picked by the customer.
   const countryCode =
-    rawCountry === DEFAULT_FEE_KEY ? DEFAULT_FEE_KEY : normalizeCountry(rawCountry);
+    rawCountry === DEFAULT_FEE_KEY || (SUB_ZONES as readonly string[]).includes(rawCountry)
+      ? rawCountry
+      : normalizeCountry(rawCountry);
   if (!countryCode) {
-    return { ok: false, error: `Unsupported country: ${rawCountry}` };
+    return { ok: false, error: `Unsupported destination: ${rawCountry}` };
   }
 
   // Part of the primary key, so a bad value would silently create a new band

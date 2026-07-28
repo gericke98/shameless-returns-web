@@ -5,6 +5,7 @@ import { applyGlobalDiscount } from "@/lib/basket";
 import { getFeeTable } from "@/db/fees";
 import { feesForCountry } from "@/lib/fees";
 import { normalizeCountry } from "@/lib/countries";
+import { resolveZone } from "@/lib/zones";
 import { FeesProvider } from "./feesContext";
 import { cookies } from "next/headers";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
@@ -66,7 +67,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
   const feeTable = await getFeeTable();
   const fees = feesForCountry(
     feeTable,
-    normalizeCountry(orderData.shippingCountry)
+    resolveZone(orderData.shippingCountry, orderData.shippingZip)
   );
 
   const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);

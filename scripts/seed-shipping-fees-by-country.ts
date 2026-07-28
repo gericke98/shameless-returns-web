@@ -89,7 +89,17 @@ function parseTariff(): TariffRow[] {
  * would put unlisted destinations in the same band as the other air routes.
  */
 function defaultFees(): { returnFeeCents: number; exchangeFeeCents: number } | null {
-  return null;
+  // Chosen 2026-07-28: the air band. Every destination in the carrier tariff
+  // that is not listed in data/return-tariff.csv is an air route costing
+  // 4519-8248 cents, so an unlisted country belongs in the same band its
+  // neighbours landed in. This also makes an unpriced market visible — the
+  // customer sees a high fee and complains — instead of shipping at the
+  // largest possible loss in silence, which is what 500/400 did.
+  //
+  // Known cost: Andorra is road-adjacent to Spain and would realistically be
+  // cheap, so 2500 overcharges it. It has never received an order; revisit if
+  // that changes or if the carrier quotes it.
+  return { returnFeeCents: 2500, exchangeFeeCents: 2400 };
 }
 
 async function main() {

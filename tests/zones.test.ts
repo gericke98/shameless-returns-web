@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
+import { isInternationalOrder } from "@/lib/countries";
 import { SUB_ZONES, ZONE_KEY_PATTERN, resolveZone } from "@/lib/zones";
 
 // Spain is one country and five carrier zones. A return from Ceuta costs
@@ -84,5 +87,42 @@ describe("resolveZone", () => {
     for (const zone of SUB_ZONES) {
       expect(reachable.has(zone), `${zone} is unreachable`).toBe(true);
     }
+  });
+});
+
+describe("lib/countries stays client-safe", () => {
+  // isInternationalOrder moved here from actions/amphoraReturn.ts so the
+  // return-method screen — a client component — can decide between "we collect
+  // it" and "drop it off" without pulling the Neon client and the Amphora API
+  // into the browser bundle. Moving it back would compile fine and break the
+  // build only at bundling time, so guard the property directly.
+  const source = readFileSync(resolve(process.cwd(), "lib/countries.ts"), "utf8");
+
+  it("imports nothing server-only", () => {
+    // Only the module specifiers, not the whole file: the header comment says
+    // "must not import from db/ or any server-only code", and scanning raw
+    // text flags that sentence as a violation of itself.
+    const specifiers = Array.from(
+      source.matchAll(/(?:^|\n)\s*(?:import|export)[^\n]*?from\s+["']([^"']+)["']/g)
+    ).map((m) => m[1]);
+
+    const forbidden = ["db/", "drizzle", "next/headers", "next/cache", "server-only", "axios"];
+    const found = specifiers.filter((mod) => forbidden.some((f) => mod.includes(f)));
+
+    expect(found, `server-only imports in lib/countries.ts: ${found.join(", ")}`).toEqual([]);
+  });
+
+  it("still exports the predicate the international flow routes on", () => {
+    expect(isInternationalOrder("ES")).toBe(false);
+    expect(isInternationalOrder("España")).toBe(false);
+    // Spanish islands and enclaves stay on the domestic flow, which is why
+    // this is not the same question resolveZone answers.
+    expect(isInternationalOrder("ES")).toBe(false);
+    expect(isInternationalOrder("IT")).toBe(true);
+    expect(isInternationalOrder("Wakanda")).toBe(true);
+    // Empty is NOT international — an order with no country must not be
+    // routed abroad on the strength of a missing field.
+    expect(isInternationalOrder("")).toBe(false);
+    expect(isInternationalOrder(null)).toBe(false);
   });
 });

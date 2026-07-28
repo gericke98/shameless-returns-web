@@ -61,6 +61,12 @@ export const es = {
     title: "Método de devolución",
     subtitle:
       "Escoge el método de envío que quieres usar para devolver los productos seleccionados",
+    // Domestic returns are collected from the customer's address; only
+    // international ones are dropped off at a point.
+    pickup: "Recogida a domicilio",
+    pickupTitle: "Recogida a domicilio",
+    pickupBody:
+      "Valida tu dirección para que podamos organizar la recogida. El transportista pasará a recoger tu paquete en esa dirección.",
     dropoff: "Entrega en punto de recogida",
     cost: "Coste",
     dropoffTitle: "Entrega en punto de recogida",

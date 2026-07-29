@@ -135,7 +135,7 @@ export const SecondWindowForm = ({
       </div>
       <button
         type="submit"
-        className="bg-cyan-800 py-4 lg:-my-8 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
+        className="bg-white text-black border border-black py-4 lg:-my-8 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold"
       >
         {t.common.continue}
       </button>

@@ -59,7 +59,7 @@ export const SecondWindowForm = ({
   };
 
   return (
-    <form className="mt-10 w-full flex flex-col gap-8" onSubmit={handleSubmit}>
+    <form className="mt-10 w-full flex flex-col gap-4" onSubmit={handleSubmit}>
       <input hidden name="id" value={order.id} readOnly />
       <FormInput
         name="name"

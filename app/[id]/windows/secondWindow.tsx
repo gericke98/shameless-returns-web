@@ -74,12 +74,12 @@ const SecondWindowBase = ({
       />
       <div className="space-y-8 p-0">
         {/* Title */}
-        <h3 className="font-bold text-xl sm:text-2xl text-left mt-2">
+        <h3 className="font-bold text-lg sm:text-xl text-left mt-2">
           {t.second.title}
         </h3>
 
         {/* Subtitle */}
-        <p className="mt-3 text-sm sm:text-base text-gray-700">
+        <p className="mt-3 text-xs sm:text-sm text-gray-700">
           {t.second.subtitle}
         </p>
 
@@ -87,9 +87,10 @@ const SecondWindowBase = ({
         On mobile, stack vertically.
         On larger screens, keep the "icon" and "info" side by side.
       */}
-        <div className="w-full flex flex-col sm:flex-row rounded-lg my-5 border-2 border-black hover:cursor-pointer">
-          {/* Black Icon Container */}
-          <div className="bg-black flex flex-row sm:flex-col items-center justify-center p-2 sm:p-3">
+        <div className="w-full flex flex-col sm:flex-row rounded-lg my-5 border-2 border-shameless-orange hover:cursor-pointer">
+          {/* Selected-method icon block — orange, matching the refund cards on
+              the next screen. Was black. */}
+          <div className="bg-shameless-orange flex flex-row sm:flex-col items-center justify-center p-2 sm:p-3">
             <IoLocationSharp size={30} color="white" />
           </div>
 
@@ -132,7 +133,7 @@ const SecondWindowBase = ({
           {/* Title row */}
           <div className="flex flex-row items-center gap-2">
             <IoLocationSharp size={30} color="black" />
-            <h3 className="font-bold text-base sm:text-lg">
+            <h3 className="font-bold text-sm sm:text-base">
               {isInternational ? t.second.pickupTitle : t.second.dropoffTitle}
             </h3>
           </div>
@@ -140,7 +141,7 @@ const SecondWindowBase = ({
           {/* The locator link belongs to the domestic flow only — it points at
               Correos offices, which are no use to someone in Italy whose
               parcel is being collected from their door. */}
-          <p className="mt-2 text-sm sm:text-base font-light">
+          <p className="mt-2 text-xs sm:text-sm font-light">
             {isInternational ? t.second.pickupBody : t.second.dropoffBody}
             {!isInternational && (
               <>

@@ -29,7 +29,7 @@ const FirstWindowBase = ({
       <Progress value={25} className="mb-8" />
       <div className="space-y-8">
         <div className="space-y-2">
-          <h3 className="text-3xl font-bold text-gray-900">
+          <h3 className="text-2xl font-bold text-gray-900">
             {t.first.orderTitle} {name}
           </h3>
           <h5 className="text-base text-gray-600">{t.first.selectPrompt}</h5>

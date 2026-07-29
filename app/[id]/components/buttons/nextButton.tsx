@@ -15,7 +15,10 @@ export const ContinueButton = ({
   return (
     <button
       className={cn(
-        "bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold",
+        // White, per the brand refresh. The border is load-bearing: the card
+        // behind this button is the off-white paper texture, so a borderless
+        // white button would disappear into it.
+        "bg-white text-black border border-black py-4 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold",
         position === 2 && "hidden",
         !hasChanges && "hidden"
       )}

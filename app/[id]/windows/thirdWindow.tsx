@@ -48,7 +48,7 @@ const StoreCredit = ({
   <div
     className={cn(
       "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer transition-colors",
-      isSelected ? "bg-black" : "bg-white border border-gray-300"
+      isSelected ? "bg-shameless-orange" : "bg-white border border-gray-300"
     )}
     onClick={onClick}
   >
@@ -116,7 +116,7 @@ const OriginalPayment = ({
   <div
     className={cn(
       "rounded-xl w-full flex flex-col p-3 gap-3 cursor-pointer transition-colors",
-      isSelected ? "bg-black" : "bg-white border border-gray-300"
+      isSelected ? "bg-shameless-orange" : "bg-white border border-gray-300"
     )}
     onClick={onClick}
   >

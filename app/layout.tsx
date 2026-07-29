@@ -1,15 +1,10 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import { cookies } from "next/headers";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
 import { siteConfig } from "@/lib/config";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
-
-const inter = Inter({
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: `${siteConfig.name} | ${siteConfig.description}`,
@@ -30,7 +25,9 @@ export default function RootLayout({
 
   return (
     <html lang={locale}>
-      <body className={inter.className}>
+      {/* Type comes from the Tailwind `sans` stack (Helvetica, then Arial),
+          not a webfont — see tailwind.config.ts. */}
+      <body>
         <Providers>
           <main>{children}</main>
           <Toaster />

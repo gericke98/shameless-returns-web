@@ -116,7 +116,9 @@ const ProductInfo = ({
   locale: Locale;
 }) => (
   <div className="flex flex-col w-full gap-1 items-start">
-    <span className="lg:text-base text-sm text-left font-bold leading-tight text-black">
+    {/* Title and price were both font-bold, which made the list read as a wall
+        of bold. The title carries the emphasis now; the price sits back. */}
+    <span className="lg:text-base text-sm text-left font-semibold leading-tight text-black">
       {title}
     </span>
     <VariantInfo
@@ -125,7 +127,7 @@ const ProductInfo = ({
       newVariant={newVariant}
       isNewProduct={isNewProduct}
     />
-    <span className="text-sm text-left font-bold leading-tight text-black">
+    <span className="text-sm text-left font-normal leading-tight text-black">
       {formatEuros(Number(price), locale)}
     </span>
     {action && (
@@ -294,7 +296,9 @@ export const ProductLineClient = ({
   return (
     <div
       className={cn(
-        "w-full p-2 hover:bg-white hover:cursor-pointer",
+        // rounded-2xl so the hover/selected white block has soft corners
+        // instead of the square ones it used to render with.
+        "w-full p-2 rounded-2xl transition-colors hover:bg-white hover:cursor-pointer",
         orderProduct.confirmed && "pointer-events-none cursor-none"
       )}
     >

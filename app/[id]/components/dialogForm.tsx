@@ -547,7 +547,7 @@ export const FormProduct = ({
                           </div>
 
                           {new_product_change?.id === p.id && (
-                            <span className="absolute inset-y-0 right-0 flex items-center pr-4 text-cyan-800">
+                            <span className="absolute inset-y-0 right-0 flex items-center pr-4 text-shameless-orange">
                               <svg
                                 className="h-5 w-5"
                                 xmlns="http://www.w3.org/2000/svg"
@@ -607,7 +607,7 @@ export const FormProduct = ({
         <button
           type="submit"
           disabled={isSubmitting}
-          className="bg-cyan-800 text-white py-3 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full mt-8 font-bold"
+          className="bg-white text-black border border-black py-3 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full mt-8 font-bold"
         >
           {t.dialog.confirm}
         </button>
@@ -618,7 +618,10 @@ export const FormProduct = ({
       <button
         onClick={handleAnular}
         disabled={isSubmitting}
-        className="bg-white border border-cyan-800 py-3 rounded-full hover:bg-cyan-800 focus:bg-cyan-800 flex items-center justify-center w-full -mt-2 mb-2 hover:text-white font-bold"
+        // Secondary to the confirm button above, which is white-on-black-border.
+        // A grey border and grey text keep the two distinguishable now that the
+        // primary is no longer a filled colour.
+        className="bg-white text-gray-600 border border-gray-300 py-3 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full -mt-2 mb-2 font-bold"
       >
         {t.dialog.clear}
       </button>
@@ -626,7 +629,7 @@ export const FormProduct = ({
       {isSubmitting && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-white bg-opacity-80 z-10">
           <svg
-            className="animate-spin h-8 w-8 text-cyan-800"
+            className="animate-spin h-8 w-8 text-shameless-orange"
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
             viewBox="0 0 24 24"
@@ -645,7 +648,7 @@ export const FormProduct = ({
               d="M4 12a8 8 0 018-8v8H4z"
             ></path>
           </svg>
-          <span className="mt-2 text-sm text-cyan-800">{t.common.processing}</span>
+          <span className="mt-2 text-sm text-shameless-orange">{t.common.processing}</span>
         </div>
       )}
     </div>

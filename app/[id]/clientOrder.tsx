@@ -42,7 +42,7 @@ export const ClientOrder = ({
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between bg-black-pattern gap-10 pb-20">
+    <div className="flex min-h-screen flex-col items-center justify-between bg-brand-paper gap-10 pb-20">
       <Header />
       <div className="flex-1 flex items-center justify-center w-full">
         <div className="bg-white-pattern flex flex-col lg:w-[30%] w-[85%] rounded-3xl items-center py-10 px-4 lg:px-6 min-h-[500px]">

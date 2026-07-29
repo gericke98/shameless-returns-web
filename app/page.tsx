@@ -40,7 +40,7 @@ const Home = ({ searchParams }: HomeProps) => {
   const sessionExpired = searchParams?.session === "expired";
 
   return (
-    <main className="min-h-screen grid place-items-center bg-black-pattern">
+    <main className="min-h-screen grid place-items-center bg-brand-paper">
       <LocaleProvider locale={locale}>
         <div className="bg-white rounded-3xl py-5 px-4 lg:px-6 w-[85%] lg:w-[30%] flex flex-col items-center">
           <div className="w-full flex justify-end">

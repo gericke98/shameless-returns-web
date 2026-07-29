@@ -104,13 +104,13 @@ export const SummaryComponent = ({
     <div className="w-full h-full flex flex-col mt-2 p-1 sm:mt-5 sm:p-2">
       <h3 className="text-sm tracking-wider">{t.summary.heading}</h3>
 
-      <Accordion type="multiple" className="w-full mt-2 sm:mt-4 space-y-3">
+      <Accordion type="multiple" className="w-full mt-2 sm:mt-4 space-y-1">
         {/* Productos a devolver */}
         <AccordionItem
           value="productos_devolver"
           className="border-b rounded-lg"
         >
-          <AccordionTrigger className="w-full px-2 py-1 sm:py-2">
+          <AccordionTrigger className="w-full px-2 py-1">
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
               <span className="font-medium text-left w-full">
@@ -138,7 +138,7 @@ export const SummaryComponent = ({
 
         {/* Nuevos productos & Logística */}
         <AccordionItem value="productos_cambio" className="border-b">
-          <AccordionTrigger className="w-full px-2 py-1 sm:py-2">
+          <AccordionTrigger className="w-full px-2 py-1">
             <div className="flex flex-row w-full justify-between items-center">
               {/* Left side (multiline text, left-aligned) */}
               <span className="font-medium text-left w-full">
@@ -192,7 +192,9 @@ export const SummaryComponent = ({
       )}
 
       {/* Total row */}
-      <div className="bg-gray-300 flex flex-row justify-between items-center px-1 py-2 my-3 sm:px-2 sm:py-3 sm:my-4 rounded-sm">
+      {/* White rather than grey. It needs the border to still read as a box:
+          the card behind it is the off-white paper texture, not pure white. */}
+      <div className="bg-white border border-gray-200 flex flex-row justify-between items-center px-1 py-2 my-3 sm:px-2 sm:py-3 sm:my-4 rounded-sm">
         <span className="font-semibold">
           {finalTotal > 0 ? t.summary.totalRefund : t.summary.totalToPay}
         </span>

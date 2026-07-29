@@ -51,14 +51,14 @@ export default function Error({
   const t = dictionaries[locale];
 
   return (
-    <main className="min-h-screen grid place-items-center bg-black-pattern">
+    <main className="min-h-screen grid place-items-center bg-brand-paper">
       <div className="bg-white rounded-3xl py-8 px-5 lg:px-8 w-[85%] lg:w-[30%] flex flex-col items-center gap-5 text-center">
         <h1 className="font-bold text-xl">{t.error.title}</h1>
         <p className="text-sm text-gray-700">{t.error.body}</p>
         <button
           type="button"
           onClick={reset}
-          className="bg-cyan-800 py-4 rounded-full hover:bg-cyan-950 focus:bg-cyan-950 flex items-center justify-center w-full text-white font-bold"
+          className="bg-white text-black border border-black py-4 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold"
         >
           {t.error.retry}
         </button>

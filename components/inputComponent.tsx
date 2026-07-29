@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { useFormState } from "react-dom";
 
-import Logo from "@/public/LOGO_black.png";
+import Logo from "@/public/LOGO_2025.svg";
 import { FormInput } from "@/components/formInput";
 import { Button } from "@/components/button";
 import { useToast } from "@/hooks/use-toast";
@@ -62,13 +62,16 @@ export const InputComponent = () => {
 
   return (
     <div className="flex flex-col items-center">
+      {/* 96px — half the 192px the old PNG rendered at. See header.tsx for why
+          the width is pinned in CSS and why the SVG is unoptimized. */}
       <Image
         src={Logo}
         alt="Shameless Returns Logo"
-        width={150}
-        height={150}
-        className="h-auto w-auto"
+        width={96}
+        height={34}
+        className="w-24 h-auto"
         priority
+        unoptimized
       />
       <span
         className="border w-full border-slate-100 mt-5"
@@ -89,7 +92,7 @@ export const InputComponent = () => {
         </span>
       </h5>
       <form
-        className="mt-10 w-full flex flex-col gap-8"
+        className="mt-10 w-full flex flex-col gap-4"
         action={formAction}
         aria-label="Order search form"
         noValidate

@@ -19,13 +19,26 @@ const config = {
     },
     extend: {
       backgroundImage: {
-        "black-pattern": "url('/black-background.jpeg')",
+        "brand-pattern": "url('/orange-background.webp')",
         "white-pattern": "url('/white-background.jpeg')",
+      },
+      fontFamily: {
+        // The brand runs on Helvetica; Arial is the metric-compatible stand-in
+        // on machines without it. Previously the app loaded Inter from Google
+        // Fonts, which is what every screen actually rendered in.
+        sans: ["Helvetica Neue", "Helvetica", "Arial", "sans-serif"],
       },
       fontSize: {
         xxs: "0.6rem",
       },
       colors: {
+        shameless: {
+          // Sampled from the brand background art: dominant #D04000 against a
+          // #CE4202 average. Used for selection states, the progress bar and
+          // any orange accent.
+          orange: "#D04000",
+          "orange-dark": "#A83300",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

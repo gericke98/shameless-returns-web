@@ -71,6 +71,21 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+@layer components {
+  /*
+   * The brand backdrop every screen sits on. The art is a portrait photo of
+   * orange fabric, so it is cropped to cover rather than tiled, and the flat
+   * orange underneath guarantees no white edge on wide desktop viewports where
+   * a 941x1672 image cannot fill the frame.
+   *
+   * Deliberately not `bg-fixed`: background-attachment: fixed is unreliable on
+   * iOS Safari, and most of this portal's traffic is mobile.
+   */
+  .bg-brand-paper {
+    @apply bg-shameless-orange bg-brand-pattern bg-cover bg-center bg-no-repeat;
   }
 }

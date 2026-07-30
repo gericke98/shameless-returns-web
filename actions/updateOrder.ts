@@ -286,9 +286,33 @@ export async function updateFinalOrder(
   isCredit: boolean
 ) {
   if (revert) {
-    const products = await getOrderProductsById(id);
+    // Deliberately NOT `getOrderProductsById` — that is wrapped in React
+    // `cache()`, so a revert following a create in the SAME request would read
+    // the rows as they were before the create and decide on stale data. The
+    // guard below is only meaningful against what is actually in the table now.
+    const products = await db.query.productsOrder.findMany({
+      where: eq(productsOrder.orderId, id),
+    });
     await Promise.all(
       products.map(async (product) => {
+        // A row carrying a `return_id` has a REAL Shopify return behind it, and
+        // reverting cannot delete that return — it only blanks our copy of it,
+        // which hides a live return from the dashboard (`getReturns` filters on
+        // `confirmed`) and leaves the customer with nothing.
+        //
+        // Order #310957: the customer submitted, the return was created, the
+        // request then timed out; she retried, `returnCreate` rejected the
+        // second attempt ("Return line item has an invalid quantity" — the units
+        // were already on R1), and the catch-all revert wiped the state of the
+        // FIRST, successful return. Same reasoning as the post-booking failures
+        // in createInternationalReturn / createShippingLabel: once the external
+        // thing exists, reverting our side only makes the records lie.
+        if (product.return_id) {
+          console.error(
+            `Order ${id}: refusing to revert variant ${product.variant_id} — it already carries Shopify return ${product.return_id}. Needs manual review, not a revert.`
+          );
+          return;
+        }
         if (product.confirmed) {
           await db
             .update(productsOrder)
@@ -311,6 +335,24 @@ export async function updateFinalOrder(
   }
   const totalOrder = await getOrderTotal(id);
   const products = await getOrderProductsById(id);
+
+  // Idempotency. Reachable twice for one parcel: the customer resubmits after a
+  // slow request (or a timeout), or the Stripe webhook is redelivered. Shopify
+  // then rejects the second `returnCreate` — the units are already on the first
+  // return, so it fails with "Return line item has an invalid quantity" — and
+  // the caller's catch-all revert used to undo the first, successful return.
+  //
+  // Bail out before touching Shopify. The return already exists, which is the
+  // outcome the caller wants; creating a second one for the same parcel is the
+  // same class of bug as #310756, which was billed the return fee twice.
+  const alreadyReturned = products.find((p) => p.return_id);
+  if (alreadyReturned) {
+    console.warn(
+      `Order ${id}: a Shopify return (${alreadyReturned.return_id}) already exists for this parcel — skipping creation (duplicate submit or webhook redelivery).`
+    );
+    return;
+  }
+
   const dbOrder = await getOrderById(id);
   const feeTable = await getFeeTable();
   const orderFees = feesForCountry(

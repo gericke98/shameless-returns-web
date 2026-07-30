@@ -12,6 +12,19 @@ import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { LocaleProvider } from "@/lib/i18n/context";
 import { hasOrderAccess } from "@/lib/orderAccess";
 
+/**
+ * The return submission runs as a server action on THIS segment, and it is a
+ * chain of third-party calls: Shopify `returnCreate`, then either the Correos
+ * SOAP preregistro or the Amphora booking (create + read-back), then Postmark.
+ *
+ * On the platform default of 15s that chain does not fit. Order #310957 died
+ * mid-flight — Shopify had the return and Amphora had the collection, but the
+ * function was killed before the confirmation email, so the customer was
+ * charged for a pickup and told nothing. Raising this is the difference between
+ * a slow submit and a silently half-created return.
+ */
+export const maxDuration = 60;
+
 type OrderPageProps = {
   params: {
     id: string;

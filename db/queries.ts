@@ -109,6 +109,23 @@ export const getOrderById = cache(async (id: string) => {
   return order;
 });
 
+/**
+ * Look an order up by its public number ("#310972").
+ *
+ * Needed by the Amphora status webhook: its payload carries no `external_id`,
+ * so when the return id lacks the `SHP ` prefix, the order NAME is the only
+ * link back to us.
+ */
+export const getOrderByNumber = cache(async (orderNumber: string) => {
+  const order = await db.query.orders.findFirst({
+    where: eq(orders.orderNumber, orderNumber),
+    with: {
+      products: true,
+    },
+  });
+  return order;
+});
+
 export const getReturns = cache(async () => {
   const returns = await db.query.orders.findMany({
     with: {

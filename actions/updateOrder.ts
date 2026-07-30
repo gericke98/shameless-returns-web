@@ -17,6 +17,10 @@ import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { ACTIONS } from "@/placeholder";
 import {
+  releaseExchangeReservation,
+  reserveExchangeStock,
+} from "./exchangeReservation";
+import {
   buildReturnInput,
   matchReturnLineItems,
   type ReturnableLine,
@@ -298,6 +302,10 @@ export async function updateFinalOrder(
         }
       })
     );
+    // The return is being undone, so the stock hold must go with it —
+    // otherwise the replacement garments stay frozen for a return that no
+    // longer exists.
+    await releaseExchangeReservation(id);
     revalidatePath("/", "layout");
     return;
   }
@@ -388,6 +396,12 @@ export async function updateFinalOrder(
         );
     })
   );
+
+  // The rows are now confirmed, which is the moment the customer has paid.
+  // Hold the replacement stock so their size cannot sell out during the days
+  // the parcel spends travelling back. Best-effort by construction — see
+  // actions/exchangeReservation.ts.
+  await reserveExchangeStock(id);
 
   revalidatePath("/", "layout");
 }

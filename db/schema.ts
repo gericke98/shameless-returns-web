@@ -34,6 +34,11 @@ export const orders = pgTable("orders", {
   // RECEIVED / FINISHED / EXCEPTION ...). Written only by the Amphora status
   // webhook. Null means no webhook has been seen for this order yet.
   returnStatus: text("return_status"),
+  // Draft order holding the replacement stock from the moment the customer
+  // paid for their exchange until an admin validates it. NEVER completed — it
+  // is deleted at validation and the real exchange order created as before.
+  // Null when there is no exchange, or when the hold could not be placed.
+  exchangeReservationId: text("exchange_reservation_id"),
   // Language the customer chose in the portal; drives the transactional email.
   locale: text("locale"),
 });

@@ -23,6 +23,16 @@ vi.mock("next/cache", () => ({
 
 const createOrderCalls: any[][] = [];
 const closeReturnCalls: string[] = [];
+const sequence: string[] = [];
+
+const release = { fails: false };
+vi.mock("@/actions/exchangeReservation", () => ({
+  reserveExchangeStock: async () => {},
+  releaseExchangeReservation: async () => {
+    sequence.push("release");
+    return !release.fails;
+  },
+}));
 
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => ({ id: "1", shippingCountry: "ES", products: [] }),
@@ -31,6 +41,7 @@ vi.mock("@/db/queries", () => ({
   processGiftCardReturn: async () => ({ success: true }),
   createRefund: async () => ({ success: true }),
   createOrder: async (_order: any, products: any[]) => {
+    sequence.push("createOrder");
     createOrderCalls.push(products);
     return { success: true, data: { id: "gid://shopify/Order/999" } };
   },
@@ -99,6 +110,8 @@ beforeEach(() => {
   createOrderCalls.length = 0;
   closeReturnCalls.length = 0;
   updates.length = 0;
+  sequence.length = 0;
+  release.fails = false;
   state.lines = LINES.map((l) => ({ ...l }));
   state.lookupVariant = "111";
 });
@@ -158,6 +171,15 @@ describe("validateReturn — one exchange order per submission", () => {
       "aaa",
       "bbb",
     ]);
+  });
+
+  it("releases the stock hold BEFORE creating the real order", async () => {
+    // Both would otherwise claim the same unit. With
+    // DECREMENT_OBEYING_POLICY the last garment in stock would refuse to sell
+    // to the very customer it is being held for.
+    await validate("111");
+
+    expect(sequence).toEqual(["release", "createOrder"]);
   });
 
   it("skips a CAMBIO line whose replacement variant was never recorded", async () => {

@@ -18,6 +18,7 @@ import { resolveZone } from "@/lib/zones";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { isAdmin } from "@/lib/requireAdmin";
+import { releaseExchangeReservation } from "./exchangeReservation";
 
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
@@ -131,6 +132,12 @@ export async function validateReturn(product: any, status: string, order: any) {
         );
         return;
       }
+
+      // Release the hold FIRST. The draft order and the real one would
+      // otherwise both claim the same unit, and DECREMENT_OBEYING_POLICY would
+      // refuse to sell the last garment in stock to the very customer it is
+      // being held for.
+      await releaseExchangeReservation(String(order?.id ?? ""));
 
       result = await createOrder(order, pending);
       if (result?.success) {

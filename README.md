@@ -316,7 +316,16 @@ it can go live. Do these **in this exact order**:
 
    CREATE INDEX lookup_attempts_ip_attempted_at_idx
      ON lookup_attempts (ip, attempted_at);
+
+   ALTER TABLE orders ADD COLUMN exchange_reservation_id text;
    ```
+
+   `exchange_reservation_id` holds the Shopify draft order that reserves the
+   replacement garment between the customer paying for an exchange and an admin
+   validating it. **Apply it BEFORE deploying** — Drizzle builds an explicit
+   column list from `db/schema.ts`, so a deploy that runs ahead of the DDL
+   breaks every order lookup in the portal, not just the exchange path. Nullable
+   with no backfill: existing rows simply hold no reservation.
 
    `lookup_attempts` backs the lookup rate limit. Unlike `shipping_fees` it needs
    no seed — an empty table simply means nobody has failed a lookup yet, and the

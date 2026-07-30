@@ -15,6 +15,7 @@ import {
   countProducts,
   filterGroups,
   groupReturns,
+  pendingExchanges as pendingExchangeLines,
   type ReturnGroup,
 } from "@/lib/dashboardGrouping";
 
@@ -280,6 +281,18 @@ function TableHeader() {
 function OrderGroup({ group, status }: { group: Group; status: TrackingStatus }) {
   const { order, products } = group;
 
+  // Exchanges settle as ONE parcel: validateReturn gathers every pending
+  // CAMBIO line on the order, creates a single Shopify order with all the
+  // replacements, and closes each return. So a per-garment Refund button was
+  // misleading in both directions — it looked like you had to press each one,
+  // and like pressing one might ship only that garment. The second press was
+  // in fact a silent no-op.
+  //
+  // Returns are different: each is refunded individually for its own amount,
+  // so those keep their per-garment button.
+  const pendingExchanges = pendingExchangeLines(products, ACTIONS.CHANGE);
+  const batched = pendingExchanges.length > 1;
+
   return (
     <>
       {/* Order header — the details that belong to the PARCEL, stated once. */}
@@ -299,11 +312,29 @@ function OrderGroup({ group, status }: { group: Group; status: TrackingStatus })
                 {products.length} garments · one parcel
               </span>
             )}
+            {batched && (
+              <button
+                className="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-md text-sm transition-colors"
+                onClick={() =>
+                  validateReturn(pendingExchanges[0], status.label, order)
+                }
+                aria-label={`Process the exchange for ${order.orderNumber} — ${pendingExchanges.length} garments in one order`}
+              >
+                Process exchange · {pendingExchanges.length} garments
+              </button>
+            )}
           </div>
         </td>
       </tr>
       {products.map((product) => (
-        <ProductRow key={product.id} order={order} product={product} status={status} />
+        <ProductRow
+          key={product.id}
+          order={order}
+          product={product}
+          status={status}
+          // Suppressed only for the lines the header button already covers.
+          settledTogether={batched && pendingExchanges.includes(product)}
+        />
       ))}
     </>
   );
@@ -313,10 +344,13 @@ function ProductRow({
   order,
   product,
   status,
+  settledTogether = false,
 }: {
   order: DashboardOrder;
   product: DashboardProduct;
   status: TrackingStatus;
+  /** This garment is covered by the group's single "Process exchange" button. */
+  settledTogether?: boolean;
 }) {
   return (
     <tr className="hover:bg-gray-50">
@@ -362,6 +396,12 @@ function ProductRow({
       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
         {product.refunded ? (
           <span className="text-green-600">Refunded</span>
+        ) : settledTogether ? (
+          // No button: pressing it would settle the whole exchange anyway, so
+          // one control for one action.
+          <span className="text-xs text-gray-500 italic">
+            with the exchange above
+          </span>
         ) : (
           <button
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm transition-colors"

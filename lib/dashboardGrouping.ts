@@ -103,6 +103,29 @@ export function filterGroups<O extends GroupableOrder, P, S>(
 }
 
 /**
+ * The exchange lines a single "Process exchange" action would settle.
+ *
+ * `validateReturn` gathers every pending CAMBIO line on the order, creates ONE
+ * Shopify order with all the replacements, and closes each return. So when more
+ * than one is pending, a per-garment button is misleading in both directions:
+ * it looks like each must be pressed, and like pressing one might ship only
+ * that garment. The second press is in fact a silent no-op.
+ *
+ * Returns (DEVOLUCIÓN) are excluded — each is refunded individually for its own
+ * amount and keeps its own button.
+ *
+ * `changeAction` is passed in rather than imported so this module stays free of
+ * `@/placeholder`, which is a 350kB catalogue.
+ */
+export function pendingExchanges<
+  P extends { action?: string | null; refunded?: boolean | null }
+>(products: P[], changeAction: string): P[] {
+  return (products ?? []).filter(
+    (product) => product.action === changeAction && !product.refunded
+  );
+}
+
+/**
  * Total garments across groups.
  *
  * Pagination counts ORDERS, so this exists to report the real garment count

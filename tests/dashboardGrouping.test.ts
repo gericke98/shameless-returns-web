@@ -3,7 +3,9 @@ import {
   countProducts,
   filterGroups,
   groupReturns,
+  pendingExchanges,
 } from "@/lib/dashboardGrouping";
+import { ACTIONS } from "@/placeholder";
 
 // The table rendered one row per garment, repeating the order number, customer
 // and status once per garment — so a two-garment return read as two unrelated
@@ -126,5 +128,39 @@ describe("countProducts", () => {
 
   it("is zero for no groups", () => {
     expect(countProducts([])).toBe(0);
+  });
+});
+
+describe("pendingExchanges", () => {
+  const line = (action: string, refunded = false) => ({ action, refunded });
+
+  it("collects the exchange lines a single action would settle", () => {
+    // validateReturn creates ONE Shopify order for all of them, so they are one
+    // action, not two.
+    const products = [line(ACTIONS.CHANGE), line(ACTIONS.CHANGE)];
+    expect(pendingExchanges(products, ACTIONS.CHANGE)).toHaveLength(2);
+  });
+
+  it("excludes returns — each is refunded for its own amount", () => {
+    const products = [line(ACTIONS.CHANGE), line(ACTIONS.RETURN)];
+    expect(pendingExchanges(products, ACTIONS.CHANGE)).toHaveLength(1);
+  });
+
+  it("excludes exchanges that are already settled", () => {
+    // Their replacement has shipped; offering to process them again would mint
+    // a second parcel.
+    const products = [line(ACTIONS.CHANGE, true), line(ACTIONS.CHANGE, false)];
+    expect(pendingExchanges(products, ACTIONS.CHANGE)).toHaveLength(1);
+  });
+
+  it("matches the accented DEVOLUCION constant, not a lookalike string", () => {
+    // productsOrder.action stores the accented code. Comparing against an
+    // unaccented "DEVOLUCION" is a mistake this table has made before.
+    expect(ACTIONS.RETURN).toBe("DEVOLUCI\u00d3N");
+    expect(pendingExchanges([line("DEVOLUCION")], ACTIONS.CHANGE)).toHaveLength(0);
+  });
+
+  it("returns nothing for an order with no exchanges", () => {
+    expect(pendingExchanges([line(ACTIONS.RETURN)], ACTIONS.CHANGE)).toEqual([]);
   });
 });

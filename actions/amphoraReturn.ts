@@ -28,7 +28,10 @@ export { isInternationalOrder } from "@/lib/countries";
 async function sendAmphoraConfirmationEmail(
   recipientEmail: string,
   name: string,
-  ret: AmphoraReturn,
+  // Optional on purpose: this used to be dereferenced through a `!`, so a
+  // missing record threw straight into the caller's revert path — turning a
+  // cosmetic gap (no tracking yet) into a lost return.
+  ret: AmphoraReturn | undefined,
   locale: Locale,
   exchange: ExchangeInfo | null
 ): Promise<number> {
@@ -39,7 +42,7 @@ async function sendAmphoraConfirmationEmail(
     ...buildAmphoraEmail(
       name,
       locale,
-      { number: ret.carrier_number, url: ret.carrier_url },
+      { number: ret?.carrier_number, url: ret?.carrier_url },
       exchange
     ),
     To: recipientEmail,
@@ -110,14 +113,25 @@ export async function createInternationalReturn(id: string): Promise<number> {
     );
   }
 
+  /** Ask Amphora whether a collection for THIS order exists right now. */
+  const findBooked = async (): Promise<AmphoraReturn | undefined> => {
+    const all = await getAmphoraReturnsByOrderName(order.orderNumber);
+    return all.find((r) => r.external_id === order.id);
+  };
+
+  // ── Phase 1: book the collection ──────────────────────────────────────────
+  // The only phase whose failure is safe to report. Until Amphora holds a
+  // return for this order, nothing external exists and the caller's revert is
+  // both correct and harmless.
+  let ret: AmphoraReturn | undefined;
+  let alreadyExisted = false;
   try {
     // Idempotency guard: don't book a second collection if one already exists
     // for this order. We match on our own `external_id` (= order.id) rather than
     // trusting Amphora to dedupe — a double-submit (retry, refresh, webhook +
     // action race) must never result in two physical garment collections.
-    const existing = await getAmphoraReturnsByOrderName(order.orderNumber);
-    let ret: AmphoraReturn | undefined = existing.find((r) => r.external_id === order.id);
-    const alreadyExisted = !!ret;
+    ret = await findBooked();
+    alreadyExisted = !!ret;
 
     if (ret) {
       console.warn(
@@ -134,7 +148,44 @@ export async function createInternationalReturn(id: string): Promise<number> {
         autoApprove: true,
       });
     }
+  } catch (error: any) {
+    // The POST can fail on the RESPONSE while Amphora has already committed the
+    // return — a timeout or a dropped socket looks identical to a rejected
+    // request from here. Reverting on that assumption strands a real courier
+    // pickup, so ask Amphora before concluding nothing happened.
+    let recovered: AmphoraReturn | undefined;
+    try {
+      recovered = await findBooked();
+    } catch {
+      // Can't reach Amphora to check either. Fall through and report failure:
+      // the caller reverts, which is the recoverable direction when we have no
+      // evidence a collection exists.
+    }
 
+    if (!recovered) {
+      console.error(
+        `Amphora return failed for order ${id} (${order.shippingCountry}) — no collection booked:`,
+        error?.response?.data || error?.message || error
+      );
+      return 501;
+    }
+
+    console.error(
+      `Amphora return for order ${id}: create call failed but Amphora HAS the collection (${recovered.id}) — treating as booked, not reverting. Original error:`,
+      error?.response?.data || error?.message || error
+    );
+    ret = recovered;
+    alreadyExisted = true;
+  }
+
+  // ── Phase 2: everything after the collection exists ───────────────────────
+  // The point of no easy return. Both callers revert the database whenever this
+  // function returns anything but 200, and that revert cannot un-book a courier
+  // or close the Shopify return — it only makes our records disagree with
+  // reality and hides the order from the dashboard. So from here every failure
+  // is logged for follow-up and swallowed: the return HAS been created, which
+  // is what the status code reports.
+  try {
     // The carrier/tracking may not be assigned synchronously on a fresh create;
     // fall back to a read-back by order name (a ReturnTravelling webhook can
     // update it later). The reuse path already holds the latest record.
@@ -143,12 +194,8 @@ export async function createInternationalReturn(id: string): Promise<number> {
       ret = back.find((r) => r.external_id === order.id) ?? back[0] ?? ret;
     }
 
-    // DIAGNOSTIC (temporary): capture what Amphora returned so we can confirm
-    // from the logs whether, after dropping `auto_approve`, the collection is
-    // auto-arranged (carrier/tracking assigned, status advanced) or is sitting
-    // unapproved (e.g. status CREATED + a supported "APPROVE" action).
     console.log(
-      `[amphora] return created for order ${id}:`,
+      `[amphora] return booked for order ${id}:`,
       JSON.stringify({
         return_id: ret?.id,
         external_id: ret?.external_id,
@@ -156,15 +203,10 @@ export async function createInternationalReturn(id: string): Promise<number> {
         carrier: ret?.carrier ?? null,
         carrier_number: ret?.carrier_number ?? null,
         carrier_url: ret?.carrier_url ?? null,
-        supported_actions: (ret as any)?.supported_actions ?? null,
         reused_existing: alreadyExisted,
       })
     );
 
-    // The collection is now booked — this is the point of no easy return. Persist
-    // tracking and treat the operation as a SUCCESS from here on. A failed
-    // confirmation email must NOT propagate as a failure: the caller reverts the
-    // DB order on non-200, which would orphan an already-booked collection.
     await db
       .update(orders)
       .set({
@@ -179,7 +221,7 @@ export async function createInternationalReturn(id: string): Promise<number> {
     const emailStatus = await sendAmphoraConfirmationEmail(
       order.email,
       order.shippingName,
-      ret!,
+      ret,
       readLocale(order.locale),
       exchangeFromProducts(products)
     );
@@ -189,12 +231,12 @@ export async function createInternationalReturn(id: string): Promise<number> {
         `Amphora return ${id}: collection booked but confirmation email failed (status ${emailStatus}). Customer needs a manual collection/tracking notice.`
       );
     }
-    return 200;
   } catch (error: any) {
     console.error(
-      `Amphora return failed for order ${id} (${order.shippingCountry}):`,
+      `Amphora return ${id}: COLLECTION IS BOOKED but post-booking steps failed — tracking and/or the customer email may be missing. Needs manual follow-up. Error:`,
       error?.response?.data || error?.message || error
     );
-    return 501;
   }
+
+  return 200;
 }

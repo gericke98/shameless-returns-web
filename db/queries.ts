@@ -5,6 +5,7 @@ import db from "./drizzle";
 import { eq } from "drizzle-orm";
 import { orders, productsOrder } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
+import { toShopifyReturnReason } from "@/lib/shopifyReturnReason";
 
 const createSession = (): RequestInit => {
   if (
@@ -448,16 +449,33 @@ export async function createReturn(
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
+  // What the customer actually chose. This was hardcoded to COLOR, so every
+  // return in Shopify read "Color" regardless of the stated reason.
+  const returnReason = toShopifyReturnReason(product?.reason);
+
+  // The customer's own words, preserved alongside the enum — Shopify expects a
+  // note with OTHER, and it keeps the detail the enum cannot carry.
+  //
+  // This is free text being interpolated into a GraphQL document, so it is
+  // quoted with JSON.stringify: a bare `"` would otherwise terminate the string
+  // and corrupt the mutation. JSON string syntax is a subset of GraphQL's, so
+  // the escaping is valid as-is.
+  const note = String(product?.notes ?? "").trim().slice(0, 255);
+  const returnReasonNote = note
+    ? `,
+                returnReasonNote: ${JSON.stringify(note)}`
+    : "";
+
   let query = `
       mutation {
-        returnCreate(returnInput: 
+        returnCreate(returnInput:
           {
             orderId: "gid://shopify/Order/${orderId}",
             returnLineItems: [
               {
                 fulfillmentLineItemId: "${fulfillmentLineItem}",
                 quantity: 1,
-                returnReason: COLOR
+                returnReason: ${returnReason}${returnReasonNote}
               }
             ],
             returnShippingFee: {

@@ -7,7 +7,8 @@ import { orders } from "@/db/schema";
 import axios from "axios";
 import { eq } from "drizzle-orm";
 import { normalizeCountry } from "@/lib/countries";
-import { buildAmphoraEmail } from "@/lib/emails";
+import { buildAmphoraEmail, type ExchangeInfo } from "@/lib/emails";
+import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale, type Locale } from "@/lib/i18n";
 import {
   amphoraOrderIdFromShopifyId,
@@ -28,16 +29,19 @@ async function sendAmphoraConfirmationEmail(
   recipientEmail: string,
   name: string,
   ret: AmphoraReturn,
-  locale: Locale
+  locale: Locale,
+  exchange: ExchangeInfo | null
 ): Promise<number> {
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
   if (!postmarkToken) return 500;
 
   const emailData = {
-    ...buildAmphoraEmail(name, locale, {
-      number: ret.carrier_number,
-      url: ret.carrier_url,
-    }),
+    ...buildAmphoraEmail(
+      name,
+      locale,
+      { number: ret.carrier_number, url: ret.carrier_url },
+      exchange
+    ),
     To: recipientEmail,
     MessageStream: "outbound",
   };
@@ -176,7 +180,8 @@ export async function createInternationalReturn(id: string): Promise<number> {
       order.email,
       order.shippingName,
       ret!,
-      readLocale(order.locale)
+      readLocale(order.locale),
+      exchangeFromProducts(products)
     );
     if (emailStatus !== 200) {
       // Best-effort: log loudly for manual follow-up, but the return succeeded.

@@ -3,7 +3,8 @@ import db from "@/db/drizzle";
 import { getOrderById } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { base64img } from "@/placeholder";
-import { buildCorreosEmail } from "@/lib/emails";
+import { buildCorreosEmail, type ExchangeInfo } from "@/lib/emails";
+import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
@@ -199,7 +200,8 @@ async function sendEmail(
   base64Pdf: string,
   recipientEmail: string,
   name: string,
-  locale: Locale
+  locale: Locale,
+  exchange: ExchangeInfo | null
 ): Promise<ShippingResponse> {
   const base64Match = base64Pdf.match(/<Fichero>(.*?)<\/Fichero>/);
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
@@ -208,7 +210,7 @@ async function sendEmail(
   }
 
   try {
-    const emailTemplate = buildCorreosEmail(name, locale);
+    const emailTemplate = buildCorreosEmail(name, locale, exchange);
     const emailData = {
       ...emailTemplate,
       To: recipientEmail,
@@ -289,7 +291,8 @@ export async function createShippingLabel(id: string): Promise<number> {
     shippingResponse.data,
     order.email,
     name,
-    readLocale(order.locale)
+    readLocale(order.locale),
+    exchangeFromProducts((order as any).products)
   );
   return emailResponse.status;
 }

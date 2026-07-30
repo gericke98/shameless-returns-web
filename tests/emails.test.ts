@@ -117,3 +117,90 @@ describe("buildAmphoraEmail", () => {
     }
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* Exchanges                                                                   */
+/*                                                                             */
+/* A CAMBIO and a DEVOLUCIÓN used to produce byte-identical emails: a customer  */
+/* who paid to swap a size was told only that a "return" had been created, with */
+/* no mention of the replacement they were owed. The delivery method (Correos   */
+/* label vs Amphora collection) is orthogonal to this, so BOTH builders take    */
+/* the same `exchange` argument.                                               */
+/* -------------------------------------------------------------------------- */
+
+const AMALFI = "STAR AMALFI PANTS — Medium (40)";
+
+describe("exchange copy", () => {
+  const tracking = { number: "TRK123", url: "https://track.example/TRK123" };
+  const exchange = { replacements: [AMALFI] };
+
+  it("retitles the Correos subject as an exchange", () => {
+    expect(buildCorreosEmail("Ana", "es", exchange).Subject).toBe(
+      "Tu cambio se ha confirmado"
+    );
+    expect(buildCorreosEmail("Ana", "en", exchange).Subject).toBe(
+      "Your exchange is confirmed"
+    );
+  });
+
+  it("retitles the Amphora subject as an exchange", () => {
+    expect(buildAmphoraEmail("Ana", "es", tracking, exchange).Subject).toBe(
+      "Tu cambio se ha confirmado"
+    );
+    expect(buildAmphoraEmail("Ana", "en", tracking, exchange).Subject).toBe(
+      "Your exchange is confirmed"
+    );
+  });
+
+  it("names the replacement item in both builders", () => {
+    expect(buildCorreosEmail("Ana", "en", exchange).HtmlBody).toContain(AMALFI);
+    expect(buildAmphoraEmail("Ana", "en", tracking, exchange).HtmlBody).toContain(
+      AMALFI
+    );
+  });
+
+  it("promises the replacement ships after the return arrives", () => {
+    expect(buildAmphoraEmail("Ana", "en", tracking, exchange).HtmlBody).toContain(
+      "Once we receive your return"
+    );
+    expect(buildAmphoraEmail("Ana", "es", tracking, exchange).HtmlBody).toContain(
+      "Cuando recibamos tu devolución"
+    );
+  });
+
+  it("stays single-language in exchange mode", () => {
+    expectSingleLanguage(
+      buildCorreosEmail("Ana", "es", exchange).HtmlBody,
+      "es",
+      CORREOS_MARKERS
+    );
+    expectSingleLanguage(
+      buildAmphoraEmail("Ana", "en", tracking, exchange).HtmlBody,
+      "en",
+      AMPHORA_MARKERS
+    );
+  });
+
+  it("still marks it an exchange when the replacement cannot be named", () => {
+    const unnamed = { replacements: [] };
+    const html = buildAmphoraEmail("Ana", "en", tracking, unnamed).HtmlBody;
+    expect(buildAmphoraEmail("Ana", "en", tracking, unnamed).Subject).toBe(
+      "Your exchange is confirmed"
+    );
+    // No dangling "replacement:" with nothing after it.
+    expect(html).not.toContain("replacement:");
+  });
+
+  it("leaves plain returns untouched", () => {
+    expect(buildCorreosEmail("Ana", "en").Subject).toBe(
+      "Your return was successfully created"
+    );
+    expect(buildAmphoraEmail("Ana", "en", tracking).Subject).toBe(
+      "Your return was successfully created"
+    );
+    expect(buildCorreosEmail("Ana", "en").HtmlBody).not.toContain("exchange");
+    expect(buildAmphoraEmail("Ana", "en", tracking).HtmlBody).not.toContain(
+      "Once we receive your return"
+    );
+  });
+});

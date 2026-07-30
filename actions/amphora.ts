@@ -39,7 +39,7 @@ function getConfig(): AmphoraConfig {
 }
 
 async function amphoraRequest<T = any>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PATCH",
   path: string,
   opts: { query?: Record<string, string>; body?: unknown } = {},
 ): Promise<T> {
@@ -174,13 +174,29 @@ export async function getAmphoraReturnsByOrderName(orderName: string): Promise<A
 
 // ── Writes (create real returns/collections — never call during discovery) ───
 
-/** Create a return (Amphora arranges carrier + garment collection). */
-export async function createAmphoraReturn(input: CreateReturnInput): Promise<AmphoraReturn> {
-  const cfg = getConfig();
+/**
+ * Build the `POST /{company_id}/returns` body.
+ *
+ * Pure and exported so the shape is unit-testable without a network call — the
+ * shape is the whole risk here. Amphora validates strictly: any property it
+ * does not recognise fails the ENTIRE request with a 422 listing the offenders,
+ * so a field in the wrong place is indistinguishable from an unsupported one
+ * unless you know the schema.
+ *
+ * `auto_approve` is a SIBLING of `return_order`, not a member of it (Company
+ * API v1.3.0). Nesting it produced 422 "Invalid properties: {'auto_approve'}",
+ * which was misread as Amphora lacking auto-approval at all; the flag was
+ * dropped and every international return then sat unapproved at PENDING, with
+ * no carrier and no collection ever scheduled.
+ */
+export function buildCreateReturnBody(
+  input: CreateReturnInput,
+  shopName: string
+) {
   const return_order = {
     order_id: input.orderId,
     items: input.items.map((i) => ({ sku: i.sku, quantity: i.quantity })),
-    shop_name: cfg.shopName,
+    shop_name: shopName,
     external_id: input.externalId,
     time: input.time,
     ...(input.name ? { name: input.name } : {}),
@@ -189,17 +205,47 @@ export async function createAmphoraReturn(input: CreateReturnInput): Promise<Amp
     ...(input.shippingAddress ? { shipping_address: input.shippingAddress } : {}),
     ...(input.shippingAddress2 ? { shipping_address2: input.shippingAddress2 } : {}),
     ...(input.shippingCity ? { shipping_address_city: input.shippingCity } : {}),
-    ...(input.shippingCountryCode ? { shipping_address_country_code: input.shippingCountryCode } : {}),
+    ...(input.shippingCountryCode
+      ? { shipping_address_country_code: input.shippingCountryCode }
+      : {}),
     ...(input.shippingZip ? { shipping_address_zip: input.shippingZip } : {}),
     ...(input.shippingName ? { shipping_address_name: input.shippingName } : {}),
-    // NOTE: `auto_approve` is intentionally NOT sent — Amphora's API rejects it
-    // with 422 "Invalid properties: {'auto_approve'}" (verified live 2026-07-23).
-    // Returns are created without it; confirm on the first live test whether the
-    // collection is arranged automatically or needs a separate approve step.
   };
+
+  return {
+    return_order,
+    ...(input.autoApprove ? { auto_approve: true } : {}),
+  };
+}
+
+/** Create a return (Amphora arranges carrier + garment collection). */
+export async function createAmphoraReturn(input: CreateReturnInput): Promise<AmphoraReturn> {
+  const cfg = getConfig();
   const data = await amphoraRequest<{ return_order: AmphoraReturn }>("POST", "/returns", {
-    body: { return_order },
+    body: buildCreateReturnBody(input, cfg.shopName),
   });
+  return data.return_order;
+}
+
+/**
+ * Transition an existing return to APPROVED — `PATCH /returns/{id}/approve`.
+ *
+ * Until this happens the return sits at PENDING with no warehouse and no
+ * carrier, and no collection is ever scheduled ("it needs to be approved in
+ * order to be processed"). `createAmphoraReturn` with `autoApprove` covers the
+ * normal path; this is the recovery route for returns already stranded at
+ * PENDING.
+ *
+ * Body is deliberately empty: `carrier_data` is only for an EXTERNAL return
+ * (one you ship yourself). Omitting it lets Amphora assign the warehouse and
+ * arrange the collection.
+ */
+export async function approveAmphoraReturn(returnId: string): Promise<AmphoraReturn> {
+  const data = await amphoraRequest<{ return_order: AmphoraReturn }>(
+    "PATCH",
+    `/returns/${encodeURIComponent(returnId)}/approve`,
+    { body: {} },
+  );
   return data.return_order;
 }
 

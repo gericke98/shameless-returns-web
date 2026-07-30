@@ -3,7 +3,8 @@ import db from "@/db/drizzle";
 import { getOrderById } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { base64img } from "@/placeholder";
-import { buildCorreosEmail } from "@/lib/emails";
+import { buildCorreosEmail, type ExchangeInfo } from "@/lib/emails";
+import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
@@ -199,7 +200,8 @@ async function sendEmail(
   base64Pdf: string,
   recipientEmail: string,
   name: string,
-  locale: Locale
+  locale: Locale,
+  exchange: ExchangeInfo | null
 ): Promise<ShippingResponse> {
   const base64Match = base64Pdf.match(/<Fichero>(.*?)<\/Fichero>/);
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
@@ -208,7 +210,7 @@ async function sendEmail(
   }
 
   try {
-    const emailTemplate = buildCorreosEmail(name, locale);
+    const emailTemplate = buildCorreosEmail(name, locale, exchange);
     const emailData = {
       ...emailTemplate,
       To: recipientEmail,
@@ -278,20 +280,40 @@ export async function createShippingLabel(id: string): Promise<number> {
     console.error(`Failed to extract tracking number for order ${id}`);
     return 500;
   }
-  await db
-    .update(orders)
-    .set({ locator: trackingNumber })
-    .where(eq(orders.id, id));
+  // The label is REGISTERED at Correos from here on. Both callers revert the
+  // database whenever this returns anything but 200, and that revert cannot
+  // un-register a label — it only hides a live return from the dashboard
+  // (getReturns filters on `confirmed`) and leaves the customer with nothing.
+  // So every failure below is logged for follow-up and swallowed: the return
+  // exists, which is what the status code reports.
+  try {
+    await db
+      .update(orders)
+      .set({ locator: trackingNumber })
+      .where(eq(orders.id, id));
 
-  // Language the customer chose in the portal, persisted on the order when the
-  // return was created (see actions/return.ts). `readLocale` falls back to "es".
-  const emailResponse = await sendEmail(
-    shippingResponse.data,
-    order.email,
-    name,
-    readLocale(order.locale)
-  );
-  return emailResponse.status;
+    // Language the customer chose in the portal, persisted on the order when the
+    // return was created (see actions/return.ts). `readLocale` falls back to "es".
+    const emailResponse = await sendEmail(
+      shippingResponse.data,
+      order.email,
+      name,
+      readLocale(order.locale),
+      exchangeFromProducts((order as any).products)
+    );
+    if (emailResponse.status !== 200) {
+      console.error(
+        `Correos label ${trackingNumber} registered for order ${id} but the confirmation email failed (status ${emailResponse.status}). Customer needs the label sending manually.`
+      );
+    }
+  } catch (error: any) {
+    console.error(
+      `Correos label ${trackingNumber} IS REGISTERED for order ${id} but post-registration steps failed — tracking and/or the customer email may be missing. Needs manual follow-up. Error:`,
+      error?.response?.data || error?.message || error
+    );
+  }
+
+  return 200;
 }
 
 export async function obtainLastStatus(trackingNumber: string | null) {

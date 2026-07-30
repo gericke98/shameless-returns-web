@@ -29,6 +29,11 @@ export const orders = pgTable("orders", {
   // Set for international (Amphora) returns: the carrier code + customer tracking URL.
   carrier: text("carrier"),
   carrierUrl: text("carrier_url"),
+  // Latest Amphora lifecycle status seen for this return (PENDING / APROVED —
+  // one P, that is the wire spelling / TRAVELLING / PROCESSING_WAREHOUSE /
+  // RECEIVED / FINISHED / EXCEPTION ...). Written only by the Amphora status
+  // webhook. Null means no webhook has been seen for this order yet.
+  returnStatus: text("return_status"),
   // Language the customer chose in the portal; drives the transactional email.
   locale: text("locale"),
 });

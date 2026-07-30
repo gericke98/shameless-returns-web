@@ -233,3 +233,133 @@ export function buildAmphoraEmail(
   };
 }
 
+
+/* -------------------------------------------------------------------------- */
+/* Lifecycle notifications — driven by the Amphora return-status webhooks      */
+/*                                                                            */
+/* Separate builders on purpose. Reusing buildAmphoraEmail here would send a   */
+/* second "Your return was successfully created", which the customer already   */
+/* has; these describe what changed since.                                     */
+/* -------------------------------------------------------------------------- */
+
+const SCHEDULED_COPY = {
+  es: {
+    subject: "Tu recogida está programada",
+    text: "Tu recogida está programada.",
+    greeting: (name: string) => `Hola <strong>${name}</strong>,`,
+    intro:
+      "Ya hemos programado la recogida de tu devolución. El mensajero pasará por tu dirección — no necesitas imprimir nada.",
+    tracking: (number: string, url: string) =>
+      `Puedes seguir la recogida aquí: <a href="${url}">${number}</a>.`,
+    trackingPlain: (number: string) =>
+      `Número de seguimiento: <strong>${number}</strong>.`,
+    contact: `Si tienes alguna pregunta, escríbenos a ${MAILTO}.`,
+    signoff: "Saludos,<br/><strong>El equipo de Shameless Collective</strong>",
+  },
+  en: {
+    subject: "Your collection is scheduled",
+    text: "Your collection is scheduled.",
+    greeting: (name: string) => `Hello <strong>${name}</strong>,`,
+    intro:
+      "Your return collection is now scheduled. The courier will come to your address — you don't need to print anything.",
+    tracking: (number: string, url: string) =>
+      `You can track the collection here: <a href="${url}">${number}</a>.`,
+    trackingPlain: (number: string) =>
+      `Tracking number: <strong>${number}</strong>.`,
+    contact: `If you have any questions, contact us at ${MAILTO}.`,
+    signoff: "Best regards,<br/><strong>The Shameless Collective Team</strong>",
+  },
+} as const;
+
+export function buildCollectionScheduledEmail(
+  name: string,
+  locale: Locale,
+  tracking: { number?: string | null; url?: string | null },
+  exchange?: ExchangeInfo | null
+): EmailPayload {
+  const c = SCHEDULED_COPY[locale];
+  const p = 'style="font-size:16px;color:#555;"';
+  // Amphora can assign a number without a customer-facing URL; show what we
+  // have rather than dropping the tracking entirely.
+  const trackingLine = tracking.number
+    ? `<p ${p}>${
+        tracking.url
+          ? c.tracking(tracking.number, tracking.url)
+          : c.trackingPlain(tracking.number)
+      }</p>`
+    : "";
+
+  return {
+    From: FROM,
+    To: "",
+    Subject: c.subject,
+    TextBody: c.text,
+    HtmlBody: `
+      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
+        <div>
+          <p ${p}>${c.greeting(name)}</p>
+          <p ${p}>${c.intro}</p>
+          ${trackingLine}
+          ${exchangeLine(locale, exchange, p)}
+          <p ${p}>${c.contact}</p>
+          <p ${p}>${c.signoff}</p>
+        </div>
+      </div>`,
+  };
+}
+
+const RECEIVED_COPY = {
+  es: {
+    subject: "Hemos recibido tu devolución",
+    text: "Hemos recibido tu devolución.",
+    greeting: (name: string) => `Hola <strong>${name}</strong>,`,
+    intro:
+      "Tu devolución ya ha llegado a nuestro almacén y la estamos revisando.",
+    outcomeReturn:
+      "En cuanto termine la revisión procesaremos tu reembolso. Te avisaremos.",
+    contact: `Si tienes alguna pregunta, escríbenos a ${MAILTO}.`,
+    signoff: "Saludos,<br/><strong>El equipo de Shameless Collective</strong>",
+  },
+  en: {
+    subject: "We've received your return",
+    text: "We've received your return.",
+    greeting: (name: string) => `Hello <strong>${name}</strong>,`,
+    intro:
+      "Your return has arrived at our warehouse and we're checking it now.",
+    outcomeReturn:
+      "As soon as the check is complete we'll process your refund. We'll let you know.",
+    contact: `If you have any questions, contact us at ${MAILTO}.`,
+    signoff: "Best regards,<br/><strong>The Shameless Collective Team</strong>",
+  },
+} as const;
+
+export function buildReturnReceivedEmail(
+  name: string,
+  locale: Locale,
+  exchange?: ExchangeInfo | null
+): EmailPayload {
+  const c = RECEIVED_COPY[locale];
+  const p = 'style="font-size:16px;color:#555;"';
+  // An exchange customer is owed their replacement, not a refund — the two
+  // outcomes are mutually exclusive.
+  const outcome = exchange
+    ? exchangeLine(locale, exchange, p)
+    : `<p ${p}>${c.outcomeReturn}</p>`;
+
+  return {
+    From: FROM,
+    To: "",
+    Subject: c.subject,
+    TextBody: c.text,
+    HtmlBody: `
+      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
+        <div>
+          <p ${p}>${c.greeting(name)}</p>
+          <p ${p}>${c.intro}</p>
+          ${outcome}
+          <p ${p}>${c.contact}</p>
+          <p ${p}>${c.signoff}</p>
+        </div>
+      </div>`,
+  };
+}

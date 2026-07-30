@@ -16,6 +16,11 @@ import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { ACTIONS } from "@/placeholder";
+import {
+  buildReturnInput,
+  matchReturnLineItems,
+  type ReturnableLine,
+} from "@/lib/returnPayload";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -195,97 +200,68 @@ export async function updateData(prevState: number, formData: FormData) {
   return prevState + 1;
 }
 
-async function processProductReturn(
-  product: { action?: string; variant_id: string; [key: string]: any },
-  totalOrder: OrderData,
-  isCredit: boolean,
-  returnFeeEuros: number
-) {
-  try {
-    if (!product.action) return;
+/**
+ * Resolve the Shopify FulfillmentLineItem id for each line the customer is
+ * returning. That id is what `returnCreate` needs, and it only exists for goods
+ * that were actually fulfilled.
+ *
+ * A line we cannot resolve is reported and dropped rather than thrown, so one
+ * unfulfillable garment no longer costs the customer the rest of their return.
+ */
+async function resolveFulfillmentLineItems(
+  products: Array<{ action?: string; variant_id: string; [key: string]: any }>,
+  totalOrder: OrderData
+): Promise<ReturnableLine[]> {
+  const returnable = products.filter((p) => p.action);
+  if (returnable.length === 0) return [];
 
+  // Cache per fulfillment: a multi-line return usually ships in ONE parcel, so
+  // this collapses N identical Shopify calls into one.
+  const cache = new Map<string, any>();
+  const fetchFulfillment = async (gid: string) => {
+    if (!cache.has(gid)) cache.set(gid, await getFulfillmentLineItems(gid));
+    return cache.get(gid);
+  };
+
+  const lines: ReturnableLine[] = [];
+  for (const product of returnable) {
     const fulfillment = totalOrder.fulfillments.find((f) =>
       f.line_items.some(
         (item) => Number(item.variant_id) === Number(product.variant_id)
       )
     );
-
     if (!fulfillment) {
-      throw new Error(`No fulfillment found for variant ${product.variant_id}`);
-    }
-
-    const lineitem = totalOrder.line_items.find(
-      (item) => Number(item.variant_id) === Number(product.variant_id)
-    );
-
-    if (!lineitem) {
-      throw new Error(`No line item found for variant ${product.variant_id}`);
-    }
-
-    const fulfillmentResponse = await getFulfillmentLineItems(
-      fulfillment.admin_graphql_api_id
-    );
-
-    const fulfillmentsProduct =
-      fulfillmentResponse.data.fulfillmentLineItems.edges.find(
-        (e: FulfillmentLineItem) =>
-          e.node.lineItem.variant.id ===
-          `gid://shopify/ProductVariant/${product.variant_id}`
+      console.error(
+        `No fulfillment found for variant ${product.variant_id} on order ${totalOrder.id} — line skipped`
       );
-
-    if (!fulfillmentsProduct) {
-      throw new Error(
-        `No fulfillment product found for variant ${product.variant_id}`
-      );
+      continue;
     }
 
-    const adjustedProduct = { ...product };
-    let result;
-
-    // Creo la return
-    result = await createReturn(
-      totalOrder.id,
-      fulfillmentsProduct.node.id,
-      adjustedProduct,
-      lineitem.discount_allocations?.[0],
-      returnFeeEuros
+    const response = await fetchFulfillment(fulfillment.admin_graphql_api_id);
+    const match = response.data.fulfillmentLineItems.edges.find(
+      (e: FulfillmentLineItem) =>
+        e.node.lineItem.variant.id ===
+        `gid://shopify/ProductVariant/${product.variant_id}`
     );
-
-    // Si la return se creo correctamente, actualizo el producto
-    if (result?.success) {
-      await db
-        .update(productsOrder)
-        .set({
-          confirmed: true,
-          return_id: result.data.id,
-          return_line_item_id: result.data.returnLineItems.nodes[0].id,
-          transaction_id: result.data.transactionId,
-          transaction_amount: result.data.transactionAmount,
-        })
-        .where(
-          and(
-            eq(productsOrder.variant_id, product.variant_id.toString()),
-            eq(productsOrder.orderId, totalOrder.id)
-          )
-        );
-      if (isCredit) {
-        await db
-          .update(productsOrder)
-          .set({ credit: true })
-          .where(
-            and(
-              eq(productsOrder.variant_id, product.variant_id.toString()),
-              eq(productsOrder.orderId, totalOrder.id)
-            )
-          );
-      }
-
-      revalidatePath("/", "layout");
+    if (!match) {
+      console.error(
+        `No fulfillment line item for variant ${product.variant_id} on order ${totalOrder.id} — line skipped`
+      );
+      continue;
     }
-  } catch (error) {
-    console.error("Error processing product return:", error);
-    throw error;
+
+    lines.push({
+      variant_id: String(product.variant_id),
+      fulfillmentLineItemId: match.node.id,
+      quantity: product.quantity,
+      action: product.action,
+      reason: product.reason,
+      notes: product.notes,
+      new_variant_id: product.new_variant_id,
+    });
   }
+
+  return lines;
 }
 
 /**
@@ -339,14 +315,79 @@ export async function updateFinalOrder(
   const returnFeeEuros = centsToEuros(
     feesForWeight(orderFees, loadedForWeight?.basket.grams ?? 0).returnFeeCents
   );
-  await Promise.all(
-    products.map((product) =>
-      processProductReturn(
-        { ...product, action: product.action || undefined },
-        totalOrder,
-        isCredit,
-        returnFeeEuros
-      )
-    )
+
+  const lines = await resolveFulfillmentLineItems(
+    products.map((p) => ({ ...p, action: p.action || undefined })),
+    totalOrder
   );
+  if (lines.length === 0) {
+    console.error(`No returnable lines for order ${id} — nothing to create`);
+    return;
+  }
+
+  // ONE return for the whole parcel.
+  //
+  // This used to be a Promise.all over the products, calling returnCreate once
+  // each: order #310756 ended up with returns R1 and R2 for a single box, each
+  // carrying the full 5 EUR shipping fee — 10 EUR for one parcel — and the
+  // dashboard then minted one exchange order per return.
+  //
+  // NATIVE_EXCHANGES is off by default. With it off this is today's behaviour
+  // minus the duplication; with it on the return also declares what the
+  // customer is exchanging FOR, which is what links the replacement to the
+  // return in Shopify. See docs — it changes where the warehouse sees the
+  // replacement, so it stays dark until Amphora confirms they act on it.
+  const result = await createReturn(
+    buildReturnInput(String(totalOrder.id), lines, returnFeeEuros, {
+      includeExchangeItems: process.env.NATIVE_EXCHANGES === "true",
+    })
+  );
+
+  if (!result.success) {
+    throw new Error(
+      `returnCreate failed for order ${id}: ${JSON.stringify(
+        (result as any).errors ?? (result as any).error
+      )}`
+    );
+  }
+
+  // Matched on the fulfillment line item, never on array position — Shopify
+  // makes no promise to echo the input order, and `return_line_item_id` is what
+  // `returnRefund` later spends. Pairing by index would refund the wrong
+  // garment.
+  const returnLineItemByVariant = matchReturnLineItems(
+    result.data.returnLineItems,
+    lines
+  );
+
+  await Promise.all(
+    lines.map(async (line) => {
+      const returnLineItemId = returnLineItemByVariant[line.variant_id];
+      if (!returnLineItemId) {
+        // Leave the row unconfirmed rather than store an id we did not receive.
+        console.error(
+          `Order ${id}: Shopify returned no return line item for variant ${line.variant_id} — row left unconfirmed`
+        );
+        return;
+      }
+      await db
+        .update(productsOrder)
+        .set({
+          confirmed: true,
+          return_id: result.data.id,
+          return_line_item_id: returnLineItemId,
+          transaction_id: result.data.transactionId,
+          transaction_amount: result.data.transactionAmount,
+          ...(isCredit ? { credit: true } : {}),
+        })
+        .where(
+          and(
+            eq(productsOrder.variant_id, line.variant_id),
+            eq(productsOrder.orderId, String(totalOrder.id))
+          )
+        );
+    })
+  );
+
+  revalidatePath("/", "layout");
 }

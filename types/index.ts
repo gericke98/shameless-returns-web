@@ -1,4 +1,5 @@
 import { orders, productsOrder } from "@/db/schema";
+import type { TrackingPhase, TrackingStatus } from "@/lib/trackingStatus";
 import { Dispatch, SetStateAction } from "react";
 
 // ==========================================
@@ -194,6 +195,13 @@ export type DashboardOrder = {
   email: string;
   shippingName: string;
   locator: string | null;
+  /** Null for domestic Correos returns; set by Amphora for international ones
+   *  (sometimes to "correos", which Amphora subcontracts). Decides whether the
+   *  locator can be looked up in the Correos localizador at all. */
+  carrier: string | null;
+  /** Latest Amphora lifecycle status from the status webhook, or null when no
+   *  webhook has arrived for this order yet. */
+  returnStatus: string | null;
   products: DashboardProduct[];
 };
 
@@ -215,7 +223,7 @@ export type DashboardProduct = {
 export type DashboardReturn = {
   order: DashboardOrder;
   product: DashboardProduct;
-  status: string;
+  status: TrackingStatus;
 };
 
 export type ReturnTableProps = {
@@ -224,19 +232,19 @@ export type ReturnTableProps = {
 
 export type RefundFilter = "all" | "refunded" | "not_refunded";
 
-export type ShippingStatus =
-  | "all"
-  | "prerregistrado"
-  | "admitido"
-  | "clasificado"
-  | "en tránsito"
-  | "en reparto"
-  | "entregado";
+/** Filter values for the dashboard's Shipping Status control.
+ *
+ * These used to be free-form Spanish labels compared with `===` against
+ * whatever text Correos returned — which meant "admitido" never matched
+ * "Admitido." (note the period) and the filter silently matched nothing.
+ * They are now the canonical TrackingPhase values, derived from the same
+ * mapping that produces the label, so display and filter cannot drift apart. */
+export type ShippingStatus = "all" | TrackingPhase;
 
 export type TableRowProps = {
   order: DashboardOrder;
   product: DashboardProduct;
-  status: string;
+  status: TrackingStatus;
 };
 
 export type DashboardHeaderProps = {

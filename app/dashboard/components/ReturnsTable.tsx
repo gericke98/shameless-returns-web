@@ -9,6 +9,7 @@ import {
   ShippingStatus,
   TableRowProps,
 } from "@/types";
+import { tracksWithCorreos, type TrackingStatus } from "@/lib/trackingStatus";
 
 export default function ReturnsTable({ returns }: ReturnTableProps) {
   // State for search, filter, and pagination
@@ -19,13 +20,21 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
     useState<ShippingStatus>("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [statusOverrides, setStatusOverrides] = useState<
-    Record<string, string>
+    Record<string, TrackingStatus>
   >({});
   const resultsPerPage = 15;
 
-  const resolveStatus = (order: TableRowProps["order"], status: string) => {
-    if (!order.locator) return status;
-    return statusOverrides[order.locator] ?? status;
+  /** Only Correos parcels can be looked up in the Correos localizador. An
+   *  Amphora collection already carries its status from the webhook. */
+  const isLookupable = (order: TableRowProps["order"]) =>
+    tracksWithCorreos(order.carrier) && !!order.locator;
+
+  const resolveStatus = (
+    order: TableRowProps["order"],
+    status: TrackingStatus
+  ): TrackingStatus => {
+    if (!isLookupable(order)) return status;
+    return statusOverrides[order.locator!] ?? status;
   };
 
   // Filtering the returns
@@ -39,9 +48,12 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
       filterStatusRefunded === "all" ||
       (filterStatusRefunded === "refunded" && product.refunded) ||
       (filterStatusRefunded === "not_refunded" && !product.refunded);
+    // Compare canonical phases, not display text. This compared the option
+    // value "admitido" against whatever Correos returned — including
+    // "Admitido." with a trailing period — so no selection ever matched a row.
     const filterMatchShip =
       filterStatusShipping === "all" ||
-      filterStatusShipping === resolvedStatus;
+      filterStatusShipping === resolvedStatus.phase;
 
     return searchMatch && filterMatchRef && filterMatchShip;
   });
@@ -56,7 +68,7 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
   const paginatedLocators = useMemo(() => {
     const locators = new Set<string>();
     paginatedReturns.forEach(({ order }) => {
-      if (order.locator) locators.add(order.locator);
+      if (isLookupable(order)) locators.add(order.locator!);
     });
     return Array.from(locators);
   }, [paginatedReturns]);
@@ -82,10 +94,18 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
               throw new Error("Failed to fetch shipping status");
             }
             const data = await response.json();
-            return [locator, data.status as string] as const;
+            return [
+              locator,
+              { label: data.label, phase: data.phase } as TrackingStatus,
+            ] as const;
           } catch (error) {
+            // Never fall back to the locator itself — showing the tracking
+            // number in the Status column reads as a status.
             console.error("Error fetching shipping status:", error);
-            return [locator, locator] as const;
+            return [
+              locator,
+              { label: "Sin información", phase: "sin_informacion" },
+            ] as const;
           }
         })
       );
@@ -147,11 +167,12 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
           >
             <option value="all">All</option>
             <option value="prerregistrado">Prerregistrado</option>
-            <option value="admitido">Admitido</option>
-            <option value="clasificado">Clasificado</option>
-            <option value="en tránsito">En tránsito</option>
-            <option value="en reparto">En reparto</option>
+            <option value="admitido">Admitido / recogida programada</option>
+            <option value="en_transito">En tránsito</option>
+            <option value="en_reparto">En reparto</option>
             <option value="entregado">Entregado</option>
+            <option value="incidencia">Incidencia</option>
+            <option value="sin_informacion">Sin información</option>
           </select>
         </div>
       </div>
@@ -165,11 +186,7 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
                 key={`${order.id}-${product.id}`}
                 order={order}
                 product={product}
-                status={
-                  order.locator && !statusOverrides[order.locator]
-                    ? "Loading status..."
-                    : resolveStatus(order, status)
-                }
+                status={resolveStatus(order, status)}
               />
             ))}
           </tbody>
@@ -200,6 +217,18 @@ export default function ReturnsTable({ returns }: ReturnTableProps) {
     </div>
   );
 }
+
+/** An unknown status must not look like a normal one — "Sin información" in
+ *  the same grey as "Entregado" is how 82 untraceable parcels went unnoticed. */
+const PHASE_STYLES: Record<TrackingStatus["phase"], string> = {
+  entregado: "text-green-700 font-medium",
+  en_reparto: "text-blue-600",
+  en_transito: "text-blue-600",
+  admitido: "text-gray-700",
+  prerregistrado: "text-amber-600",
+  incidencia: "text-red-600 font-medium",
+  sin_informacion: "text-gray-400 italic",
+};
 
 function TableHeader() {
   const headers = [
@@ -281,8 +310,8 @@ function TableRow({ order, product, status }: TableRowProps) {
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.refunded ? "Yes" : "No"}
       </td>
-      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-        {status || "No tracking number"}
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        <span className={PHASE_STYLES[status.phase]}>{status.label}</span>
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
         {product.refunded ? (
@@ -290,7 +319,7 @@ function TableRow({ order, product, status }: TableRowProps) {
         ) : (
           <button
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm transition-colors"
-            onClick={() => validateReturn(product, status, order)}
+            onClick={() => validateReturn(product, status.label, order)}
             aria-label={`Refund ${product.title}`}
           >
             Refund

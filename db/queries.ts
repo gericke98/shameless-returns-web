@@ -5,7 +5,7 @@ import db from "./drizzle";
 import { eq } from "drizzle-orm";
 import { orders, productsOrder } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
-import { toShopifyReturnReason } from "@/lib/shopifyReturnReason";
+import type { ReturnCreateInput } from "@/lib/returnPayload";
 
 const createSession = (): RequestInit => {
   if (
@@ -251,7 +251,15 @@ export async function createRefund(
   }
 }
 
-export async function createOrder(order: any, product: any) {
+/**
+ * Create the replacement order for an exchange.
+ *
+ * Takes the LINE ITEMS, plural. It used to take a single product and was called
+ * once per dashboard row, so an order with two exchanged garments produced two
+ * separate Shopify orders — two parcels, two shipping charges, two things for
+ * the customer to wait on.
+ */
+export async function createOrder(order: any, products: any[]) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
@@ -313,13 +321,11 @@ export async function createOrder(order: any, product: any) {
       currency: "EUR",
       email: order.email,
       financialStatus: "PAID",
-      lineItems: [
-        {
-          variantId: product.new_variant_id,
-          quantity: 1,
-          requiresShipping: true,
-        },
-      ],
+      lineItems: products.map((product) => ({
+        variantId: product.new_variant_id,
+        quantity: 1,
+        requiresShipping: true,
+      })),
       note: `Exchange order for ${order.orderNumber}`,
       shippingAddress: {
         address1: order.shippingAddress1,
@@ -456,114 +462,88 @@ export async function closeReturn(returnId: string) {
   }
 }
 
-export async function createReturn(
-  orderId: string,
-  fulfillmentLineItem: string,
-  product: any,
-  discount: any,
-  returnFeeEuros: number
-) {
+/**
+ * Create ONE Shopify return for a whole submission.
+ *
+ * Was called once per line, which gave order #310756 two returns for one
+ * parcel and charged the return shipping fee twice. The payload is built by
+ * `buildReturnInput` (pure, tested); this function only talks to Shopify.
+ *
+ * Sent as GraphQL VARIABLES rather than an interpolated document. The previous
+ * version pasted the customer's free-text note into the mutation string and
+ * relied on JSON.stringify to quote it — correct, but one edit away from an
+ * injection into a document that creates returns and moves money.
+ */
+export async function createReturn(input: ReturnCreateInput) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  // What the customer actually chose. This was hardcoded to COLOR, so every
-  // return in Shopify read "Color" regardless of the stated reason.
-  const returnReason = toShopifyReturnReason(product?.reason);
-
-  // The customer's own words, preserved alongside the enum — Shopify expects a
-  // note with OTHER, and it keeps the detail the enum cannot carry.
-  //
-  // This is free text being interpolated into a GraphQL document, so it is
-  // quoted with JSON.stringify: a bare `"` would otherwise terminate the string
-  // and corrupt the mutation. JSON string syntax is a subset of GraphQL's, so
-  // the escaping is valid as-is.
-  const note = String(product?.notes ?? "").trim().slice(0, 255);
-  const returnReasonNote = note
-    ? `,
-                returnReasonNote: ${JSON.stringify(note)}`
-    : "";
-
-  let query = `
-      mutation {
-        returnCreate(returnInput:
-          {
-            orderId: "gid://shopify/Order/${orderId}",
-            returnLineItems: [
-              {
-                fulfillmentLineItemId: "${fulfillmentLineItem}",
-                quantity: 1,
-                returnReason: ${returnReason}${returnReasonNote}
-              }
-            ],
-            returnShippingFee: {
-              amount: {
-                amount: ${returnFeeEuros.toFixed(2)},
-                currencyCode: EUR
-              }
-            }
-          }) 
-        {
+  const query = `
+      mutation CreateReturn($input: ReturnInput!) {
+        returnCreate(returnInput: $input) {
           return {
             id
-            returnLineItems(first: 10){
-              nodes{
+            name
+            returnLineItems(first: 25) {
+              nodes {
                 id
+                ... on ReturnLineItem {
+                  fulfillmentLineItem { id }
+                }
               }
+            }
+            exchangeLineItems(first: 25) {
+              nodes { id quantity variantId }
             }
             order {
               transactions(first: 10) {
                 id
-                amountSet {
-                  shopMoney {
-                    amount
-                    currencyCode
-                  }
-                }
+                amountSet { shopMoney { amount currencyCode } }
               }
             }
           }
-          userErrors {
-            field
-            message
-          }
+          userErrors { field message }
         }
       }
     `;
+
   try {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",
       headers: session.headers,
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({ query, variables: { input } }),
     });
 
     const data = await response.json();
 
-    if (data.errors || data.data.returnCreate.userErrors.length > 0) {
+    if (data.errors || data.data?.returnCreate?.userErrors?.length > 0) {
       console.error(
         "Error creating return:",
-        data.errors || data.data.returnCreate.userErrors
+        JSON.stringify(data.errors || data.data.returnCreate.userErrors)
       );
       return {
-        success: false,
-        errors: data.errors || data.data.returnCreate.userErrors,
+        success: false as const,
+        errors: data.errors || data.data?.returnCreate?.userErrors,
       };
     }
 
-    // Extract transaction details for refund
     const returnData = data.data.returnCreate.return;
     const transactionData = returnData.order.transactions[0];
 
     return {
-      success: true,
+      success: true as const,
       data: {
-        ...returnData,
+        id: returnData.id as string,
+        name: returnData.name as string,
+        returnLineItems: returnData.returnLineItems.nodes,
+        exchangeLineItems: returnData.exchangeLineItems.nodes,
         transactionId: transactionData?.id,
         transactionAmount: transactionData?.amountSet?.shopMoney?.amount,
       },
     };
   } catch (error) {
     console.error("Fetch error:", error);
-    return { success: false, error: error };
+    return { success: false as const, error };
   }
 }
 

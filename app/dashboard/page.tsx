@@ -10,6 +10,10 @@ import { Suspense } from "react";
 import { Metadata } from "next";
 import { ErrorBoundary } from "react-error-boundary";
 import ErrorMessage from "./components/ErrorMessage";
+import {
+  amphoraTrackingStatus,
+  tracksWithCorreos,
+} from "@/lib/trackingStatus";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard | Shameless Returns",
@@ -49,7 +53,18 @@ async function ReturnsList() {
     }
 
     const flattenedReturns = returns.flatMap((order) => {
-      const status = order.locator || "No tracking number";
+      // The initial status, before the client asks the carrier.
+      //
+      // For an Amphora collection that IS the final answer — its status comes
+      // from the return-status webhook, not from a lookup, and asking Correos
+      // about a DHL/UPS consignment number would return "no traceability",
+      // which is precisely the response the old code rendered as
+      // "Prerregistrado". Only Correos parcels get looked up client-side.
+      const status = tracksWithCorreos(order.carrier)
+        ? order.locator
+          ? { label: "Consultando…", phase: "sin_informacion" as const }
+          : { label: "Sin número de seguimiento", phase: "sin_informacion" as const }
+        : amphoraTrackingStatus(order.returnStatus);
 
       return order.products.map((product) => {
         let newProductInfo = null;

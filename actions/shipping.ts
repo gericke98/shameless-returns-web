@@ -5,6 +5,11 @@ import { orders } from "@/db/schema";
 import { base64img } from "@/placeholder";
 import { buildCorreosEmail, type ExchangeInfo } from "@/lib/emails";
 import { exchangeFromProducts } from "@/lib/exchange";
+import {
+  UNKNOWN_TRACKING,
+  parseCorreosTracking,
+  type TrackingStatus,
+} from "@/lib/trackingStatus";
 import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
@@ -316,15 +321,29 @@ export async function createShippingLabel(id: string): Promise<number> {
   return 200;
 }
 
-export async function obtainLastStatus(trackingNumber: string | null) {
-  // Encode authentication (replace with your credentials)
+/**
+ * Ask Correos for the latest event on a parcel.
+ *
+ * Returns a {label, phase} pair, never a bare string, and never a status it
+ * did not receive. The previous version answered "Prerregistrado" whenever
+ * `resumen_ultimo` was empty — which is also what Correos returns for a parcel
+ * it has no record of, so 82 of 415 live locators (all long-since delivered,
+ * aged out of Correos's traceability) were reported to ops as sitting
+ * undeposited. Parsing lives in lib/trackingStatus.ts so those cases are
+ * pinned by tests against real payloads.
+ */
+export async function obtainLastStatus(
+  trackingNumber: string | null
+): Promise<TrackingStatus> {
   const username = process.env.USERNAME_CORREOS;
   const password = process.env.PASSWORD_CORREOS;
-  const authToken = Buffer.from(`${username}:${password}`).toString("base64");
+  if (!trackingNumber || !username || !password) return UNKNOWN_TRACKING;
 
-  // Construct request URL
-  const url = `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${trackingNumber}?codIdioma=ES&indUltEvento=S`;
-  // Make API request
+  const authToken = Buffer.from(`${username}:${password}`).toString("base64");
+  const url = `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${encodeURIComponent(
+    trackingNumber
+  )}?codIdioma=ES&indUltEvento=S`;
+
   try {
     const response = await axios.get(url, {
       headers: {
@@ -332,14 +351,11 @@ export async function obtainLastStatus(trackingNumber: string | null) {
         "Content-Type": "application/json",
       },
     });
-    // Caso de error
-    if (!response.data[0].resumen_ultimo) {
-      return "Prerregistrado";
-    }
-    // Return the tracking data
-    return response.data[0].resumen_ultimo;
+    return parseCorreosTracking(response.data);
   } catch (error) {
-    console.error("Error fetching tracking data:", error);
-    return null;
+    // A network failure is not evidence about the parcel. Report "unknown"
+    // rather than any status that implies we learned something.
+    console.error(`Error fetching tracking data for ${trackingNumber}:`, error);
+    return UNKNOWN_TRACKING;
   }
 }

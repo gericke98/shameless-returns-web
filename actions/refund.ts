@@ -10,7 +10,7 @@ import {
   processGiftCardReturn,
 } from "@/db/queries";
 import { productsOrder } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getFeeTable } from "@/db/fees";
 import { normalizeCountry } from "@/lib/countries";
@@ -18,6 +18,7 @@ import { resolveZone } from "@/lib/zones";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { isAdmin } from "@/lib/requireAdmin";
+import { releaseExchangeReservation } from "./exchangeReservation";
 
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
@@ -107,21 +108,60 @@ export async function validateReturn(product: any, status: string, order: any) {
         revalidatePath("/", "layout");
       }
     } else if (product.action === "CAMBIO") {
-      result = await createOrder(order, product);
+      // Every exchanged garment on this order ships in ONE parcel.
+      //
+      // This used to create a Shopify order per dashboard row, so an order with
+      // two exchanges produced two orders — two parcels to the same address, two
+      // shipping charges, two deliveries for the customer to wait on. The rows
+      // are separate in the UI but the shipment is not, so the whole exchange is
+      // settled together and clicking the sibling row afterwards is a no-op
+      // (its `refunded` flag is already set).
+      const exchangeLines = await db.query.productsOrder.findMany({
+        where: and(
+          eq(productsOrder.orderId, String(order?.id ?? "")),
+          eq(productsOrder.action, "CAMBIO"),
+          eq(productsOrder.confirmed, true)
+        ),
+      });
+      const pending = exchangeLines.filter(
+        (line) => !line.refunded && line.new_variant_id
+      );
+      if (pending.length === 0) {
+        console.error(
+          `validateReturn: no pending exchange lines for order ${order?.id}`
+        );
+        return;
+      }
+
+      // Release the hold FIRST. The draft order and the real one would
+      // otherwise both claim the same unit, and DECREMENT_OBEYING_POLICY would
+      // refuse to sell the last garment in stock to the very customer it is
+      // being held for.
+      await releaseExchangeReservation(String(order?.id ?? ""));
+
+      result = await createOrder(order, pending);
       if (result?.success) {
-        // Cierro el return
-        result2 = await closeReturn(product.return_id);
         await db
           .update(productsOrder)
-          .set({
-            refunded: true,
-          })
+          .set({ refunded: true })
           .where(
             and(
-              eq(productsOrder.variant_id, product.variant_id.toString()),
-              eq(productsOrder.orderId, order.id)
+              eq(productsOrder.orderId, String(order?.id ?? "")),
+              inArray(
+                productsOrder.id,
+                pending.map((line) => line.id)
+              )
             )
           );
+        // Close each distinct return once, not once per line. Batched returns
+        // share a return_id, so closing per line would call returnClose N times
+        // on the same return.
+        const returnIds = Array.from(
+          new Set(pending.map((line) => line.return_id).filter(Boolean))
+        );
+        for (const returnId of returnIds) {
+          result2 = await closeReturn(returnId as string);
+        }
         revalidatePath("/", "layout");
       }
     } else {

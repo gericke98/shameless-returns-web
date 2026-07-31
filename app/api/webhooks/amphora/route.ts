@@ -1,31 +1,25 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import axios from "axios";
-import { eq } from "drizzle-orm";
-import db from "@/db/drizzle";
-import { orders } from "@/db/schema";
 import { getOrderById, getOrderByNumber } from "@/db/queries";
+import { applyReturnStatus } from "@/actions/amphoraStatusSync";
 import {
-  buildCollectionScheduledEmail,
-  buildReturnReceivedEmail,
-} from "@/lib/emails";
-import { exchangeFromProducts } from "@/lib/exchange";
-import { readLocale } from "@/lib/i18n";
-import {
-  decideWebhookActions,
   orderIdFromWebhook,
   type AmphoraWebhookReturn,
 } from "@/lib/amphoraWebhook";
 
-const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
-
 /**
  * Amphora return-status webhooks.
  *
- * Amphora assigns the carrier asynchronously, long after the request that
- * created the return has ended — so without this endpoint the promise made in
- * the collection email ("we will email you the tracking details as soon as the
- * collection is scheduled") can never be kept.
+ * Amphora assigns the carrier after the request that created the return has
+ * ended, so without a status channel the promise made in the collection email
+ * ("we will email you the tracking details as soon as the collection is
+ * scheduled") can never be kept.
+ *
+ * NOTE: as of 2026-07-30 Amphora has NOT registered this endpoint, so it has
+ * never fired. `app/api/cron/amphora-sync` polls for the same transitions and
+ * shares the apply-step in `actions/amphoraStatusSync.ts` — that is what
+ * actually keeps the promise today. Keep both: whichever notices first wins,
+ * and the second is a no-op.
  *
  * PUBLIC and not cookie-authenticated: `middleware.ts` matches only /dashboard
  * and /login. The shared `X-Secret` is the ONLY thing in front of this
@@ -45,27 +39,6 @@ function authorized(req: Request): boolean {
   // first; the comparison stays constant-time for equal-length inputs.
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
-}
-
-async function sendEmail(payload: Record<string, unknown>): Promise<number> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return 500;
-  try {
-    const res = await axios.post(POSTMARK_API_URL, payload, {
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        "X-Postmark-Server-Token": token,
-      },
-    });
-    return res.status;
-  } catch (error: any) {
-    console.error(
-      "Amphora webhook email error:",
-      error?.response?.data || error?.message || error
-    );
-    return 500;
-  }
 }
 
 export async function POST(req: Request) {
@@ -103,50 +76,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ message: "ignored" });
   }
 
-  const actions = decideWebhookActions(order, payload);
-  if (actions.noop || !actions.persist) {
-    return NextResponse.json({ message: "no-op" });
-  }
-
-  // Persist BEFORE emailing. A redelivery then finds the status unchanged and
-  // does nothing, so the customer can never be emailed twice. The cost is that
-  // a failed email is not retried — hence the loud log below.
-  await db.update(orders).set(actions.persist).where(eq(orders.id, order.id));
-
-  const locale = readLocale(order.locale);
-  const exchange = exchangeFromProducts((order as any).products);
-
-  for (const email of actions.emails) {
-    const built =
-      email === "collectionScheduled"
-        ? buildCollectionScheduledEmail(
-            order.shippingName,
-            locale,
-            { number: payload.carrier_number, url: payload.carrier_url },
-            exchange
-          )
-        : buildReturnReceivedEmail(order.shippingName, locale, exchange);
-
-    const status = await sendEmail({
-      ...built,
-      To: order.email,
-      MessageStream: "outbound",
-    });
-    if (status !== 200) {
-      console.error(
-        `[amphora-webhook] order ${order.id}: status saved as ${actions.persist.returnStatus} but the "${email}" email FAILED (${status}). Customer needs a manual notice.`
-      );
-    }
-  }
-
-  if (
-    payload.internal_status === "EXCEPTION" ||
-    payload.internal_status === "EXCEPTION_WAREHOUSE"
-  ) {
-    console.error(
-      `[amphora-webhook] order ${order.id} (${order.orderNumber}) entered ${payload.internal_status} — needs manual attention.`
-    );
-  }
-
-  return NextResponse.json({ message: "ok" });
+  const outcome = await applyReturnStatus(order as any, payload);
+  return NextResponse.json({ message: outcome.changed ? "ok" : "no-op" });
 }

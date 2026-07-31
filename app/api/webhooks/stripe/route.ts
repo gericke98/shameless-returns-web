@@ -9,6 +9,11 @@ import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
+/** Same third-party chain as the free path (Shopify -> carrier -> Postmark),
+ *  so it needs the same headroom as `app/[id]/page.tsx`. A timeout here is
+ *  worse: Stripe has already taken the money. */
+export const maxDuration = 60;
+
 export async function POST(req: Request) {
   const body = await req.text();
   const signature = headers().get("stripe-signature");

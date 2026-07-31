@@ -163,6 +163,23 @@ export async function resolveAmphoraOrderId(orderName: string): Promise<string |
  * Fetch the Amphora return(s) for an order name — used after creation to read
  * back the assigned carrier + tracking for the confirmation email.
  */
+/**
+ * Every return on the tenant, newest page first.
+ *
+ * Used by the status-sync cron, which has no order name to look up — it is
+ * discovering which of OUR returns (the ones carrying `external_id`) have moved
+ * since we last saw them. Amphora's own Shopify-channel returns come back with
+ * `external_id: null` and are not ours to act on.
+ */
+export async function getAmphoraReturns(createdAfter?: string): Promise<AmphoraReturn[]> {
+  const data = await amphoraRequest<{ return_orders?: AmphoraReturn[]; returns?: AmphoraReturn[] }>(
+    "GET",
+    "/returns",
+    { query: createdAfter ? { created_after: createdAfter } : undefined },
+  );
+  return data.return_orders ?? data.returns ?? [];
+}
+
 export async function getAmphoraReturnsByOrderName(orderName: string): Promise<AmphoraReturn[]> {
   const data = await amphoraRequest<{ return_orders?: AmphoraReturn[]; returns?: AmphoraReturn[] }>(
     "GET",

@@ -113,10 +113,13 @@ async function ticketOpen(orderName: string): Promise<boolean | null> {
   }
 }
 
-/** Our orders for the given ids, keyed by id. Read-only. */
+/** Our orders for the given ids, keyed by id. Read-only.
+ *
+ * `locator` comes back too: holding one means we already emailed this customer
+ * their tracking, so the operator must not be told to email them again. */
 async function ordersById(
   ids: string[]
-): Promise<Map<string, { shipping_country: string }>> {
+): Promise<Map<string, { shipping_country: string; locator: string | null }>> {
   // Validate DATABASE_URL unconditionally, even when ids is empty. If Amphora's
   // /returns call is malformed or returns no matches, a missing credential should
   // fail loud (exit 2) rather than silent (exit 0 with "API-created returns: 0").
@@ -129,9 +132,14 @@ async function ordersById(
   if (ids.length === 0) return new Map();
   const sql = neon(url);
   const rows = (await sql`
-    select id, shipping_country from orders where id = any(${ids})
-  `) as Array<{ id: string; shipping_country: string }>;
-  return new Map(rows.map((r) => [r.id, { shipping_country: r.shipping_country }]));
+    select id, shipping_country, locator from orders where id = any(${ids})
+  `) as Array<{ id: string; shipping_country: string; locator: string | null }>;
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { shipping_country: r.shipping_country, locator: r.locator ?? null },
+    ])
+  );
 }
 
 async function main() {
@@ -144,9 +152,20 @@ async function main() {
   const all = body.return_orders ?? body.returns ?? [];
 
   // Everything that refers to one of our orders, whether we created it or
-  // Amphora re-created it in their UI (which nulls `external_id`), filtered by
-  // the SAME ownership rule the cron applies — an orphan counts only when the
-  // order is in our database AND international.
+  // Amphora re-created it in their UI (which nulls `external_id`).
+  const matched = matchReturnsToOrderIds(all);
+  const orders = await ordersById(matched.map((m) => m.orderId));
+
+  // A match with no order row is dropped from every section below. Before this
+  // script resolved ownership against our database it listed API-created returns
+  // unconditionally, so silence here would be a regression in the one tool built
+  // to make stranded returns VISIBLE. Say so out loud instead.
+  const unresolved = matched.filter((m) => !orders.get(m.orderId));
+
+  // The SAME ownership rule the cron applies: international, and in our
+  // database. (The cron additionally requires a confirmed line item for an
+  // orphan; this script has no join to productsorder, so it over-reports
+  // slightly rather than hiding anything.)
   //
   // An earlier revision skipped the database and simply over-reported, on the
   // theory that showing too much is safer than hiding a stranded return. In
@@ -154,32 +173,67 @@ async function main() {
   // including 2025-era Spanish CEX/CAI/DHL returns that never touched our
   // portal. Burying three stranded returns under 74 irrelevant ones fails this
   // script's only job just as completely as hiding them would.
-  const matched = matchReturnsToOrderIds(all);
-  const orders = await ordersById(matched.map((m) => m.orderId));
   const owned = matched.filter((m) => {
     const order = orders.get(m.orderId);
     if (!order) return false;
-    return m.viaExternalId || isInternationalOrder(order.shipping_country);
+    // Applied to API-created returns too, not just orphans: we only ever create
+    // Amphora returns for international orders, so this rejects nothing real,
+    // and it stops the report leaning on Amphora never setting external_id.
+    return isInternationalOrder(order.shipping_country);
   });
   const ours = owned.map((m) => m.ret);
   const recreated = new Set(owned.filter((m) => !m.viaExternalId).map((m) => m.ret));
+  // Do we already hold tracking for this order? If so the customer has already
+  // had the email and must not be listed as someone to notify.
+  const notified = new Set(
+    owned.filter((m) => orders.get(m.orderId)?.locator?.trim()).map((m) => m.ret)
+  );
   const assigned = ours.filter((r) => r.carrier);
   const stranded = ours
     .filter((r) => !r.carrier && !["CANCELLED", "FINISHED"].includes(r.internal_status))
     .sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
 
   console.log(
-    `API-created returns: ${ours.length} · with a carrier: ${assigned.length} · stranded: ${stranded.length}\n`
+    `Our returns: ${ours.length} · with a carrier: ${assigned.length} · stranded: ${stranded.length}\n`
   );
 
-  if (assigned.length) {
-    console.log("CARRIER ASSIGNED — collection is booked, notify these customers:");
-    for (const r of assigned) {
+  if (unresolved.length) {
+    console.log(
+      `⚠️  ${unresolved.length} Amphora return(s) match one of our order ids but have NO row in our orders table — investigate, they are excluded from everything below:`
+    );
+    for (const m of unresolved) {
       console.log(
-        `  ${r.name}  ${r.carrier}  ${r.carrier_number ?? "(no number)"}  ${r.carrier_url ?? ""}` +
-          (recreated.has(r) ? "  [re-created by Amphora]" : "")
+        `  ${m.ret.name ?? "(no name)"}  ${m.ret.id}  ` +
+          `order id ${m.orderId}  ${m.viaExternalId ? "created by us (external_id)" : "orphan"}`
       );
     }
+    console.log();
+  }
+
+  // Split on whether we already hold the tracking. Amphora emails the label
+  // directly to the customer when they assign the carrier themselves, and the
+  // sync cron writes the locator and emails on our side — so a return we hold a
+  // locator for has ALREADY been communicated. Listing it under "notify these
+  // customers" invites a duplicate email, which is how all seven backfilled
+  // orders would have been double-notified.
+  const toNotify = assigned.filter((r) => !notified.has(r));
+  const alreadyNotified = assigned.filter((r) => notified.has(r));
+
+  const line = (r: AmphoraReturn) =>
+    `  ${r.name}  ${r.carrier}  ${r.carrier_number ?? "(no number)"}  ${r.carrier_url ?? ""}` +
+    (recreated.has(r) ? "  [re-created by Amphora]" : "");
+
+  if (toNotify.length) {
+    console.log("CARRIER ASSIGNED — collection is booked, notify these customers:");
+    for (const r of toNotify) console.log(line(r));
+    console.log();
+  }
+
+  if (alreadyNotified.length) {
+    console.log(
+      "CARRIER ASSIGNED — ALREADY NOTIFIED (we hold the locator, do NOT email again):"
+    );
+    for (const r of alreadyNotified) console.log(line(r));
     console.log();
   }
 

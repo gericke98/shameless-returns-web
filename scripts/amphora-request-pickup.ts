@@ -171,10 +171,35 @@ function chase(r: AmphoraReturn, date: string, slot: string) {
   );
 }
 
+/**
+ * Ask them to apply the fix they already applied. On 2026-08-05 Amphora
+ * enabled an auto-assign profile setting and re-created seven stranded returns
+ * with UPS carriers; these were created before the flip and were not on that
+ * list. The three-days-notice argument is settled, so this deliberately does
+ * NOT re-open it — the only ask is parity with the seven.
+ */
+function reassign(r: AmphoraReturn, waiting: number) {
+  return (
+    `Hola,\n\n` +
+    `Gracias por habilitar la asignación automática de transportista y por volver ` +
+    `a crear las siete devoluciones con carrier — lo hemos verificado y todas ` +
+    `tienen ya su número de UPS.\n\n` +
+    `Nos quedan dos que no estaban en esa lista porque se crearon justo antes de ` +
+    `que lo habilitarais, y siguen APROVED sin transportista:\n\n` +
+    `  · ${r.id} (pedido ${r.name}, ${r.shipping_address_country_code}), creada el ` +
+    `${String(r.time).slice(0, 10)}, ${waiting} días esperando.\n\n` +
+    `Recogida en: ${collectionAddress(r)}\n\n` +
+    `¿Podéis darles el mismo tratamiento que a las otras siete? No hace falta que ` +
+    `nos confirméis fecha: en cuanto tengan carrier y número lo vemos por API.\n\n` +
+    `Gracias.`
+  );
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes("--dry-run");
   const chasing = argv.includes("--chase");
+  const reassigning = argv.includes("--reassign");
   const value = (flag: string, fallback: string) => {
     const i = argv.indexOf(flag);
     return i > -1 ? argv[i + 1] : fallback;
@@ -185,7 +210,7 @@ async function main() {
     (a, i) => !a.startsWith("--") && !["--date", "--slot"].includes(argv[i - 1])
   );
 
-  if (!date) throw new Error(`--date is required, e.g. --date "jueves 6 de agosto"`);
+  if (!date && !reassigning) throw new Error(`--date is required, e.g. --date "jueves 6 de agosto"`);
   if (orders.length === 0) throw new Error("pass at least one order, e.g. '#310761'");
 
   const body = await amphora<{ return_orders?: AmphoraReturn[]; returns?: AmphoraReturn[] }>(
@@ -220,11 +245,13 @@ async function main() {
 
     const action = open ? "add_message" : "create";
     const ticketId = open?.gap ?? open?.legacy_gap;
-    const message = chasing
-      ? chase(r, date, slot)
-      : open
-        ? reply(r, date, slot, waiting, stranded)
-        : opener(r, date, slot, waiting, stranded);
+    const message = reassigning
+      ? reassign(r, waiting)
+      : chasing
+        ? chase(r, date, slot)
+        : open
+          ? reply(r, date, slot, waiting, stranded)
+          : opener(r, date, slot, waiting, stranded);
 
     console.log(`\n${"═".repeat(100)}\n${order}  →  tickets/${action}` +
       (open ? `  (zendesk ${open.zendesk_id}, id "${ticketId}")` : "  (new thread)") +

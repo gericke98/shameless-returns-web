@@ -5,9 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // the only thing in front of it, so an unset secret must close the route rather
 // than open it — the same fail-closed rule as the Amphora webhook.
 //
-// It must also act ONLY on returns we created. Amphora's own Shopify-channel
-// returns share the tenant and carry `external_id: null`; touching those would
-// mean emailing customers about returns that are not ours to manage.
+// It must also act ONLY on returns that are ours to manage. Amphora's own
+// Shopify-channel returns and their warehouse-arrival records share the tenant
+// and carry `external_id: null`; touching those means emailing customers about
+// returns we never handled. Ownership is three things, not one: the order is in
+// our table, it is international, and — for anything without an `external_id` —
+// at least one line item is confirmed, which is the only proof a return really
+// went through our portal rather than the customer just looking the order up.
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -65,6 +69,39 @@ const UNKNOWN = {
   time: "2026-08-02T09:00:00",
 };
 
+// An orphan for an INTERNATIONAL order that is in our table only because the
+// customer once looked the order up in the portal (actions/order.ts saves on
+// lookup, before anything is started or paid for). They abandoned it and
+// returned through customer service; Amphora opened this record when the parcel
+// arrived at the warehouse. Acting on it emails the customer about a return we
+// never managed, months late. Real shape: order #310500, France.
+const LOOKED_UP_ONLY = {
+  id: "SHP 13150000000000",
+  name: "#310500",
+  external_id: null,
+  internal_status: "RECEIVED",
+  carrier: "UPS",
+  carrier_number: "1Z310500",
+  carrier_url: null,
+  time: "2026-08-02T09:00:00",
+};
+
+// One of ours, matched by external_id, whose order is Spanish. Cannot happen
+// while both call sites gate on isInternationalOrder — but the domestic check
+// must not depend on that, because it is the only thing standing between a
+// Spanish customer's live Correos tracking and whatever carrier delivered the
+// box to Amphora.
+const OURS_BUT_SPANISH = {
+  id: "SHP 13188888888888",
+  name: "#310901",
+  external_id: "13188888888888",
+  internal_status: "APROVED",
+  carrier: "CEX",
+  carrier_number: "CEX001",
+  carrier_url: null,
+  time: "2026-08-02T09:00:00",
+};
+
 // An orphan whose resolved order has an empty shippingCountry — the schema
 // declares the column NOT NULL and db/repository.ts writes it straight from
 // Shopify, so this should be rare, but isInternationalOrder treats an empty
@@ -83,26 +120,50 @@ const EMPTY_COUNTRY = {
   time: "2026-08-02T09:00:00",
 };
 
+// `products` mirrors what getOrderById loads (`with: { products: true }`).
+// A confirmed line item is the only proof a return actually went through our
+// portal — a bare row means the customer merely looked the order up.
 const ORDERS: Record<string, any> = {
+  // Deliberately carries NO confirmed line item: it is matched by external_id,
+  // so it must still be acted on. That keeps the confirmed-item rule honest
+  // about being scoped to orphans.
   "13192219558214": {
     id: "13192219558214",
     orderNumber: "#310957",
     shippingCountry: "Germany",
+    products: [{ id: "p1", confirmed: false }],
   },
   "13161916465478": {
     id: "13161916465478",
     orderNumber: "#310761",
     shippingCountry: "Italia",
+    products: [{ id: "p2", confirmed: true }],
   },
   "13181092561222": {
     id: "13181092561222",
     orderNumber: "#310889",
     shippingCountry: "Spain",
+    products: [{ id: "p3", confirmed: true }],
   },
   "13175555555555": {
     id: "13175555555555",
     orderNumber: "#310800",
     shippingCountry: "",
+    products: [{ id: "p4", confirmed: true }],
+  },
+  // France, portal opened in March and abandoned. `confirmed` is flipped by one
+  // test below to prove the rule turns on exactly this field.
+  "13150000000000": {
+    id: "13150000000000",
+    orderNumber: "#310500",
+    shippingCountry: "France",
+    products: [{ id: "p5", confirmed: false }],
+  },
+  "13188888888888": {
+    id: "13188888888888",
+    orderNumber: "#310901",
+    shippingCountry: "Spain",
+    products: [{ id: "p6", confirmed: true }],
   },
 };
 
@@ -141,6 +202,7 @@ beforeEach(() => {
   applied.length = 0;
   state.returns = [OURS, RECREATED, THEIRS, UNKNOWN];
   state.listThrows = false;
+  ORDERS["13150000000000"].products = [{ id: "p5", confirmed: false }];
   process.env.CRON_SECRET = "s3cret";
 });
 
@@ -185,6 +247,49 @@ describe("amphora-sync cron — scope and resilience", () => {
     expect(applied.map((a) => a.order)).not.toContain("#310889");
   });
 
+  it("never touches an international order the customer only ever looked up", async () => {
+    // The row exists because actions/order.ts saves on a successful lookup, not
+    // because a return was ever started. Acting on Amphora's warehouse-arrival
+    // record here sends a "collection scheduled" AND a "return received" email
+    // months late, for a return we never managed.
+    state.returns = [...state.returns, LOOKED_UP_ONLY];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied.map((a) => a.order)).not.toContain("#310500");
+    expect(body.skippedNoReturn).toBe(1);
+  });
+
+  it("acts on that same international orphan once a line item is confirmed", async () => {
+    ORDERS["13150000000000"].products = [{ id: "p5", confirmed: true }];
+    state.returns = [...state.returns, LOOKED_UP_ONLY];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied.map((a) => a.order)).toContain("#310500");
+    expect(body.skippedNoReturn).toBe(0);
+  });
+
+  it("does not demand a confirmed line item of a return we created ourselves", async () => {
+    // #310957 is matched by external_id and its order carries no confirmed
+    // product; that is the strongest ownership evidence there is, so it stands.
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(applied.map((a) => a.order)).toContain("#310957");
+  });
+
+  it("never touches a Spanish order even when we created the return ourselves", async () => {
+    // Both call sites gate on isInternationalOrder, so this cannot happen today
+    // — which is the point: the domestic guard must not lean on that, because
+    // it is all that protects the Correos tracking a Spanish customer is
+    // actively watching.
+    state.returns = [...state.returns, OURS_BUT_SPANISH];
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(applied.map((a) => a.order)).not.toContain("#310901");
+  });
+
   it("never touches an orphan for an order that is not in our database", async () => {
     await call({ authorization: "Bearer s3cret" });
 
@@ -213,11 +318,35 @@ describe("amphora-sync cron — scope and resilience", () => {
   });
 
   it("reports stranded returns — approved with no carrier is the live defect", async () => {
-    state.returns = [{ ...OURS, carrier: null, carrier_number: null }];
+    // Two carrier-less APROVED returns, only ONE of them ours. If `stranded`
+    // were ever computed over all matches instead of the acted-on set, this
+    // reads 2. With a single-return fixture the two are indistinguishable and
+    // the test cannot fail.
+    state.returns = [
+      { ...OURS, carrier: null, carrier_number: null },
+      {
+        ...LOOKED_UP_ONLY,
+        internal_status: "APROVED",
+        carrier: null,
+        carrier_number: null,
+      },
+    ];
 
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
     expect(body.stranded).toBe(1);
+    expect(body.skippedNoReturn).toBe(1);
+  });
+
+  it("names the stranded orders in the log, so Vercel shows who is waiting", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    state.returns = [{ ...OURS, carrier: null, carrier_number: null }];
+
+    await call({ authorization: "Bearer s3cret" });
+
+    const line = warn.mock.calls.map(String).find((c) => c.includes("no carrier assigned"));
+    expect(line).toContain("#310957");
+    warn.mockRestore();
   });
 
   it("502s rather than half-running when Amphora is unreachable", async () => {

@@ -31,6 +31,27 @@ function authorized(req: Request): boolean {
   return req.headers.get("authorization") === `Bearer ${secret}`;
 }
 
+/**
+ * Did this order ever produce a return through OUR portal?
+ *
+ * A row in `orders` proves nothing: `actions/order.ts` saves the order the
+ * moment a customer successfully looks up a number + email, before anything is
+ * started, paid for or booked. Plenty of international customers opened the
+ * portal, abandoned it, and returned through customer service instead.
+ *
+ * A confirmed line item is the real signal — it is what `getReturns` uses to
+ * decide something is a return at all. `getOrderById` already loads
+ * `with: { products: true }`, so this costs no extra query.
+ *
+ * Deliberately NOT `order.locator != null` / `order.carrier != null`: a return
+ * we created that Amphora never assigned a carrier to has a null locator, which
+ * is exactly the stranded-then-re-created case this whole sync exists to catch.
+ * That test would have excluded all seven of the returns that motivated it.
+ */
+function hasConfirmedReturn(order: { products?: Array<{ confirmed?: boolean | null }> }): boolean {
+  return (order.products ?? []).some((p) => p.confirmed === true);
+}
+
 export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -55,6 +76,7 @@ export async function GET(req: Request) {
   let scanned = 0;
   let skipped = 0;
   let skippedUnknownCountry = 0;
+  let skippedNoReturn = 0;
 
   for (const match of matches) {
     const ret = match.ret;
@@ -81,8 +103,16 @@ export async function GET(req: Request) {
       // record for the same parcel says carrier CEX. Syncing a domestic orphan
       // would overwrite the Correos tracking we show the customer with the
       // carrier that happened to deliver it. Spain is Correos on our side, so
-      // an orphan against a domestic order is never ours to apply.
-      if (!match.viaExternalId && !isInternationalOrder(order.shippingCountry)) {
+      // a return against a domestic order is never ours to apply.
+      //
+      // This is checked for EVERY match, `external_id` ones included. We create
+      // Amphora returns for international orders only — `actions/return.ts` and
+      // the Stripe webhook both gate on `isInternationalOrder` — so it is
+      // already true by construction for anything we created, and applying it
+      // unconditionally costs nothing while removing our dependence on Amphora
+      // never populating `external_id` themselves. The Correos tracking a
+      // Spanish customer is actively watching is what this protects.
+      if (!isInternationalOrder(order.shippingCountry)) {
         skipped += 1;
 
         // isInternationalOrder treats an empty/missing shippingCountry as
@@ -100,6 +130,23 @@ export async function GET(req: Request) {
             `[amphora-sync] order ${order.orderNumber ?? match.orderId} (return ${ret.id}) has no shippingCountry on file — skipped as domestic, but this may be a live international return we are failing to sync.`
           );
         }
+        continue;
+      }
+
+      // International is not enough for an orphan. Being in `orders` only means
+      // this customer once opened the portal for this order — see
+      // hasConfirmedReturn. Without this, order #310500 (France, looked up in
+      // March, abandoned, returned via customer service) gets Amphora's own
+      // warehouse-arrival record applied to it months later, and the customer
+      // is sent BOTH a "your collection is scheduled" and a "we've received
+      // your return" email for a return we never managed.
+      //
+      // Scoped to orphans: an `external_id` is a direct statement that we
+      // created the return through the API, which is stronger evidence than a
+      // confirmed line item, and the portal is not the only path to one.
+      if (!match.viaExternalId && !hasConfirmedReturn(order)) {
+        skipped += 1;
+        skippedNoReturn += 1;
         continue;
       }
 
@@ -139,14 +186,28 @@ export async function GET(req: Request) {
 
   // Visibility on the live defect: ours reach APROVED and then sit with no
   // carrier, so no collection is ever scheduled.
-  const stranded = acted.filter(
+  const strandedMatches = acted.filter(
     (m) => !m.ret.carrier && !["CANCELLED", "FINISHED"].includes(String(m.ret.internal_status))
-  ).length;
+  );
+  const stranded = strandedMatches.length;
   if (stranded) {
+    // Name them. A bare count in the Vercel logs tells whoever is on call that
+    // something is wrong but not which customer is waiting, which means going
+    // back to the Amphora UI to find out — the delay this sync exists to end.
+    const names = strandedMatches
+      .map((m) => m.ret.name ?? m.ret.id ?? "(unnamed)")
+      .join(", ");
     console.warn(
-      `[amphora-sync] ${stranded} return(s) approved with no carrier assigned — collections are not booked.`
+      `[amphora-sync] ${stranded} return(s) approved with no carrier assigned — collections are not booked: ${names}`
     );
   }
 
-  return NextResponse.json({ scanned, changed, stranded, skipped, skippedUnknownCountry });
+  return NextResponse.json({
+    scanned,
+    changed,
+    stranded,
+    skipped,
+    skippedUnknownCountry,
+    skippedNoReturn,
+  });
 }

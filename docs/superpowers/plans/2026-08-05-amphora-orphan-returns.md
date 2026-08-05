@@ -718,13 +718,17 @@ script runs against production and must not issue a query per return:
 async function ordersById(
   ids: string[]
 ): Promise<Map<string, { shipping_country: string }>> {
-  if (ids.length === 0) return new Map();
+  // Validate the credential BEFORE the empty-ids short-circuit. Reversed, a
+  // missing DATABASE_URL and a genuinely quiet day both print "0 stranded" and
+  // exit 0 — and a degraded Amphora response returning `200 {}` is exactly the
+  // moment this script must shout rather than pass silently.
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error(
       "DATABASE_URL is not set. This script now resolves ownership against our own orders table — export it or add it to .env."
     );
   }
+  if (ids.length === 0) return new Map();
   const sql = neon(url);
   const rows = (await sql`
     select id, shipping_country from orders where id = any(${ids})

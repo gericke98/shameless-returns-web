@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getAmphoraReturns } from "@/actions/amphora";
 import { applyReturnStatus } from "@/actions/amphoraStatusSync";
 import { getOrderById, getOrderByNumber } from "@/db/queries";
+import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
+import { isInternationalOrder } from "@/lib/countries";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -45,20 +47,39 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Amphora unreachable" }, { status: 502 });
   }
 
-  // Only ours. Amphora's Shopify-channel returns have a null external_id and
-  // are managed entirely on their side.
-  const ours = returns.filter((r) => r.external_id);
+  // Which order does each return refer to, at most one return per order?
+  const matches = matchReturnsToOrderIds(returns);
 
   const changed: Array<Record<string, unknown>> = [];
+  const acted: typeof matches = [];
   let scanned = 0;
+  let skipped = 0;
 
-  for (const ret of ours) {
-    scanned += 1;
+  for (const match of matches) {
+    const ret = match.ret;
     try {
       const order =
-        (await getOrderById(String(ret.external_id))) ??
-        (ret.name ? await getOrderByNumber(ret.name) : null);
-      if (!order) continue;
+        (await getOrderById(match.orderId)) ??
+        (match.viaExternalId && ret.name ? await getOrderByNumber(ret.name) : null);
+
+      // An id match is not ownership. A return Amphora created carries no
+      // external_id, and neither does the record Amphora opens when a parcel
+      // simply ARRIVES at their warehouse — which happens for domestic returns
+      // too, since they are the 3PL receiving every box. Measured 2026-08-05:
+      // 47 of the 87 returns we did not create are Spanish, carrying CEX/CAI/
+      // GLS/CTT. Order #310273 is the case that matters: we booked it on
+      // Correos and hold locator PQAZXT9800004100128221Y, while Amphora's
+      // record for the same parcel says carrier CEX. Syncing a domestic orphan
+      // would overwrite the Correos tracking we show the customer with the
+      // carrier that happened to deliver it. Spain is Correos on our side, so
+      // an orphan against a domestic order is never ours to apply.
+      if (!order || (!match.viaExternalId && !isInternationalOrder(order.shippingCountry))) {
+        skipped += 1;
+        continue;
+      }
+
+      scanned += 1;
+      acted.push(match);
 
       const outcome = await applyReturnStatus(order as any, {
         id: ret.id,
@@ -93,8 +114,8 @@ export async function GET(req: Request) {
 
   // Visibility on the live defect: ours reach APROVED and then sit with no
   // carrier, so no collection is ever scheduled.
-  const stranded = ours.filter(
-    (r) => !r.carrier && !["CANCELLED", "FINISHED"].includes(r.internal_status)
+  const stranded = acted.filter(
+    (m) => !m.ret.carrier && !["CANCELLED", "FINISHED"].includes(String(m.ret.internal_status))
   ).length;
   if (stranded) {
     console.warn(
@@ -102,5 +123,5 @@ export async function GET(req: Request) {
     );
   }
 
-  return NextResponse.json({ scanned, changed, stranded });
+  return NextResponse.json({ scanned, changed, stranded, skipped });
 }

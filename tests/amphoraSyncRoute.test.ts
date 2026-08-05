@@ -24,6 +24,24 @@ const OURS = {
   carrier_url: "https://track.example/JJD001",
 };
 
+// An orphan for one of OUR international orders: this is what Amphora leaves
+// behind when they re-create a return in their own UI (2026-08-05, all seven).
+const RECREATED = {
+  id: "SHP 13161916465478",
+  name: "#310761",
+  external_id: null,
+  internal_status: "APROVED",
+  carrier: "UPS",
+  carrier_number: "1Z3EF3229111791266",
+  carrier_url: "https://www.ups.com/track?tracknum=1Z3EF3229111791266",
+  time: "2026-08-05T06:25:20",
+};
+
+// A domestic return as Amphora records it on ARRIVAL at their warehouse. Same
+// shape, but the order is Spanish, so we booked it on Correos and already hold
+// a Correos locator. Applying this would overwrite that tracking with the
+// carrier that delivered the box (real case: order #310273, ours says Correos
+// PQAZXT9800004100128221Y, theirs says CEX).
 const THEIRS = {
   id: "SHP 13181092561222",
   name: "#310889",
@@ -32,10 +50,41 @@ const THEIRS = {
   carrier: "GLS",
   carrier_number: "410012086538530013",
   carrier_url: null,
+  time: "2026-08-02T09:00:00",
+};
+
+// An orphan for an order that never went through our portal at all.
+const UNKNOWN = {
+  id: "SHP 99999999999999",
+  name: "#309000",
+  external_id: null,
+  internal_status: "APROVED",
+  carrier: "UPS",
+  carrier_number: "1Z000",
+  carrier_url: null,
+  time: "2026-08-02T09:00:00",
+};
+
+const ORDERS: Record<string, any> = {
+  "13192219558214": {
+    id: "13192219558214",
+    orderNumber: "#310957",
+    shippingCountry: "Germany",
+  },
+  "13161916465478": {
+    id: "13161916465478",
+    orderNumber: "#310761",
+    shippingCountry: "Italia",
+  },
+  "13181092561222": {
+    id: "13181092561222",
+    orderNumber: "#310889",
+    shippingCountry: "Spain",
+  },
 };
 
 const state: { returns: any[]; listThrows: boolean } = {
-  returns: [OURS, THEIRS],
+  returns: [OURS, RECREATED, THEIRS, UNKNOWN],
   listThrows: false,
 };
 const applied: any[] = [];
@@ -55,8 +104,9 @@ vi.mock("@/actions/amphoraStatusSync", () => ({
 }));
 
 vi.mock("@/db/queries", () => ({
-  getOrderById: async (id: string) => ({ id, orderNumber: "#310957" }),
-  getOrderByNumber: async (name: string) => ({ id: "x", orderNumber: name }),
+  getOrderById: async (id: string) => ORDERS[id],
+  getOrderByNumber: async (name: string) =>
+    Object.values(ORDERS).find((o: any) => o.orderNumber === name),
 }));
 
 async function call(headers: Record<string, string> = {}) {
@@ -66,7 +116,7 @@ async function call(headers: Record<string, string> = {}) {
 
 beforeEach(() => {
   applied.length = 0;
-  state.returns = [OURS, THEIRS];
+  state.returns = [OURS, RECREATED, THEIRS, UNKNOWN];
   state.listThrows = false;
   process.env.CRON_SECRET = "s3cret";
 });
@@ -97,13 +147,31 @@ describe("amphora-sync cron — authorisation", () => {
 });
 
 describe("amphora-sync cron — scope and resilience", () => {
-  it("acts only on returns we created, never on Amphora's own", async () => {
+  it("acts on returns we created AND on the ones Amphora re-created for us", async () => {
     const res = await call({ authorization: "Bearer s3cret" });
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(applied).toEqual([{ order: "#310957", name: "#310957" }]);
-    expect(body.scanned).toBe(1);
+    expect(applied.map((a) => a.order).sort()).toEqual(["#310761", "#310957"]);
+    expect(body.scanned).toBe(2);
+  });
+
+  it("never touches an orphan whose order is Spanish — Spain is Correos, so it is theirs", async () => {
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(applied.map((a) => a.order)).not.toContain("#310889");
+  });
+
+  it("never touches an orphan for an order that is not in our database", async () => {
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(applied.map((a) => a.order)).not.toContain("#309000");
+  });
+
+  it("counts the id matches it rejected, so a wrong rule is visible in the logs", async () => {
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.skipped).toBe(2);
   });
 
   it("reports stranded returns — approved with no carrier is the live defect", async () => {

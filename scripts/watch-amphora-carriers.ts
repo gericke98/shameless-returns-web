@@ -156,11 +156,19 @@ async function main() {
   const matched = matchReturnsToOrderIds(all);
   const orders = await ordersById(matched.map((m) => m.orderId));
 
-  // A match with no order row is dropped from every section below. Before this
-  // script resolved ownership against our database it listed API-created returns
-  // unconditionally, so silence here would be a regression in the one tool built
-  // to make stranded returns VISIBLE. Say so out loud instead.
-  const unresolved = matched.filter((m) => !orders.get(m.orderId));
+  // A match with no order row is dropped from every section below, and for one
+  // KIND of match that is an anomaly worth shouting about: an `external_id` is
+  // set only by our own POST /returns, so we definitely booked that collection —
+  // and we no longer hold the order it was booked against.
+  //
+  // Orphans with no order row are NOT that. They are Amphora's own warehouse
+  // records for orders that never touched our portal, and they are the bulk of
+  // the tenant: 55 of them in production on 2026-08-05, every one entirely
+  // normal. Printing those buries the two genuinely stranded returns exactly as
+  // the 77-row revision did, so they produce no output at all — not a row, not a
+  // count, not a summary line. A number nobody can act on, on every run forever,
+  // just teaches people to skip the section.
+  const unresolved = matched.filter((m) => m.viaExternalId && !orders.get(m.orderId));
 
   // The SAME ownership rule the cron applies: international, and in our
   // database. (The cron additionally requires a confirmed line item for an
@@ -199,12 +207,12 @@ async function main() {
 
   if (unresolved.length) {
     console.log(
-      `⚠️  ${unresolved.length} Amphora return(s) match one of our order ids but have NO row in our orders table — investigate, they are excluded from everything below:`
+      `⚠️  ${unresolved.length} return(s) WE booked have no order row left in our database — investigate, they are excluded from everything below:`
     );
     for (const m of unresolved) {
       console.log(
-        `  ${m.ret.name ?? "(no name)"}  ${m.ret.id}  ` +
-          `order id ${m.orderId}  ${m.viaExternalId ? "created by us (external_id)" : "orphan"}`
+        `  ${m.ret.name ?? "(no name)"}  ${m.ret.id}  order id ${m.orderId}  ` +
+          `— we created this return (external_id ${m.ret.external_id}) but no longer hold the order`
       );
     }
     console.log();

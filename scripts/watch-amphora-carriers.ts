@@ -117,13 +117,16 @@ async function ticketOpen(orderName: string): Promise<boolean | null> {
 async function ordersById(
   ids: string[]
 ): Promise<Map<string, { shipping_country: string }>> {
-  if (ids.length === 0) return new Map();
+  // Validate DATABASE_URL unconditionally, even when ids is empty. If Amphora's
+  // /returns call is malformed or returns no matches, a missing credential should
+  // fail loud (exit 2) rather than silent (exit 0 with "API-created returns: 0").
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error(
       "DATABASE_URL is not set. This script now resolves ownership against our own orders table — export it or add it to .env."
     );
   }
+  if (ids.length === 0) return new Map();
   const sql = neon(url);
   const rows = (await sql`
     select id, shipping_country from orders where id = any(${ids})

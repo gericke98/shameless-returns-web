@@ -217,7 +217,15 @@ async function main() {
     "/returns"
   );
   const all = body.return_orders ?? body.returns ?? [];
-  // Quote the same count back at them that watch-amphora-carriers.ts reports.
+  // Counts ONLY returns we created through the Company API (`external_id` set)
+  // that are still carrier-less. It is deliberately NOT the number
+  // watch-amphora-carriers.ts prints: that script resolves ownership against our
+  // orders table and so also counts the ones Amphora re-created in their UI,
+  // which carry no external_id. This script has no database access, and adding
+  // one to align them is not worth it — but the difference matters, because this
+  // number is interpolated into ticket text and ticket writes are one-way: they
+  // vanish from the merchant UI permanently, so a wrong figure cannot be
+  // corrected afterwards. Under-counting is the safe direction.
   const stranded = all.filter(
     (r) => r.external_id && !r.carrier && !["CANCELLED", "FINISHED"].includes(r.internal_status)
   ).length;

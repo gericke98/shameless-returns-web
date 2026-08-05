@@ -666,12 +666,16 @@ Without this, the script keeps reporting `API-created returns: 3` while the cron
 acts on more than that, and the next person to run it concludes the orphans do
 not exist — which is exactly the mistake that let seven returns sit for ten days.
 
-- [ ] **Step 1: Import the matcher**
+- [ ] **Step 1: Import the matcher and the database client**
 
-Add beside the existing imports:
+Add beside the existing imports. `dotenv/config` and `neon` follow
+`scripts/create-admin.ts`, which already reads `DATABASE_URL` this way:
 
 ```ts
+import "dotenv/config";
+import { neon } from "@neondatabase/serverless";
 import { matchReturnsToOrderIds } from "../lib/amphoraReturnMatch";
+import { isInternationalOrder } from "../lib/countries";
 ```
 
 - [ ] **Step 2: Replace the ownership filter**
@@ -681,17 +685,52 @@ filter, and the `assigned`/`stranded` derivations) with:
 
 ```ts
   // Everything that refers to one of our orders, whether we created it or
-  // Amphora re-created it in their UI (which nulls `external_id`). The script
-  // has no database, so it cannot apply the cron's international check — it
-  // deliberately over-reports rather than hiding a stranded return, and marks
-  // which link each row came through.
+  // Amphora re-created it in their UI (which nulls `external_id`), filtered by
+  // the SAME ownership rule the cron applies — an orphan counts only when the
+  // order is in our database AND international.
+  //
+  // An earlier revision skipped the database and simply over-reported, on the
+  // theory that showing too much is safer than hiding a stranded return. In
+  // production that printed 77 rows, 74 of them under "notify these customers",
+  // including 2025-era Spanish CEX/CAI/DHL returns that never touched our
+  // portal. Burying three stranded returns under 74 irrelevant ones fails this
+  // script's only job just as completely as hiding them would.
   const matched = matchReturnsToOrderIds(all);
-  const ours = matched.map((m) => m.ret);
-  const recreated = new Set(matched.filter((m) => !m.viaExternalId).map((m) => m.ret));
+  const orders = await ordersById(matched.map((m) => m.orderId));
+  const owned = matched.filter((m) => {
+    const order = orders.get(m.orderId);
+    if (!order) return false;
+    return m.viaExternalId || isInternationalOrder(order.shipping_country);
+  });
+  const ours = owned.map((m) => m.ret);
+  const recreated = new Set(owned.filter((m) => !m.viaExternalId).map((m) => m.ret));
   const assigned = ours.filter((r) => r.carrier);
   const stranded = ours
     .filter((r) => !r.carrier && !["CANCELLED", "FINISHED"].includes(r.internal_status))
     .sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
+```
+
+The database helper, added above `main()`. One query for the whole sweep — the
+script runs against production and must not issue a query per return:
+
+```ts
+/** Our orders for the given ids, keyed by id. Read-only. */
+async function ordersById(
+  ids: string[]
+): Promise<Map<string, { shipping_country: string }>> {
+  if (ids.length === 0) return new Map();
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is not set. This script now resolves ownership against our own orders table — export it or add it to .env."
+    );
+  }
+  const sql = neon(url);
+  const rows = (await sql`
+    select id, shipping_country from orders where id = any(${ids})
+  `) as Array<{ id: string; shipping_country: string }>;
+  return new Map(rows.map((r) => [r.id, { shipping_country: r.shipping_country }]));
+}
 ```
 
 - [ ] **Step 3: Mark the re-created ones in the output**
@@ -713,7 +752,9 @@ npx tsx scripts/watch-amphora-carriers.ts
 
 Expected: the seven re-created returns now appear under `CARRIER ASSIGNED`, each
 tagged `[re-created by Amphora]`, alongside #310097. #310847 and #310664 appear
-stranded until Part 1 lands. The header count rises from 3 to at least 10.
+stranded until Part 1 lands. The header count rises from 3 to roughly 10 — NOT
+to 77. If it reads 77, the ownership filter is not being applied and the script
+is reporting Amphora's whole tenant, including domestic returns from 2025.
 
 - [ ] **Step 5: Commit**
 

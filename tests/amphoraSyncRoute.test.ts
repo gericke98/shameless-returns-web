@@ -65,6 +65,24 @@ const UNKNOWN = {
   time: "2026-08-02T09:00:00",
 };
 
+// An orphan whose resolved order has an empty shippingCountry — the schema
+// declares the column NOT NULL and db/repository.ts writes it straight from
+// Shopify, so this should be rare, but isInternationalOrder treats an empty
+// string as domestic. This must stay unacted, and must be visible as its own
+// count rather than folded into an ordinary domestic reject, since a live
+// international return with no country on file would otherwise be silently
+// under-matched.
+const EMPTY_COUNTRY = {
+  id: "SHP 13175555555555",
+  name: "#310800",
+  external_id: null,
+  internal_status: "APROVED",
+  carrier: "UPS",
+  carrier_number: "1Z555",
+  carrier_url: null,
+  time: "2026-08-02T09:00:00",
+};
+
 const ORDERS: Record<string, any> = {
   "13192219558214": {
     id: "13192219558214",
@@ -80,6 +98,11 @@ const ORDERS: Record<string, any> = {
     id: "13181092561222",
     orderNumber: "#310889",
     shippingCountry: "Spain",
+  },
+  "13175555555555": {
+    id: "13175555555555",
+    orderNumber: "#310800",
+    shippingCountry: "",
   },
 };
 
@@ -172,6 +195,21 @@ describe("amphora-sync cron — scope and resilience", () => {
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
     expect(body.skipped).toBe(2);
+  });
+
+  it("never touches an orphan with no shippingCountry on file, and counts it apart from a domestic reject", async () => {
+    state.returns = [OURS, RECREATED, THEIRS, UNKNOWN, EMPTY_COUNTRY];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied.map((a) => a.order)).not.toContain("#310800");
+    expect(body.skippedUnknownCountry).toBe(1);
+  });
+
+  it("does not count the Spanish orphan as an unknown-country skip", async () => {
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.skippedUnknownCountry).toBe(0);
   });
 
   it("reports stranded returns — approved with no carrier is the live defect", async () => {

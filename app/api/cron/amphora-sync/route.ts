@@ -54,6 +54,7 @@ export async function GET(req: Request) {
   const acted: typeof matches = [];
   let scanned = 0;
   let skipped = 0;
+  let skippedUnknownCountry = 0;
 
   for (const match of matches) {
     const ret = match.ret;
@@ -61,6 +62,14 @@ export async function GET(req: Request) {
       const order =
         (await getOrderById(match.orderId)) ??
         (match.viaExternalId && ret.name ? await getOrderByNumber(ret.name) : null);
+
+      if (!order) {
+        // No local order at all for this id — expected and common (Amphora's
+        // Shopify-channel returns and arrival records for orders we don't
+        // recognise). Nothing to warn about.
+        skipped += 1;
+        continue;
+      }
 
       // An id match is not ownership. A return Amphora created carries no
       // external_id, and neither does the record Amphora opens when a parcel
@@ -73,8 +82,24 @@ export async function GET(req: Request) {
       // would overwrite the Correos tracking we show the customer with the
       // carrier that happened to deliver it. Spain is Correos on our side, so
       // an orphan against a domestic order is never ours to apply.
-      if (!order || (!match.viaExternalId && !isInternationalOrder(order.shippingCountry))) {
+      if (!match.viaExternalId && !isInternationalOrder(order.shippingCountry)) {
         skipped += 1;
+
+        // isInternationalOrder treats an empty/missing shippingCountry as
+        // domestic — the safe direction, since we must never act without
+        // knowing the country. But that makes it indistinguishable from a
+        // genuine Spanish reject unless we say so: a live international
+        // return with no country on file would be silently under-matched,
+        // which is the exact bug this task exists to fix. The column is
+        // NOT NULL and db/repository.ts writes it straight from Shopify, so
+        // this should be rare — log it so rare-and-invisible doesn't happen
+        // again.
+        if (!String(order.shippingCountry ?? "").trim()) {
+          skippedUnknownCountry += 1;
+          console.warn(
+            `[amphora-sync] order ${order.orderNumber ?? match.orderId} (return ${ret.id}) has no shippingCountry on file — skipped as domestic, but this may be a live international return we are failing to sync.`
+          );
+        }
         continue;
       }
 
@@ -123,5 +148,5 @@ export async function GET(req: Request) {
     );
   }
 
-  return NextResponse.json({ scanned, changed, stranded, skipped });
+  return NextResponse.json({ scanned, changed, stranded, skipped, skippedUnknownCountry });
 }

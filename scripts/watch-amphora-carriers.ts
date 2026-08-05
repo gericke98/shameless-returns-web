@@ -24,9 +24,12 @@
  * .env where the Amphora keys already live (they are not in this project's
  * Vercel env — see the memory note on Amphora integration).
  */
+import "dotenv/config";
+import { neon } from "@neondatabase/serverless";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { matchReturnsToOrderIds } from "../lib/amphoraReturnMatch";
+import { isInternationalOrder } from "../lib/countries";
 
 const AGENT_ENV = join(
   process.env.HOME ?? "",
@@ -110,6 +113,24 @@ async function ticketOpen(orderName: string): Promise<boolean | null> {
   }
 }
 
+/** Our orders for the given ids, keyed by id. Read-only. */
+async function ordersById(
+  ids: string[]
+): Promise<Map<string, { shipping_country: string }>> {
+  if (ids.length === 0) return new Map();
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL is not set. This script now resolves ownership against our own orders table — export it or add it to .env."
+    );
+  }
+  const sql = neon(url);
+  const rows = (await sql`
+    select id, shipping_country from orders where id = any(${ids})
+  `) as Array<{ id: string; shipping_country: string }>;
+  return new Map(rows.map((r) => [r.id, { shipping_country: r.shipping_country }]));
+}
+
 async function main() {
   const flag = process.argv.indexOf("--stale-hours");
   const staleHours = flag > -1 ? Number(process.argv[flag + 1]) : 2;
@@ -120,13 +141,25 @@ async function main() {
   const all = body.return_orders ?? body.returns ?? [];
 
   // Everything that refers to one of our orders, whether we created it or
-  // Amphora re-created it in their UI (which nulls `external_id`). The script
-  // has no database, so it cannot apply the cron's international check — it
-  // deliberately over-reports rather than hiding a stranded return, and marks
-  // which link each row came through.
+  // Amphora re-created it in their UI (which nulls `external_id`), filtered by
+  // the SAME ownership rule the cron applies — an orphan counts only when the
+  // order is in our database AND international.
+  //
+  // An earlier revision skipped the database and simply over-reported, on the
+  // theory that showing too much is safer than hiding a stranded return. In
+  // production that printed 77 rows, 74 of them under "notify these customers",
+  // including 2025-era Spanish CEX/CAI/DHL returns that never touched our
+  // portal. Burying three stranded returns under 74 irrelevant ones fails this
+  // script's only job just as completely as hiding them would.
   const matched = matchReturnsToOrderIds(all);
-  const ours = matched.map((m) => m.ret);
-  const recreated = new Set(matched.filter((m) => !m.viaExternalId).map((m) => m.ret));
+  const orders = await ordersById(matched.map((m) => m.orderId));
+  const owned = matched.filter((m) => {
+    const order = orders.get(m.orderId);
+    if (!order) return false;
+    return m.viaExternalId || isInternationalOrder(order.shipping_country);
+  });
+  const ours = owned.map((m) => m.ret);
+  const recreated = new Set(owned.filter((m) => !m.viaExternalId).map((m) => m.ret));
   const assigned = ours.filter((r) => r.carrier);
   const stranded = ours
     .filter((r) => !r.carrier && !["CANCELLED", "FINISHED"].includes(r.internal_status))

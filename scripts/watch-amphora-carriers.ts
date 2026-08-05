@@ -26,6 +26,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { matchReturnsToOrderIds } from "../lib/amphoraReturnMatch";
 
 const AGENT_ENV = join(
   process.env.HOME ?? "",
@@ -118,9 +119,14 @@ async function main() {
   );
   const all = body.return_orders ?? body.returns ?? [];
 
-  // Only the ones WE created. Amphora's own Shopify-channel returns carry a
-  // null external_id and are not ours to chase.
-  const ours = all.filter((r) => r.external_id);
+  // Everything that refers to one of our orders, whether we created it or
+  // Amphora re-created it in their UI (which nulls `external_id`). The script
+  // has no database, so it cannot apply the cron's international check — it
+  // deliberately over-reports rather than hiding a stranded return, and marks
+  // which link each row came through.
+  const matched = matchReturnsToOrderIds(all);
+  const ours = matched.map((m) => m.ret);
+  const recreated = new Set(matched.filter((m) => !m.viaExternalId).map((m) => m.ret));
   const assigned = ours.filter((r) => r.carrier);
   const stranded = ours
     .filter((r) => !r.carrier && !["CANCELLED", "FINISHED"].includes(r.internal_status))
@@ -134,7 +140,8 @@ async function main() {
     console.log("CARRIER ASSIGNED — collection is booked, notify these customers:");
     for (const r of assigned) {
       console.log(
-        `  ${r.name}  ${r.carrier}  ${r.carrier_number ?? "(no number)"}  ${r.carrier_url ?? ""}`
+        `  ${r.name}  ${r.carrier}  ${r.carrier_number ?? "(no number)"}  ${r.carrier_url ?? ""}` +
+          (recreated.has(r) ? "  [re-created by Amphora]" : "")
       );
     }
     console.log();

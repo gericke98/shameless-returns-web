@@ -70,4 +70,18 @@ describe("matchReturnsToOrderIds", () => {
 
     expect(matches[0].ret.time).toBe("2026-08-05T06:25:20");
   });
+
+  it("still prefers the return we created even when processed first with an older timestamp", () => {
+    // Regression test: without the `if (held.viaExternalId) continue;` guard,
+    // a newer Amphora-created return would overwrite an older one we created.
+    // This test processes the one we created first, making it the "held" value,
+    // then tests that timestamp comparison does not override the viaExternalId preference.
+    const ours = { ...withExternal, id: "SHP 13192219558214", time: "2026-08-01T10:00:00" };
+    const theirs = { ...orphan, id: "SHP 13192219558214", time: "2026-08-05T06:25:20" };
+
+    const matches = matchReturnsToOrderIds([ours, theirs]);
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].viaExternalId).toBe(true);
+  });
 });

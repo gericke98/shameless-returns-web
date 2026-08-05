@@ -168,4 +168,34 @@ describe("applyReturnStatus — the poll must not re-notify", () => {
     expect(order.returnStatus).toBe("APROVED");
     expect((await apply(CARRIER_ASSIGNED)).changed).toBe(false);
   });
+
+  it("records the status but sends nothing when we already hold the tracking", async () => {
+    // The seven international orders backfilled by hand on 2026-08-05: Amphora
+    // already emailed the customer the label directly, so when the cron sees
+    // these orders for the first time it must record the status without
+    // re-notifying. `locator` being pre-set (not null, like the fixture above)
+    // is exactly what disarms the collectionScheduled guard at
+    // lib/amphoraWebhook.ts:74.
+    const { applyReturnStatus } = await import("@/actions/amphoraStatusSync");
+    const backfilled: any = {
+      id: "13161916465478",
+      orderNumber: "#310761",
+      email: "ruminc01@icloud.com",
+      shippingName: "Ivan Forastiero",
+      returnStatus: null,
+      locator: "1Z3EF3229111791266",
+    };
+
+    const outcome = await applyReturnStatus(backfilled, {
+      id: "SHP 13161916465478",
+      name: "#310761",
+      internal_status: "APROVED",
+      carrier: "UPS",
+      carrier_number: "1Z3EF3229111791266",
+      carrier_url: "https://www.ups.com/track?tracknum=1Z3EF3229111791266",
+    });
+
+    expect(outcome.changed).toBe(true);
+    expect(outcome.emailsSent).toEqual([]);
+  });
 });

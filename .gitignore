@@ -36,3 +36,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .env*
+
+# agent scratch — worktrees and subagent-driven-development ledgers
+/.claude/worktrees/
+/.superpowers/

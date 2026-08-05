@@ -71,6 +71,68 @@ describe("matchReturnsToOrderIds", () => {
     expect(matches[0].ret.time).toBe("2026-08-05T06:25:20");
   });
 
+  it("prefers a carrier-carrying orphan over our own carrier-less record", () => {
+    // The seven stranded returns were only rescued because Amphora DELETED ours
+    // before re-creating theirs. If they re-create without deleting, our dead
+    // record would win, applyReturnStatus would see an unchanged status, and the
+    // customer would never learn a courier was assigned.
+    const oursDead = { ...withExternal, id: "SHP 13192219558214", carrier: null };
+    const theirsLive = {
+      ...orphan,
+      id: "SHP 13192219558214",
+      name: "#310957",
+      carrier: "UPS",
+    };
+
+    const matches = matchReturnsToOrderIds([oursDead, theirsLive]);
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].viaExternalId).toBe(false);
+    expect(matches[0].ret.carrier).toBe("UPS");
+  });
+
+  it("prefers the carrier-carrying orphan whichever order the two arrive in", () => {
+    const oursDead = { ...withExternal, id: "SHP 13192219558214", carrier: null };
+    const theirsLive = {
+      ...orphan,
+      id: "SHP 13192219558214",
+      name: "#310957",
+      carrier: "UPS",
+    };
+
+    const matches = matchReturnsToOrderIds([theirsLive, oursDead]);
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].viaExternalId).toBe(false);
+    expect(matches[0].ret.carrier).toBe("UPS");
+  });
+
+  it("keeps our own record when it has the carrier and the orphan does not", () => {
+    const oursLive = { ...withExternal, id: "SHP 13192219558214", carrier: "UPS" };
+    const theirsDead = {
+      ...orphan,
+      id: "SHP 13192219558214",
+      name: "#310957",
+      carrier: null,
+    };
+
+    expect(matchReturnsToOrderIds([oursLive, theirsDead])[0].viaExternalId).toBe(true);
+    expect(matchReturnsToOrderIds([theirsDead, oursLive])[0].viaExternalId).toBe(true);
+  });
+
+  it("keeps our own record when both carry a carrier", () => {
+    const oursLive = { ...withExternal, id: "SHP 13192219558214", carrier: "DHP" };
+    const theirsLive = {
+      ...orphan,
+      id: "SHP 13192219558214",
+      name: "#310957",
+      carrier: "UPS",
+    };
+
+    expect(matchReturnsToOrderIds([oursLive, theirsLive])[0].viaExternalId).toBe(true);
+    expect(matchReturnsToOrderIds([theirsLive, oursLive])[0].viaExternalId).toBe(true);
+  });
+
   it("still prefers the return we created even when processed first with an older timestamp", () => {
     // Regression test: without the `if (held.viaExternalId) continue;` guard,
     // a newer Amphora-created return would overwrite an older one we created.

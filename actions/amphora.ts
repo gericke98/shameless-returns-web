@@ -74,6 +74,11 @@ export type AmphoraReturn = {
   carrier?: string | null;
   carrier_number?: string | null;
   carrier_url?: string | null;
+  /** Creation stamp. `lib/amphoraReturnMatch` sorts on it to pick the newest of
+   *  two Amphora-created returns for one order; without it declared here, any
+   *  normalisation of this response would silently degrade that tie-break to
+   *  first-wins with every test still green. */
+  time?: string | null;
   items?: Array<{ sku: string | null; quantity: number; product_id?: string }>;
   exchange_items?: Array<{ sku: string | null; quantity: number; product_id?: string }>;
   shipping_address_country_code?: string | null;

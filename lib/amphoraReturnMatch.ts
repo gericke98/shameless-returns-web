@@ -19,6 +19,9 @@ export type MatchableReturn = {
   name?: string | null;
   external_id?: string | null;
   time?: string | null;
+  /** Read only to break the tie below — a carrier is proof Amphora is actually
+   *  working that record. */
+  carrier?: string | null;
 };
 
 export type ReturnMatch<T> = {
@@ -40,13 +43,27 @@ function createdAt(ret: MatchableReturn): number {
   return Number.isFinite(ms) ? ms : -Infinity;
 }
 
+/** Has Amphora put a courier on this record? */
+function hasCarrier(ret: MatchableReturn): boolean {
+  return Boolean(ret.carrier?.trim());
+}
+
 /**
  * One match per order, so a re-created return and the record it replaced can
  * never both be applied in the same sweep.
  *
- * A return we created wins outright — its `external_id` is a direct statement of
+ * A return we created normally wins — its `external_id` is a direct statement of
  * ownership, where a recovered id is an inference. Between two inferred ones,
  * the newest wins, because that is the one Amphora is actually working.
+ *
+ * The ONE exception: our record has no carrier and a same-order orphan does. On
+ * 2026-08-05 Amphora fixed the seven stranded returns by DELETING ours and
+ * re-creating theirs, so precedence never came up. If they re-create without
+ * deleting, an unconditional `external_id` win hands the sweep our dead
+ * carrier-less record, `applyReturnStatus` sees an unchanged status, no-ops, and
+ * the customer is never told a courier was assigned — the original ten-day
+ * incident, reproduced by the fix meant to prevent it. A carrier is the one
+ * signal that says which of the two records Amphora is really working.
  */
 export function matchReturnsToOrderIds<T extends MatchableReturn>(
   returns: T[]
@@ -69,10 +86,25 @@ export function matchReturnsToOrderIds<T extends MatchableReturn>(
       best.set(orderId, candidate);
       continue;
     }
-    if (held.viaExternalId) continue;
-    if (candidate.viaExternalId || createdAt(ret) > createdAt(held.ret)) {
-      best.set(orderId, candidate);
+    // Two of ours: first seen wins, as before.
+    if (held.viaExternalId && candidate.viaExternalId) continue;
+
+    if (held.viaExternalId) {
+      // Held is ours, candidate is an orphan. Ours wins unless it is the dead
+      // carrier-less record and the orphan is the one carrying a courier.
+      if (!hasCarrier(held.ret) && hasCarrier(ret)) best.set(orderId, candidate);
+      continue;
     }
+
+    if (candidate.viaExternalId) {
+      // Same rule, reached from the other direction: keep the orphan only when
+      // it has a carrier and ours does not.
+      if (hasCarrier(ret) || !hasCarrier(held.ret)) best.set(orderId, candidate);
+      continue;
+    }
+
+    // Two orphans: newest wins — that is the one Amphora is working.
+    if (createdAt(ret) > createdAt(held.ret)) best.set(orderId, candidate);
   }
 
   return [...best.values()];

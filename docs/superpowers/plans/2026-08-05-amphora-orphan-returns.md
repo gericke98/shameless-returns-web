@@ -453,8 +453,11 @@ const RECREATED = {
   time: "2026-08-05T06:25:20",
 };
 
-// Amphora's own Shopify-channel return. Same shape, but the order is Spanish —
-// Spain never routes through Amphora, so this cannot be one of ours.
+// A domestic return as Amphora records it on ARRIVAL at their warehouse. Same
+// shape, but the order is Spanish, so we booked it on Correos and already hold
+// a Correos locator. Applying this would overwrite that tracking with the
+// carrier that delivered the box (real case: order #310273, ours says Correos
+// PQAZXT9800004100128221Y, theirs says CEX).
 const THEIRS = {
   id: "SHP 13181092561222",
   name: "#310889",
@@ -569,9 +572,16 @@ followed, then replace the loop header (`for (const ret of ours) {` through the
         (match.viaExternalId && ret.name ? await getOrderByNumber(ret.name) : null);
 
       // An id match is not ownership. A return Amphora created carries no
-      // external_id, and so does every return from their own Shopify channel —
-      // the discriminator is that Spain never routes through Amphora, so a
-      // domestic order with an orphaned return is theirs, not ours.
+      // external_id, and neither does the record Amphora opens when a parcel
+      // simply ARRIVES at their warehouse — which happens for domestic returns
+      // too, since they are the 3PL receiving every box. Measured 2026-08-05:
+      // 47 of the 87 returns we did not create are Spanish, carrying CEX/CAI/
+      // GLS/CTT. Order #310273 is the case that matters: we booked it on
+      // Correos and hold locator PQAZXT9800004100128221Y, while Amphora's
+      // record for the same parcel says carrier CEX. Syncing a domestic orphan
+      // would overwrite the Correos tracking we show the customer with the
+      // carrier that happened to deliver it. Spain is Correos on our side, so
+      // an orphan against a domestic order is never ours to apply.
       if (!order || (!match.viaExternalId && !isInternationalOrder(order.shippingCountry))) {
         skipped += 1;
         continue;

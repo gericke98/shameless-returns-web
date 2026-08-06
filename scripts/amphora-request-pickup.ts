@@ -184,12 +184,12 @@ function reassign(r: AmphoraReturn, waiting: number) {
     `Gracias por habilitar la asignación automática de transportista y por volver ` +
     `a crear las siete devoluciones con carrier — lo hemos verificado y todas ` +
     `tienen ya su número de UPS.\n\n` +
-    `Nos quedan dos que no estaban en esa lista porque se crearon justo antes de ` +
-    `que lo habilitarais, y siguen APROVED sin transportista:\n\n` +
+    `Esta devolución no estaba en esa lista porque se creó justo antes de ` +
+    `que lo habilitarais, y sigue APROVED sin transportista:\n\n` +
     `  · ${r.id} (pedido ${r.name}, ${r.shipping_address_country_code}), creada el ` +
-    `${String(r.time).slice(0, 10)}, ${waiting} días esperando.\n\n` +
+    `${String(r.time).slice(0, 10)}, ${waiting === 1 ? "1 día" : `${waiting} días`} esperando.\n\n` +
     `Recogida en: ${collectionAddress(r)}\n\n` +
-    `¿Podéis darles el mismo tratamiento que a las otras siete? No hace falta que ` +
+    `¿Podéis darle el mismo tratamiento que a las otras siete? No hace falta que ` +
     `nos confirméis fecha: en cuanto tengan carrier y número lo vemos por API.\n\n` +
     `Gracias.`
   );

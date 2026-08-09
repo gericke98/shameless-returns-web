@@ -107,5 +107,8 @@ export function matchReturnsToOrderIds<T extends MatchableReturn>(
     if (createdAt(ret) > createdAt(held.ret)) best.set(orderId, candidate);
   }
 
-  return [...best.values()];
+  // Array.from, not a spread: this tsconfig sets no `target`, so tsc defaults to
+  // ES5 and refuses to iterate a Map iterator. `next build` catches it; vitest
+  // does not — which is how this reached main and failed two prod deploys.
+  return Array.from(best.values());
 }

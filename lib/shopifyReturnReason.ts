@@ -52,3 +52,23 @@ export function toShopifyReturnReason(
   if (!reason) return "OTHER";
   return BY_REASON[reason as ReasonKey] ?? "OTHER";
 }
+
+/**
+ * The note an OTHER line must carry when the customer wrote none.
+ *
+ * Shopify rejects `returnCreate` with *"The note is required when the return
+ * reason is Other"* — and it fails the WHOLE mutation, not just that line. So a
+ * single noteless OTHER line loses the entire return: the customer submits,
+ * pays, and hears nothing. Order #310185 died this way on 2026-08-09.
+ *
+ * Never called when the customer did write a note — their words always win.
+ */
+export function noteForOtherReason(reason: string | null | undefined): string {
+  if (!reason) return "No reason given";
+  if (reason === "OTHER") return "Another reason";
+  if (reason === "LATE") return "Arrived late";
+  // Anything else reaching OTHER is unmapped free text — a legacy row storing
+  // the label the customer picked. That IS the note; nothing we substitute
+  // would be truer.
+  return reason;
+}

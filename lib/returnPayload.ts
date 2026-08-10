@@ -11,7 +11,10 @@
  * order per line: each return was validated separately.
  */
 
-import { toShopifyReturnReason } from "@/lib/shopifyReturnReason";
+import {
+  noteForOtherReason,
+  toShopifyReturnReason,
+} from "@/lib/shopifyReturnReason";
 
 /** The fields of a `productsorder` row this module needs, plus the fulfillment
  *  line item resolved from Shopify. Deliberately structural: callers pass
@@ -70,12 +73,21 @@ export function buildReturnInput(
     // beats sending null, which fails the mutation for every OTHER line too.
     .filter((line) => !!line.fulfillmentLineItemId)
     .map((line) => {
-      const note = String(line.notes ?? "").trim().slice(0, MAX_NOTE);
+      // Per line. This was a single hardcoded COLOR for every return.
+      const returnReason = toShopifyReturnReason(line.reason);
+      const written = String(line.notes ?? "").trim().slice(0, MAX_NOTE);
+      // An OTHER line MUST carry a note or Shopify rejects the whole mutation
+      // — every line, not just this one. The customer's words win when they
+      // wrote any; otherwise we supply the reason they picked.
+      const note =
+        written ||
+        (returnReason === "OTHER"
+          ? noteForOtherReason(line.reason).slice(0, MAX_NOTE)
+          : "");
       return {
         fulfillmentLineItemId: line.fulfillmentLineItemId as string,
         quantity: Math.max(1, Number(line.quantity) || 1),
-        // Per line. This was a single hardcoded COLOR for every return.
-        returnReason: toShopifyReturnReason(line.reason),
+        returnReason,
         ...(note ? { returnReasonNote: note } : {}),
       };
     });

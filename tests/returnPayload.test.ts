@@ -80,6 +80,68 @@ describe("buildReturnInput", () => {
     );
   });
 
+  // Live failure, order #310185 (Zinsi van der Sangen), 2026-08-09 01:51:58Z:
+  //
+  //   Return line items return reason note The note is required when the
+  //   return reason is "Other"
+  //
+  // `returnCreate` rejects the WHOLE mutation, so one line with an OTHER reason
+  // and an empty note loses the entire return — the customer submits, pays, and
+  // gets nothing. Live on both the domestic and international paths since the
+  // per-line reasons shipped on 31 July.
+  it("always sends a note when the reason degrades to OTHER", () => {
+    const late = { ...returnLine, reason: "LATE", notes: "" };
+    const input = buildReturnInput("12345", [late], 5, {
+      includeExchangeItems: false,
+    });
+
+    expect(input.returnLineItems[0].returnReason).toBe("OTHER");
+    expect(input.returnLineItems[0].returnReasonNote).toBeTruthy();
+  });
+
+  it("sends a note for an OTHER line even with no reason at all", () => {
+    const unstated = { ...returnLine, reason: null, notes: "   " };
+    const input = buildReturnInput("12345", [unstated], 5, {
+      includeExchangeItems: false,
+    });
+
+    expect(input.returnLineItems[0].returnReason).toBe("OTHER");
+    expect(input.returnLineItems[0].returnReasonNote).toBeTruthy();
+  });
+
+  it("keeps free-text the customer's own words rather than inventing a note", () => {
+    // Legacy rows store the Spanish label itself, which is unmapped — so it
+    // degrades to OTHER, and that stored text is the best note available.
+    const legacy = { ...returnLine, reason: "Llegó tarde", notes: "" };
+    const input = buildReturnInput("12345", [legacy], 5, {
+      includeExchangeItems: false,
+    });
+
+    expect(input.returnLineItems[0].returnReasonNote).toContain("Llegó tarde");
+  });
+
+  it("never overwrites a note the customer actually wrote", () => {
+    const late = { ...returnLine, reason: "LATE", notes: "Llegó 3 semanas tarde" };
+    const input = buildReturnInput("12345", [late], 5, {
+      includeExchangeItems: false,
+    });
+
+    expect(input.returnLineItems[0].returnReasonNote).toBe(
+      "Llegó 3 semanas tarde"
+    );
+  });
+
+  it("leaves a mapped reason's note absent when there is nothing to say", () => {
+    // Only OTHER carries Shopify's requirement. SIZE_TOO_SMALL must not gain a
+    // manufactured note just because this fix exists.
+    const input = buildReturnInput("12345", [returnLine], 5, {
+      includeExchangeItems: false,
+    });
+
+    expect(input.returnLineItems[0].returnReason).toBe("SIZE_TOO_SMALL");
+    expect(input.returnLineItems[0].returnReasonNote).toBeUndefined();
+  });
+
   it("omits exchangeLineItems entirely when the native flow is off", () => {
     const input = buildReturnInput("12345", [returnLine, exchangeLine], 5, {
       includeExchangeItems: false,

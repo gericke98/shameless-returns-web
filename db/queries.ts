@@ -110,6 +110,37 @@ export const getOrderById = cache(async (id: string) => {
 });
 
 /**
+ * The same read, deliberately NOT wrapped in `cache()`.
+ *
+ * React's `cache()` dedupes a value for the duration of one render pass, which
+ * is right for a page that reads an order from several components. It is wrong
+ * for anything long-lived: `/api/cron/amphora-sync` runs over and over on warm,
+ * reused serverless instances, and in production it kept reading a snapshot
+ * taken before any status had been written —
+ *
+ *   [amphora-sync][diag] #310905: read returnStatus=null
+ *     locator="1Z3EF3229113605089" vs amphora="TRAVELLING"
+ *
+ * `locator`, written when the return was created, was present; `returnStatus`,
+ * written by the first sync, was not. So every run concluded the status had
+ * changed and wrote it again. That was harmless only because
+ * `collectionScheduled` is disarmed by a stored locator — `returnReceived` is
+ * guarded by nothing but that comparison, and would have emailed the customer
+ * on every single run once a return reached RECEIVED.
+ *
+ * Any caller that acts on what it reads — the poller, the status webhook —
+ * must use this one.
+ */
+export async function getOrderByIdFresh(id: string) {
+  return db.query.orders.findFirst({
+    where: eq(orders.id, id),
+    with: {
+      products: true,
+    },
+  });
+}
+
+/**
  * Look an order up by its public number ("#310972").
  *
  * Needed by the Amphora status webhook: its payload carries no `external_id`,
@@ -125,6 +156,16 @@ export const getOrderByNumber = cache(async (orderNumber: string) => {
   });
   return order;
 });
+
+/** Uncached, for the same reason as `getOrderByIdFresh` — see there. */
+export async function getOrderByNumberFresh(orderNumber: string) {
+  return db.query.orders.findFirst({
+    where: eq(orders.orderNumber, orderNumber),
+    with: {
+      products: true,
+    },
+  });
+}
 
 export const getReturns = cache(async () => {
   const returns = await db.query.orders.findMany({

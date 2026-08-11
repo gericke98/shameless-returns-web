@@ -29,7 +29,9 @@ const emails: any[] = [];
 
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => found.order,
+  getOrderByIdFresh: async () => found.order,
   getOrderByNumber: async () => found.order,
+  getOrderByNumberFresh: async () => found.order,
 }));
 
 vi.mock("@/db/drizzle", () => {

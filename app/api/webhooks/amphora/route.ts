@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
-import { getOrderById, getOrderByNumber } from "@/db/queries";
+import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
 import { applyReturnStatus } from "@/actions/amphoraStatusSync";
 import {
   orderIdFromWebhook,
@@ -66,8 +66,8 @@ export async function POST(req: Request) {
   // unmatchable event forever, so an unknown order is a 200.
   const id = orderIdFromWebhook(payload);
   const order =
-    (id ? await getOrderById(id) : null) ??
-    (payload.name ? await getOrderByNumber(payload.name) : null);
+    (id ? await getOrderByIdFresh(id) : null) ??
+    (payload.name ? await getOrderByNumberFresh(payload.name) : null);
 
   if (!order) {
     console.log(

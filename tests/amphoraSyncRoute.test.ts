@@ -189,6 +189,9 @@ vi.mock("@/actions/amphoraStatusSync", () => ({
 
 vi.mock("@/db/queries", () => ({
   getOrderById: async (id: string) => ORDERS[id],
+  getOrderByIdFresh: async (id: string) => ORDERS[id],
+  getOrderByNumberFresh: async (name: string) =>
+    Object.values(ORDERS).find((o: any) => o.orderNumber === name),
   getOrderByNumber: async (name: string) =>
     Object.values(ORDERS).find((o: any) => o.orderNumber === name),
 }));

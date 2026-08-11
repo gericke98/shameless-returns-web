@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAmphoraReturns } from "@/actions/amphora";
 import { applyReturnStatus } from "@/actions/amphoraStatusSync";
-import { getOrderById, getOrderByNumber } from "@/db/queries";
+import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
 import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { isInternationalOrder } from "@/lib/countries";
 
@@ -55,7 +55,7 @@ function authorized(req: Request): boolean {
  * portal, abandoned it, and returned through customer service instead.
  *
  * A confirmed line item is the real signal — it is what `getReturns` uses to
- * decide something is a return at all. `getOrderById` already loads
+ * decide something is a return at all. `getOrderByIdFresh` already loads
  * `with: { products: true }`, so this costs no extra query.
  *
  * Deliberately NOT `order.locator != null` / `order.carrier != null`: a return
@@ -97,8 +97,8 @@ export async function GET(req: Request) {
     const ret = match.ret;
     try {
       const order =
-        (await getOrderById(match.orderId)) ??
-        (match.viaExternalId && ret.name ? await getOrderByNumber(ret.name) : null);
+        (await getOrderByIdFresh(match.orderId)) ??
+        (match.viaExternalId && ret.name ? await getOrderByNumberFresh(ret.name) : null);
 
       if (!order) {
         // No local order at all for this id — expected and common (Amphora's

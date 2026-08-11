@@ -95,6 +95,21 @@ function generateCustomsBlock(order: any): string {
             </Aduana>`;
 }
 
+/**
+ * The pre-registration payload.
+ *
+ * `Remitente` is the customer sending the parcel back; `Destinatario` is where
+ * it physically goes — Amphora, the 3PL that receives every return. That block
+ * was still the previous warehouse (CORISA TEXTIL, Majadahonda 28221) long
+ * after the move, so every domestic label printed sent the customer's parcel to
+ * an address that no longer takes returns.
+ *
+ * Kept as a TS comment rather than an XML one: anything inside the template
+ * literal is sent to Correos on the wire.
+ *
+ * Pinned by tests/correosDestination.test.ts — nothing else would notice this
+ * drifting again.
+ */
 function generateSoapBody(order: any, name: string, firstSurname: string) {
   const number = extractAddressNumber(order.shippingAddress1);
 
@@ -123,20 +138,20 @@ function generateSoapBody(order: any, name: string, firstSurname: string) {
           </Remitente>
           <Destinatario>
             <Identificacion>
-              <Nombre>CORISA</Nombre>
-              <Apellido1>TEXTIL</Apellido1>
+              <Nombre>AMPHORA</Nombre>
+              <Apellido1>LOGISTICS</Apellido1>
             </Identificacion>
             <DatosDireccion>
-              <Direccion>Calle Costa Rica 3 Escalera Izquierda 3G</Direccion>
-              <Numero>3</Numero>
-              <Localidad>Majadahonda</Localidad>
+              <Direccion>Calle Pelaya 25, Poligono Industrial Rio de Janeiro</Direccion>
+              <Numero>25</Numero>
+              <Localidad>Algete</Localidad>
               <Provincia>Madrid</Provincia>
             </DatosDireccion>
-            <CP>28221</CP>
-            <Telefonocontacto>604141762</Telefonocontacto>
+            <CP>28110</CP>
+            <Telefonocontacto>644371629</Telefonocontacto>
             <Email>hello@shamelesscollective.com</Email>
             <DatosSMS>
-              <NumeroSMS>604141762</NumeroSMS>
+              <NumeroSMS>644371629</NumeroSMS>
               <Idioma>1</Idioma>
             </DatosSMS>
           </Destinatario>

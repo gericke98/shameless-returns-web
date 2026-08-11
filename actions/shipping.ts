@@ -265,6 +265,27 @@ export async function createShippingLabel(id: string): Promise<number> {
   const order = await getOrderById(id);
   if (!order) return 404;
 
+  // Idempotency, the same guard `updateFinalOrder` applies to the Shopify
+  // return — and for the same reason, one step later.
+  //
+  // Order #311148 resubmitted five times on 2026-08-10, three seconds apart,
+  // and got five "Tu devolución se ha creado correctamente" emails in eleven
+  // seconds, each with its own Return_label.pdf. Nothing here checked, so that
+  // is five pre-registered parcels and five charges for one box, of which our
+  // database kept only the last — the other four are live at Correos and
+  // invisible to us.
+  //
+  // A stored locator means this parcel already has a label. Report success: the
+  // outcome the caller wants is already true, and /success shows the customer
+  // the tracking we hold. Deliberately no second email — they were sent one
+  // when the label was registered, and the duplicate is the complaint.
+  if (order.locator) {
+    console.warn(
+      `Order ${id}: Correos label ${order.locator} already registered for this parcel — skipping creation (duplicate submit or webhook redelivery).`
+    );
+    return 200;
+  }
+
   const { name, firstSurname } = parseShippingName(order.shippingName);
   const soapBody = generateSoapBody(order, name, firstSurname);
 

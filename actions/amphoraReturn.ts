@@ -123,6 +123,10 @@ export async function createInternationalReturn(id: string): Promise<number> {
   // The only phase whose failure is safe to report. Until Amphora holds a
   // return for this order, nothing external exists and the caller's revert is
   // both correct and harmless.
+  // Captured BEFORE phase 2 writes it: whether the customer has already been
+  // given tracking for this parcel.
+  const hadTracking = !!order.locator;
+
   let ret: AmphoraReturn | undefined;
   let alreadyExisted = false;
   try {
@@ -215,6 +219,25 @@ export async function createInternationalReturn(id: string): Promise<number> {
         carrierUrl: ret?.carrier_url ?? null,
       })
       .where(eq(orders.id, id));
+
+    // Only notify on the transition from "no tracking" to "tracking" — the same
+    // rule `decideWebhookActions` applies, so the poller and this path cannot
+    // both tell the customer about one collection.
+    //
+    // Order #311201 resubmitted five minutes later on 2026-08-11. Amphora
+    // correctly reused the collection; we emailed her about it twice anyway.
+    // Five minutes apart is a deliberate resubmit, so no button state prevents
+    // it — the server has to know it has already spoken.
+    //
+    // `hadTracking`, not `alreadyExisted`: a collection we booked but never
+    // managed to email leaves us with no locator, and a resubmit is then the
+    // customer's only way to hear anything. That case must still send.
+    if (alreadyExisted && hadTracking) {
+      console.warn(
+        `Amphora return for order ${id}: collection ${ret?.id} already booked and the customer already has tracking ${order.locator} — not emailing again.`
+      );
+      return 200;
+    }
 
     // Language the customer chose in the portal, persisted on the order when the
     // return was created (see actions/return.ts). `readLocale` falls back to "es".

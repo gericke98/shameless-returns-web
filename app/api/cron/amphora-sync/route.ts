@@ -19,21 +19,6 @@ import { isInternationalOrder } from "@/lib/countries";
  * hold no locator. So this is safe to run frequently, safe to run alongside the
  * webhook if Amphora ever enables it, and cannot double-email.
  */
-// ⚠️ THE SCHEDULE IN vercel.json IS EMPTY — this poller is PAUSED (2026-08-11).
-// In production it reported every return as changed on every run, an hour
-// apart, with the statuses it had written already in the database, while the
-// identical decision replayed locally against that same database and Amphora
-// payload no-opped for all fifteen. So the deployed route is not reading what
-// the database holds, and the cause is not yet known.
-//
-// Harmless while nothing is RECEIVED: collectionScheduled is disarmed by the
-// stored locator, so every run sent zero emails. NOT harmless after that —
-// returnReceived fires on RECEIVED and is guarded ONLY by that comparison, so
-// the first return to reach it would email the customer every fifteen minutes.
-// Three were PROCESSING_WAREHOUSE when this was paused, one step away.
-//
-// Restore `{"path": "/api/cron/amphora-sync", "schedule": "*/15 * * * *"}` once
-// the read is understood AND a durable guard exists that does not depend on it.
 export const maxDuration = 60;
 // Always hit Amphora; a cached response would defeat the point.
 export const dynamic = "force-dynamic";
@@ -167,20 +152,6 @@ export async function GET(req: Request) {
 
       scanned += 1;
       acted.push(match);
-
-      // TEMPORARY DIAGNOSTIC (2026-08-11). Production reports every return as
-      // changed on every run, while the same decision replayed locally against
-      // the same database and the same Amphora data no-ops for all of them. So
-      // what this route reads is not what the database holds — print it. Remove
-      // once the cause is found; runtime logs live about an hour, so trigger a
-      // run and read them straight away.
-      console.log(
-        `[amphora-sync][diag] ${ret.name}: read returnStatus=${JSON.stringify(
-          (order as any).returnStatus
-        )} locator=${JSON.stringify((order as any).locator)} vs amphora=${JSON.stringify(
-          ret.internal_status
-        )} (row id ${(order as any).id})`
-      );
 
       const outcome = await applyReturnStatus(order as any, {
         id: ret.id,

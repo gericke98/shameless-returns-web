@@ -1,3 +1,8 @@
 {
-  "crons": []
+  "crons": [
+    {
+      "path": "/api/cron/amphora-sync",
+      "schedule": "*/15 * * * *"
+    }
+  ]
 }

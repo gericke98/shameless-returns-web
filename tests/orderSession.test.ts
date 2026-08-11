@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ORDER_SESSION_TTL_MS,
+  readOrderSession,
   signOrderSession,
   verifyOrderSession,
 } from "@/lib/orderSession";
@@ -155,5 +156,40 @@ describe("signOrderSession with an id that is not really a string", () => {
     expect(verifyOrderSession(token, "13182814978375", NOW)).toBe(false);
     expect(verifyOrderSession(token, "1318281497837", NOW)).toBe(false);
     expect(verifyOrderSession(token, "", NOW)).toBe(false);
+  });
+});
+
+// The success page has to answer "which order is this session for", not "is it
+// this one" — it has no candidate id to check against. Same crypto, one less
+// thing known up front.
+describe("readOrderSession", () => {
+  it("returns the order the session was issued for", () => {
+    const token = signOrderSession(ORDER, NOW + ORDER_SESSION_TTL_MS);
+    expect(readOrderSession(token, NOW)).toBe(ORDER);
+  });
+
+  it("returns null once the session has expired", () => {
+    const token = signOrderSession(ORDER, NOW);
+    expect(readOrderSession(token, NOW)).toBeNull();
+  });
+
+  it("returns null for a tampered payload", () => {
+    const token = signOrderSession(ORDER, NOW + ORDER_SESSION_TTL_MS);
+    const [, sig] = token.split(".");
+    const forged = Buffer.from(
+      JSON.stringify({ orderId: "9999999999", exp: NOW + 1000 })
+    ).toString("base64url");
+    expect(readOrderSession(`${forged}.${sig}`, NOW)).toBeNull();
+  });
+
+  it("returns null for malformed and absent values", () => {
+    expect(readOrderSession(undefined, NOW)).toBeNull();
+    expect(readOrderSession("", NOW)).toBeNull();
+    expect(readOrderSession("no-separator", NOW)).toBeNull();
+  });
+
+  it("returns null when the secret is unset rather than trusting the payload", () => {
+    delete process.env.NEXTAUTH_SECRET;
+    expect(readOrderSession("anything.atall", NOW)).toBeNull();
   });
 });

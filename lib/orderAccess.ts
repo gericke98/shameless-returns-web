@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import {
   ORDER_SESSION_COOKIE,
   ORDER_SESSION_TTL_MS,
+  readOrderSession,
   signOrderSession,
   verifyOrderSession,
 } from "@/lib/orderSession";
@@ -43,4 +44,17 @@ export async function issueOrderAccess(orderId: string): Promise<void> {
 export async function hasOrderAccess(orderId: string): Promise<boolean> {
   const value = cookies().get(ORDER_SESSION_COOKIE)?.value;
   return verifyOrderSession(value, orderId, Date.now());
+}
+
+/**
+ * Which order the caller's session is for, or null if they have none.
+ *
+ * For the caller that has no candidate id to check — the success page, which
+ * must identify the order before it can tell the customer what happened to it.
+ * Not a weaker check than `hasOrderAccess`: same signature and expiry
+ * verification, it just answers "which" instead of "whether".
+ */
+export async function currentOrderId(): Promise<string | null> {
+  const value = cookies().get(ORDER_SESSION_COOKIE)?.value;
+  return readOrderSession(value, Date.now());
 }

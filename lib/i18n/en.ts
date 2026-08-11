@@ -127,6 +127,8 @@ export const en: Dictionary = {
   success: {
     title: "We have received your request!",
     body: "We have received your request and sent you an email with the next steps.",
+    carrierLabel: "Carrier",
+    trackingLabel: "Tracking number",
   },
   error: {
     title: "Something went wrong",

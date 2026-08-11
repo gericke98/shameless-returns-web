@@ -128,6 +128,8 @@ export const es = {
   success: {
     title: "¡Hemos recibido tu solicitud correctamente!",
     body: "Hemos recibido tu solicitud y te hemos enviado un correo electrónico con los próximos pasos.",
+    carrierLabel: "Transportista",
+    trackingLabel: "Número de seguimiento",
   },
   error: {
     title: "Algo ha salido mal",

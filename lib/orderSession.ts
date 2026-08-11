@@ -69,13 +69,31 @@ export function verifyOrderSession(
   orderId: string,
   now: number
 ): boolean {
+  return readOrderSession(value, now) === orderId;
+}
+
+/**
+ * WHICH order this session is for, or null if it is not one we issued.
+ *
+ * The same checks as `verifyOrderSession` — which is now this function plus a
+ * comparison — for the caller that has no candidate id to check against. The
+ * success page is that caller: it has to identify the order before it can say
+ * anything about it.
+ *
+ * Never throws, and never returns an id it has not verified the signature and
+ * expiry of.
+ */
+export function readOrderSession(
+  value: string | undefined | null,
+  now: number
+): string | null {
   const key = secret();
-  if (!key || !value) return false;
+  if (!key || !value) return null;
 
   // Split on the LAST separator so a payload that ever contains one cannot
   // shift the signature boundary.
   const cut = value.lastIndexOf(".");
-  if (cut <= 0 || cut === value.length - 1) return false;
+  if (cut <= 0 || cut === value.length - 1) return null;
 
   const encoded = value.slice(0, cut);
   const provided = value.slice(cut + 1);
@@ -85,14 +103,14 @@ export function verifyOrderSession(
   const b = Buffer.from(expected);
   // timingSafeEqual THROWS on a length mismatch, so length-check first.
   // Same guard as app/api/return-label/[parcelId]/route.ts.
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return false;
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
 
   // Only now is the payload trustworthy enough to parse.
   let payload: Payload;
   try {
     payload = JSON.parse(Buffer.from(encoded, "base64url").toString());
   } catch {
-    return false;
+    return null;
   }
 
   if (typeof payload?.orderId !== "string" || typeof payload?.exp !== "number") {
@@ -102,12 +120,12 @@ export function verifyOrderSession(
     // numeric-order-id outage stayed invisible. Log it loudly, then still fail
     // closed.
     console.error(
-      "verifyOrderSession: own signature, malformed payload — this is a bug, not an attack",
+      "readOrderSession: own signature, malformed payload — this is a bug, not an attack",
       { orderIdType: typeof payload?.orderId, expType: typeof payload?.exp }
     );
-    return false;
+    return null;
   }
-  if (payload.exp <= now) return false;
+  if (payload.exp <= now) return null;
 
-  return payload.orderId === orderId;
+  return payload.orderId;
 }

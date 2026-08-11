@@ -153,6 +153,20 @@ export async function GET(req: Request) {
       scanned += 1;
       acted.push(match);
 
+      // TEMPORARY DIAGNOSTIC (2026-08-11). Production reports every return as
+      // changed on every run, while the same decision replayed locally against
+      // the same database and the same Amphora data no-ops for all of them. So
+      // what this route reads is not what the database holds — print it. Remove
+      // once the cause is found; runtime logs live about an hour, so trigger a
+      // run and read them straight away.
+      console.log(
+        `[amphora-sync][diag] ${ret.name}: read returnStatus=${JSON.stringify(
+          (order as any).returnStatus
+        )} locator=${JSON.stringify((order as any).locator)} vs amphora=${JSON.stringify(
+          ret.internal_status
+        )} (row id ${(order as any).id})`
+      );
+
       const outcome = await applyReturnStatus(order as any, {
         id: ret.id,
         name: ret.name,

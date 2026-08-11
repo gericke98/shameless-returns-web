@@ -1,8 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/amphora-sync",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  "_comment": "The amphora-sync cron is PAUSED (2026-08-11). In production it reports every return as changed on every run, although the statuses it wrote are in the database and the same decision no-ops when replayed locally against the same data. Harmless while nothing is RECEIVED — collectionScheduled is disarmed by the stored locator — but returnReceived is guarded ONLY by that comparison, so the first return to reach RECEIVED would email the customer every 15 minutes. Three returns are PROCESSING_WAREHOUSE, one step away. Restore the schedule below once the read is understood and a durable guard is in place.",
+  "crons": []
 }

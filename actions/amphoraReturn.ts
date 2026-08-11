@@ -12,6 +12,7 @@ import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale, type Locale } from "@/lib/i18n";
 import {
   amphoraOrderIdFromShopifyId,
+  approveAmphoraReturn,
   createAmphoraReturn,
   getAmphoraReturnsByOrderName,
   type AmphoraReturn,
@@ -262,4 +263,93 @@ export async function createInternationalReturn(id: string): Promise<number> {
   }
 
   return 200;
+}
+
+/**
+ * Tell Amphora a Spanish return is on its way, without asking them to ship it.
+ *
+ * Spanish returns travel on our own Correos label, so Amphora used to learn
+ * about one only when the box arrived at the warehouse: nothing expected,
+ * nothing to reconcile against. Registering it as an EXTERNAL return records
+ * the return and its tracking while leaving the transport to us.
+ *
+ * Two calls, in this order, because their API says so (company-api.yaml):
+ *
+ *   POST /returns              — accepts only `return_order` and `auto_approve`.
+ *                                `carrier_data` is NOT in this schema; sent here
+ *                                it is accepted and silently ignored, which
+ *                                looks exactly like success (201, carrier null).
+ *   PATCH /returns/{id}/approve — accepts `carrier_data`, "to be used for the
+ *                                external return".
+ *
+ * `auto_approve` is deliberately never sent. That is the whole safety argument:
+ * an unapproved return has no warehouse and no carrier, so the auto-assign
+ * setting Amphora enabled for us cannot book a courier against a parcel the
+ * customer is about to drop at a Correos office. Approval and the external
+ * carrier arrive together, in one call.
+ *
+ * Best-effort by construction. It runs only after the Correos label exists and
+ * the customer has been emailed, so every failure here is an ops problem to be
+ * logged — never a reason to fail a return that is already real.
+ */
+export async function preregisterDomesticReturn(
+  order: {
+    id: string;
+    orderNumber: string;
+    email: string;
+    locator?: string | null;
+    products?: any;
+  },
+  locator: string
+): Promise<void> {
+  if (String(process.env.AMPHORA_DOMESTIC_PREREGISTER ?? "").toLowerCase() === "off") {
+    return;
+  }
+
+  try {
+    const returned = (order.products ?? []).filter(
+      (p: any) => p.action !== "CAMBIO" || p.new_variant_id
+    );
+    const skusById = await getVariantSkusByIds(
+      returned.map((p: any) => String(p.variant_id))
+    );
+    const items = returned
+      .map((p: any) => ({
+        sku: skusById[String(p.variant_id)],
+        quantity: Number(p.quantity) || 1,
+      }))
+      .filter((i: any) => i.sku);
+
+    if (items.length === 0) {
+      console.error(
+        `Amphora pre-registration for order ${order.id}: no SKUs resolved — the warehouse will not be expecting this parcel.`
+      );
+      return;
+    }
+
+    const created = await createAmphoraReturn({
+      orderId: amphoraOrderIdFromShopifyId(order.id),
+      items,
+      externalId: order.id,
+      time: new Date().toISOString(),
+      name: order.orderNumber,
+      customerEmail: order.email,
+      // NOT auto-approved. See above — this is what stops a courier being sent.
+    });
+
+    await approveAmphoraReturn(created.id, {
+      carrier: "CORREOS",
+      carrier_number: locator,
+      carrier_url: `https://www.correos.es/es/es/herramientas/localizador/envios/detalle?tracking-number=${encodeURIComponent(locator)}`,
+    });
+
+    console.log(
+      `[amphora] domestic return pre-registered for order ${order.id} as EXTERNAL (Correos ${locator})`
+    );
+  } catch (error: any) {
+    console.error(
+      `Amphora pre-registration FAILED for order ${order.id} (Correos ${locator}). The customer's return is fine; the warehouse just will not be expecting it. Error:`,
+      error?.response?.data || error?.message || error
+    );
+  }
 }

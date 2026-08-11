@@ -63,6 +63,9 @@ beforeEach(() => {
   process.env.USERNAME_CORREOS = "user";
   process.env.PASSWORD_CORREOS = "pass";
   process.env.CODIGO_ETIQUETADOR_CORREOS = "AZXT";
+  // Not under test here, and it would reach for Amphora. Its own behaviour is
+  // pinned in tests/domesticPreregistration.test.ts.
+  process.env.AMPHORA_DOMESTIC_PREREGISTER = "off";
 });
 
 describe("the Correos label destination", () => {

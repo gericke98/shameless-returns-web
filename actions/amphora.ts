@@ -258,15 +258,32 @@ export async function createAmphoraReturn(input: CreateReturnInput): Promise<Amp
  * normal path; this is the recovery route for returns already stranded at
  * PENDING.
  *
- * Body is deliberately empty: `carrier_data` is only for an EXTERNAL return
- * (one you ship yourself). Omitting it lets Amphora assign the warehouse and
- * arrange the collection.
+ * Omit `carrierData` and Amphora assigns the warehouse and arranges the
+ * collection — the international path.
+ *
+ * Pass `carrierData` and the return becomes EXTERNAL: one shipped on a carrier
+ * we arranged, which Amphora records and expects but does not transport. That
+ * is the Spanish path, where the parcel travels on our own Correos label.
+ *
+ * This is the ONLY endpoint that accepts it. `POST /returns` takes just
+ * `return_order` and `auto_approve` (company-api.yaml); `carrier_data` sent
+ * there is accepted and silently ignored — a probe on 2026-08-11 returned 201
+ * with `carrier: null`, which reads exactly like success.
  */
-export async function approveAmphoraReturn(returnId: string): Promise<AmphoraReturn> {
+export type AmphoraCarrierData = {
+  carrier: string;
+  carrier_number: string;
+  carrier_url: string;
+};
+
+export async function approveAmphoraReturn(
+  returnId: string,
+  carrierData?: AmphoraCarrierData
+): Promise<AmphoraReturn> {
   const data = await amphoraRequest<{ return_order: AmphoraReturn }>(
     "PATCH",
     `/returns/${encodeURIComponent(returnId)}/approve`,
-    { body: {} },
+    { body: carrierData ? { carrier_data: carrierData } : {} },
   );
   return data.return_order;
 }

@@ -13,6 +13,7 @@ import {
 import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
+import { preregisterDomesticReturn } from "./amphoraReturn";
 
 // Types
 type ShippingResponse = {
@@ -347,6 +348,15 @@ export async function createShippingLabel(id: string): Promise<number> {
         `Correos label ${trackingNumber} registered for order ${id} but the confirmation email failed (status ${emailResponse.status}). Customer needs the label sending manually.`
       );
     }
+
+    // Tell the warehouse a parcel is coming. Amphora receives every box, but
+    // for a Spanish return it only ever found out on arrival — so nothing was
+    // expected and nothing could be reconciled. Registered as EXTERNAL: they
+    // record the return and our Correos tracking, and ship nothing themselves.
+    //
+    // Last, and best-effort: the label exists and the customer has been
+    // emailed, so a warehouse-side failure must not touch either.
+    await preregisterDomesticReturn(order as any, trackingNumber);
   } catch (error: any) {
     console.error(
       `Correos label ${trackingNumber} IS REGISTERED for order ${id} but post-registration steps failed — tracking and/or the customer email may be missing. Needs manual follow-up. Error:`,

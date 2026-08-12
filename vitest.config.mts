@@ -9,6 +9,10 @@ export default defineConfig({
   esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
-    include: ["tests/**/*.test.ts"],
+    // `.tsx` so component tests can live here too. They opt into a DOM with a
+    // `// @vitest-environment jsdom` docblock rather than switching the whole
+    // suite: everything else is pure logic that runs faster, and more honestly,
+    // without one.
+    include: ["tests/**/*.test.{ts,tsx}"],
   },
 });

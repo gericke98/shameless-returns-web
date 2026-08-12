@@ -136,6 +136,34 @@ export const es = {
     body: "No hemos podido completar la operación. Vuelve a intentarlo. Si el problema continúa, escríbenos a hello@shamelesscollective.com con tu número de pedido.",
     retry: "Reintentar",
   },
+  cancel: {
+    heading: "Tu devolución",
+    trackingLabel: "Número de seguimiento",
+    carrierLabel: "Transportista",
+    button: "Cancelar mi devolución",
+    confirmQuestion: "¿Seguro que quieres cancelar?",
+    confirmDetail:
+      "Te devolveremos todo lo que has pagado. La etiqueta que te enviamos dejará de ser válida.",
+    confirmYes: "Sí, cancelar",
+    confirmNo: "No, mantenerla",
+    cancelling: "Cancelando...",
+    doneTitle: "Hemos cancelado tu devolución",
+    doneBody:
+      "Te devolveremos el importe en el método de pago que usaste. No utilices la etiqueta que te enviamos.",
+    blockedInTransit:
+      "Tu paquete ya está de camino hacia nosotros, así que esta devolución ya no se puede cancelar.",
+    blockedSettled:
+      "Ya hemos procesado esta devolución, así que no se puede cancelar. Escríbenos si necesitas ayuda.",
+    blockedUnreadable:
+      "Ahora mismo no podemos comprobar el estado de tu paquete. Inténtalo de nuevo en unos minutos.",
+    failed:
+      "No hemos podido cancelar tu devolución. Escríbenos a hello@shamelesscollective.com con tu número de pedido.",
+    emailSubject: "Hemos cancelado la devolución de tu pedido",
+    emailBody:
+      "Hemos cancelado tu devolución y te reembolsaremos lo que pagaste en el método de pago original.",
+    emailLabelWarning:
+      "IMPORTANTE: la etiqueta de envío que te enviamos ya no es válida. Si quieres devolver algo más adelante, empieza una nueva solicitud y te enviaremos una etiqueta nueva.",
+  },
 } as const;
 
 // `es` is `as const`, so `typeof es` alone would type every leaf as its exact

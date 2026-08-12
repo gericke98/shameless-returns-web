@@ -135,4 +135,32 @@ export const en: Dictionary = {
     body: "We could not complete that. Please try again. If the problem persists, email us at hello@shamelesscollective.com with your order number.",
     retry: "Try again",
   },
+  cancel: {
+    heading: "Your return",
+    trackingLabel: "Tracking number",
+    carrierLabel: "Carrier",
+    button: "Cancel my return",
+    confirmQuestion: "Are you sure you want to cancel?",
+    confirmDetail:
+      "We'll refund everything you paid. The label we sent you will stop working.",
+    confirmYes: "Yes, cancel it",
+    confirmNo: "No, keep it",
+    cancelling: "Cancelling...",
+    doneTitle: "We've cancelled your return",
+    doneBody:
+      "We'll refund you to the payment method you used. Please don't use the label we sent you.",
+    blockedInTransit:
+      "Your parcel is already on its way to us, so this return can no longer be cancelled.",
+    blockedSettled:
+      "We've already processed this return, so it can't be cancelled. Get in touch if you need a hand.",
+    blockedUnreadable:
+      "We can't check on your parcel right now. Please try again in a few minutes.",
+    failed:
+      "We couldn't cancel your return. Please email hello@shamelesscollective.com with your order number.",
+    emailSubject: "We've cancelled the return for your order",
+    emailBody:
+      "We've cancelled your return and will refund what you paid to your original payment method.",
+    emailLabelWarning:
+      "IMPORTANT: the shipping label we sent you is no longer valid. If you'd like to return something later, start a new request and we'll send you a fresh label.",
+  },
 };

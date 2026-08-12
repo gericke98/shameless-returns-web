@@ -8,6 +8,8 @@ import { exchangeFromProducts } from "@/lib/exchange";
 import {
   UNKNOWN_TRACKING,
   parseCorreosTracking,
+  carrierMovement,
+  type CarrierMovement,
   type TrackingStatus,
 } from "@/lib/trackingStatus";
 import { readLocale, type Locale } from "@/lib/i18n";
@@ -403,5 +405,42 @@ export async function obtainLastStatus(
     // rather than any status that implies we learned something.
     console.error(`Error fetching tracking data for ${trackingNumber}:`, error);
     return UNKNOWN_TRACKING;
+  }
+}
+
+/**
+ * Ask Correos whether this parcel has moved.
+ *
+ * A null locator is "not-moved", not "unreadable": an international return
+ * Amphora has not assigned a carrier to has no tracking number and certainly
+ * has no parcel in transit — its movement is carried by the Amphora status
+ * instead. A domestic return with no locator never got a label at all.
+ *
+ * Any transport failure is "unreadable", which blocks cancellation.
+ */
+export async function readCarrierMovement(
+  locator: string | null | undefined
+): Promise<CarrierMovement> {
+  const username = process.env.USERNAME_CORREOS;
+  const password = process.env.PASSWORD_CORREOS;
+  if (!locator) return "not-moved";
+  if (!username || !password) return "unreadable";
+
+  const authToken = Buffer.from(`${username}:${password}`).toString("base64");
+  const url = `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${encodeURIComponent(
+    locator
+  )}?codIdioma=ES&indUltEvento=S`;
+
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Basic ${authToken}`,
+        "Content-Type": "application/json",
+      },
+    });
+    return carrierMovement(response.data);
+  } catch (error) {
+    console.error(`Could not read movement for ${locator}:`, error);
+    return "unreadable";
   }
 }

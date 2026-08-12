@@ -168,3 +168,51 @@ export function parseCorreosTracking(payload: unknown): TrackingStatus {
 
   return { label, phase: trackingPhase(label) };
 }
+
+/** Whether the parcel has entered the carrier network. */
+export type CarrierMovement = "moved" | "not-moved" | "unreadable";
+
+/** Phases that mean the customer has handed the parcel over. */
+const MOVED_PHASES: ReadonlyArray<TrackingPhase> = [
+  "admitido",
+  "en_transito",
+  "en_reparto",
+  "entregado",
+  "incidencia",
+];
+
+/**
+ * Has this parcel moved?
+ *
+ * Separate from `parseCorreosTracking`, which answers "what should the
+ * dashboard show" and is free to collapse everything it cannot read into one
+ * display state. This answers "may we cancel", where the difference between
+ * "Correos says nothing has happened" and "Correos did not answer" decides
+ * whether a refund is safe.
+ *
+ * `unreadable` covers an unrecognised wording too. A label we cannot map to a
+ * phase might mean the parcel is in transit, and guessing in the permissive
+ * direction refunds a customer whose garment is already on its way.
+ */
+export function carrierMovement(payload: unknown): CarrierMovement {
+  const record = Array.isArray(payload) ? payload[0] : payload;
+  if (!record || typeof record !== "object") return "unreadable";
+
+  const row = record as Record<string, any>;
+
+  const codError = row.error?.codError;
+  if (codError != null && String(codError) !== "0") return "unreadable";
+
+  const events = Array.isArray(row.eventos) ? row.eventos : [];
+  const lastEvent = events.length ? events[events.length - 1] : null;
+  if (!lastEvent) return "not-moved";
+
+  const label =
+    lastEvent.desTextoResumen || lastEvent.desFase || lastEvent.desTextoAmpliado;
+  if (!label) return "not-moved";
+
+  const phase = trackingPhase(String(label));
+  if (MOVED_PHASES.indexOf(phase) !== -1) return "moved";
+  if (phase === "prerregistrado") return "not-moved";
+  return "unreadable";
+}

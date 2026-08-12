@@ -40,3 +40,6 @@ next-env.d.ts
 # agent scratch — worktrees and subagent-driven-development ledgers
 /.claude/worktrees/
 /.superpowers/
+
+# Playwright MCP scratch output
+.playwright-mcp/

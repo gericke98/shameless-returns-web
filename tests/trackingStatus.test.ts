@@ -175,7 +175,22 @@ describe("tracksWithCorreos", () => {
   it("recognises Correos even when Amphora is the one who booked it", () => {
     // Order #310843 (Portugal) has carrier "correos" and a valid Correos code.
     expect(tracksWithCorreos("correos")).toBe(true);
-    expect(tracksWithCorreos("CORREOS EXPRESS")).toBe(true);
+    expect(tracksWithCorreos("Correos")).toBe(true);
+  });
+
+  it("excludes Correos Express, which is a different company", () => {
+    // This assertion used to say `true`, on the assumption that anything named
+    // "correos" is Correos. Correos Express is a separate operator with its own
+    // tracking system, and localizador.correos.es does not hold its codes — so
+    // asking returns "no traceability", which is the precise failure this
+    // predicate exists to prevent. Same reasoning as the DHL/UPS case below.
+    //
+    // Never observed in production (the only carriers on file are UPS, DHP and
+    // one "correos"), so this closes a hole rather than fixing an incident.
+    expect(tracksWithCorreos("CORREOS EXPRESS")).toBe(false);
+    expect(tracksWithCorreos("correos express")).toBe(false);
+    expect(tracksWithCorreos("Correos  Express")).toBe(false);
+    expect(tracksWithCorreos("correosexpress")).toBe(false);
   });
 
   it("excludes carriers Correos has never heard of", () => {

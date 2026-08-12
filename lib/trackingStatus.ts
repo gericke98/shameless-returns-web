@@ -90,7 +90,13 @@ export const UNKNOWN_TRACKING: TrackingStatus = {
  */
 export function tracksWithCorreos(carrier: string | null | undefined): boolean {
   if (!carrier) return true;
-  return normalise(carrier).includes("correos");
+  const name = normalise(carrier);
+  // Correos Express is a DIFFERENT operator that happens to share the name. It
+  // runs its own tracking, and localizador.correos.es does not hold its codes —
+  // so it belongs with DHL and UPS below, not with Correos. Checked before the
+  // substring test because "correos express" contains "correos".
+  if (/correos\s*express/.test(name)) return false;
+  return name.includes("correos");
 }
 
 /**

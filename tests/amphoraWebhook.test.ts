@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { decideWebhookActions, orderIdFromWebhook } from "@/lib/amphoraWebhook";
+import {
+  UNKNOWN_CARRIER,
+  decideWebhookActions,
+  orderIdFromWebhook,
+} from "@/lib/amphoraWebhook";
+import { tracksWithCorreos } from "@/lib/trackingStatus";
 
 const FRESH = { returnStatus: null, locator: null };
 
@@ -85,5 +90,66 @@ describe("decideWebhookActions", () => {
       { internal_status: "RECEIVED" }
     );
     expect(actions.persist).not.toHaveProperty("locator");
+  });
+
+  // A null `carrier` is not "unknown" — it MEANS "our own domestic Correos
+  // label", and that is what gates the Correos tracking lookup. If Amphora
+  // introduces a tracking number without naming the carrier, the row would
+  // silently claim to be a Correos shipment: the localizador would be asked
+  // about a UPS code, answer "no traceability", and the cancel gate would fail
+  // closed forever. Never seen in production (zero rows carry that signature),
+  // so this closes the hole rather than fixing an incident.
+  it("names the carrier when Amphora introduces tracking without one", () => {
+    const actions = decideWebhookActions(FRESH, {
+      internal_status: "APROVED",
+      carrier_number: "1Z999",
+    });
+
+    expect(actions.persist?.locator).toBe("1Z999");
+    expect(actions.persist?.carrier).toBe(UNKNOWN_CARRIER);
+  });
+
+  it("leaves a domestic Correos label's null carrier alone", () => {
+    // The domestic lane writes `locator` itself and leaves `carrier` null. A
+    // later Amphora poll that echoes the number back must NOT overwrite that —
+    // stamping it UNKNOWN would stop us checking Correos for a parcel the
+    // customer may already have deposited, and let them cancel it.
+    const actions = decideWebhookActions(
+      { returnStatus: "APROVED", locator: "PQAZXT9800005420128110D" },
+      { internal_status: "TRAVELLING", carrier_number: "PQAZXT9800005420128110D" }
+    );
+
+    expect(actions.persist).not.toHaveProperty("carrier");
+  });
+
+  it("prefers the carrier Amphora actually names", () => {
+    const actions = decideWebhookActions(FRESH, {
+      internal_status: "APROVED",
+      carrier_number: "1Z999",
+      carrier: "UPS",
+    });
+
+    expect(actions.persist?.carrier).toBe("UPS");
+  });
+
+  it("records a carrier that arrives with no tracking number", () => {
+    const actions = decideWebhookActions(FRESH, {
+      internal_status: "APROVED",
+      carrier: "UPS",
+    });
+
+    expect(actions.persist?.carrier).toBe("UPS");
+    expect(actions.persist).not.toHaveProperty("locator");
+  });
+
+  it("invents no carrier when there is no tracking either", () => {
+    const actions = decideWebhookActions(FRESH, { internal_status: "APROVED" });
+
+    expect(actions.persist).not.toHaveProperty("carrier");
+  });
+
+  it("uses a placeholder the Correos lookup will not match", () => {
+    // The whole point of the placeholder is that it fails `tracksWithCorreos`.
+    expect(tracksWithCorreos(UNKNOWN_CARRIER)).toBe(false);
   });
 });

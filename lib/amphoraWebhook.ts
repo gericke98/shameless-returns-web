@@ -4,6 +4,15 @@
 //
 // Amphora spells approved `APROVED`, with one P. That is the wire value.
 
+/**
+ * Recorded when Amphora hands us a tracking number without naming the carrier.
+ *
+ * Must NOT contain "correos": `tracksWithCorreos` treats a null carrier as our
+ * own domestic Correos label, and this value exists precisely to avoid
+ * inheriting that meaning. Pinned by a test in tests/amphoraWebhook.test.ts.
+ */
+export const UNKNOWN_CARRIER = "UNKNOWN";
+
 export type AmphoraWebhookReturn = {
   id?: string | null;
   name?: string | null;
@@ -65,7 +74,24 @@ export function decideWebhookActions(
   // Only ever ADD tracking. A later event that omits the carrier must not wipe
   // tracking we already hold.
   if (payload.carrier_number) persist.locator = payload.carrier_number;
-  if (payload.carrier) persist.carrier = payload.carrier;
+  if (payload.carrier) {
+    persist.carrier = payload.carrier;
+  } else if (payload.carrier_number && !order.locator) {
+    // Amphora is INTRODUCING a tracking number and did not say whose it is.
+    //
+    // Leaving `carrier` null would be a lie: null does not mean "unknown", it
+    // means "our own domestic Correos label", and that is what gates the
+    // Correos tracking lookup. The localizador would then be asked about a
+    // carrier code it has never held, answer "no traceability", and the cancel
+    // gate — which fails closed — would block this customer permanently.
+    //
+    // `!order.locator` is what makes this safe for the domestic lane: there we
+    // write the Correos code ourselves BEFORE Amphora ever polls, so a later
+    // echo of that same number finds a locator already present and leaves the
+    // null carrier untouched. Only a genuinely new, Amphora-supplied number
+    // reaches this branch.
+    persist.carrier = UNKNOWN_CARRIER;
+  }
   if (payload.carrier_url) persist.carrierUrl = payload.carrier_url;
 
   const emails: WebhookEmail[] = [];

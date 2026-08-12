@@ -1060,10 +1060,16 @@ export async function getProducts() {
 export async function cancelShopifyReturn(
   returnId: string
 ): Promise<{ success: boolean; errors?: unknown }> {
-  const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  try {
+    // Inside the try deliberately: createSession() throws synchronously when
+    // the Shopify env vars are missing, and by the time this runs the caller
+    // has already cancelled the Amphora return and cannot undo that. An
+    // escaping throw here would strand the customer with no return and no
+    // refund instead of a reportable failure.
+    const session = createSession();
+    const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  const query = `
+    const query = `
     mutation CancelReturn($id: ID!) {
       returnCancel(id: $id) {
         return { id status }
@@ -1072,7 +1078,6 @@ export async function cancelShopifyReturn(
     }
   `;
 
-  try {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",
       headers: session.headers,

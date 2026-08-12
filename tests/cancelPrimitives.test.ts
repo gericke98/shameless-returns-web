@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
+import { orders, productsOrder } from "@/db/schema";
 
 // The two reversals against our own records.
 
@@ -13,6 +15,11 @@ vi.mock("react", async (importOriginal) => {
 // internal table symbols to learn the name would couple the test to the ORM's
 // private shape for no gain.
 const setCalls: Array<Record<string, any>> = [];
+// The argument each `.set()` call's matching `.where()` was scoped by, in the
+// same order as setCalls. If a regression drops the `.where()` or scopes it by
+// the wrong column, this is where that would show up — the values above would
+// still look right even as every row in the table got wiped.
+const whereCalls: Array<any> = [];
 
 vi.mock("@/db/drizzle", () => {
   const chain: any = {
@@ -21,7 +28,10 @@ vi.mock("@/db/drizzle", () => {
       setCalls.push(values);
       return chain;
     },
-    where: () => Promise.resolve(),
+    where: (condition: any) => {
+      whereCalls.push(condition);
+      return Promise.resolve();
+    },
   };
   return { default: chain };
 });
@@ -36,6 +46,7 @@ global.fetch = (async (_url: string, init: any) => {
 
 beforeEach(() => {
   setCalls.length = 0;
+  whereCalls.length = 0;
   shopifyBody = "";
   shopifyResponse.value = { data: { returnCancel: { return: { id: "gid://x" }, userErrors: [] } } };
   process.env.NEXT_PUBLIC_ACCESS_TOKEN = "token";
@@ -53,6 +64,20 @@ describe("cancelShopifyReturn", () => {
     expect(result.success).toBe(true);
   });
 
+  it("sends the id as a GraphQL variable, never interpolated into the document", async () => {
+    // Passing the raw id anywhere near the mutation string is the exact
+    // injection pattern `createReturn`'s comment warns against — a document
+    // that cancels a return being built from unescaped customer-reachable
+    // input. `variables.id` is the only place it's allowed to appear.
+    const { cancelShopifyReturn } = await import("@/db/queries");
+
+    await cancelShopifyReturn("gid://shopify/Return/1");
+
+    const parsed = JSON.parse(shopifyBody);
+    expect(parsed.variables.id).toBe("gid://shopify/Return/1");
+    expect(parsed.query).not.toContain("gid://shopify/Return/1");
+  });
+
   it("reports failure on userErrors rather than throwing", async () => {
     // The caller has already cancelled Amphora and cannot undo it, so it needs
     // a value it can act on, not an exception mid-chain.
@@ -64,6 +89,20 @@ describe("cancelShopifyReturn", () => {
     const result = await cancelShopifyReturn("gid://shopify/Return/1");
 
     expect(result.success).toBe(false);
+  });
+
+  it("reports failure instead of throwing when the Shopify env vars are missing", async () => {
+    // createSession() throws synchronously when these are unset. By the time
+    // this function runs, the caller has already cancelled the Amphora return
+    // and cannot undo that — an escaping throw here strands the customer with
+    // no return and no refund, instead of a failure a caller can act on.
+    delete process.env.NEXT_PUBLIC_ACCESS_TOKEN;
+    delete process.env.NEXT_PUBLIC_SHOP_URL;
+    const { cancelShopifyReturn } = await import("@/db/queries");
+
+    await expect(cancelShopifyReturn("gid://shopify/Return/1")).resolves.toMatchObject({
+      success: false,
+    });
   });
 });
 
@@ -80,6 +119,25 @@ describe("resetOrderReturn", () => {
       carrierUrl: null,
       returnStatus: null,
     });
+  });
+
+  it("scopes each update to the one order, not the whole table", async () => {
+    // A regression that dropped the `.where()` or scoped it by the wrong
+    // column would still pass every assertion above — it would just also
+    // wipe the tracking and line selections of every other order in the
+    // table. This is the only test that would catch that.
+    const { resetOrderReturn } = await import("@/db/queries");
+
+    await resetOrderReturn("1");
+
+    const orderUpdateIndex = setCalls.findIndex((c) => "locator" in c);
+    const lineUpdateIndex = setCalls.findIndex((c) => "confirmed" in c);
+
+    expect(whereCalls[orderUpdateIndex]).toEqual(eq(orders.id, "1"));
+    expect(whereCalls[lineUpdateIndex]).toEqual(eq(productsOrder.orderId, "1"));
+    // The two scopes must be genuinely different conditions (different
+    // columns), not the same `where` reused for both updates.
+    expect(whereCalls[orderUpdateIndex]).not.toEqual(whereCalls[lineUpdateIndex]);
   });
 
   it("clears the confirmation and the Shopify return ids from every line", async () => {

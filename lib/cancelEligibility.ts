@@ -57,9 +57,19 @@ export function cancelEligibility(
 ): CancelDecision {
   if (!order || !Array.isArray(order.products)) return blocked("no-return");
 
+  // `confirmed` is what makes a line part of the return that exists RIGHT NOW.
+  // `resetOrderReturn` clears it on cancellation but deliberately leaves
+  // `refunded` alone — that flag is the permanent record that we once paid this
+  // customer for this garment, and erasing it would let the same line be
+  // settled twice. So a refunded line can outlive the return it belonged to,
+  // and the settlement check has to be scoped to the current one: asking
+  // "has any line on this ORDER ever been refunded" told a customer whose
+  // return was created two minutes ago that we had "already processed" it, and
+  // did so for every future return on that order, permanently.
   const lines = order.products;
-  if (!lines.some((line) => line?.confirmed === true)) return blocked("no-return");
-  if (lines.some((line) => line?.refunded === true)) return blocked("already-settled");
+  const current = lines.filter((line) => line?.confirmed === true);
+  if (current.length === 0) return blocked("no-return");
+  if (current.some((line) => line?.refunded === true)) return blocked("already-settled");
 
   const status = order.returnStatus ?? null;
   if (status && MOVED_STATUSES.indexOf(status) !== -1) return blocked("in-transit");

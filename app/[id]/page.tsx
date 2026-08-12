@@ -91,20 +91,29 @@ export default async function OrderPage({ params }: OrderPageProps) {
   // Computed here for what to SHOW. `cancelReturnFunction` computes it again
   // from its own fresh reads — what this page rendered is a hint, never the
   // authority on what may happen.
-  const movement = await readCarrierMovement(orderData.locator);
+  // `carrier` decides which carrier may be asked. For an international return
+  // `locator` holds Amphora's carrier_number, not a Correos code — see
+  // `readCarrierMovement`.
+  const movement = await readCarrierMovement(orderData.locator, orderData.carrier);
   const cancelDecision = cancelEligibility(orderData as any, movement);
   const hasReturn = orderData.products.some((line: any) => line?.confirmed === true);
 
+  // Handed to `ClientOrder` rather than rendered beside it. `ClientOrder` owns
+  // the whole page shell — background, header, centred card — and the root
+  // layout is a bare `<main>`, so a sibling renders full-bleed above the logo
+  // on the default background. Built here so eligibility stays a server
+  // decision; the panel itself is still a client component.
+  const statusPanel = hasReturn ? (
+    <ReturnStatusPanel
+      decision={cancelDecision}
+      orderId={params.id}
+      locator={orderData.locator ?? null}
+      carrier={orderData.carrier ?? null}
+    />
+  ) : null;
+
   return (
     <LocaleProvider locale={locale}>
-      {hasReturn && (
-        <ReturnStatusPanel
-          decision={cancelDecision}
-          orderId={params.id}
-          locator={orderData.locator ?? null}
-          carrier={orderData.carrier ?? null}
-        />
-      )}
       <FeesProvider fees={fees}>
         <ClientOrder
           name={orderData.orderNumber}
@@ -112,6 +121,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
           order={orderData}
           id={orderData.id}
           allProducts={discountedAllProducts}
+          statusPanel={statusPanel}
         />
       </FeesProvider>
     </LocaleProvider>

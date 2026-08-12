@@ -53,7 +53,11 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
   // a second refund; a stale `returnStatus` would walk through in-transit
   // into refunding a garment already on its way to us.
   const order = await getOrderByIdFresh(orderId);
-  const movement = await readCarrierMovement(order?.locator);
+  // `carrier` decides WHICH carrier may be asked. `locator` holds a Correos
+  // CodEnvio for a Spanish return but Amphora's carrier_number for an
+  // international one, and asking Correos about a UPS reference reads back as
+  // "unreadable" — which used to block every non-Spain cancellation forever.
+  const movement = await readCarrierMovement(order?.locator, (order as any)?.carrier);
   const decision = cancelEligibility(order as any, movement);
   if (!decision.cancellable) return { ok: false, reason: decision.reason };
 
@@ -81,6 +85,21 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
           `Close it by hand, or an admin validating it later will refund the garment too.`
       );
     }
+  } else {
+    // No id to cancel with, which should be impossible for a confirmed return:
+    // `updateFinalOrder` writes `return_id` onto every line at creation. When
+    // it happens anyway — a half-created return, a partial revert — the branch
+    // above is skipped, and skipping it SILENTLY is the harm: the Shopify
+    // return is still open, the customer has been refunded a step later, and
+    // an admin validating it refunds the garment on top. Nothing else would
+    // ever notice, because step 5 drops the row off the dashboard.
+    await alertOps(
+      `Cancelled return had no Shopify return id (${(order as any).orderNumber})`,
+      `Order ${orderId} was cancelled by the customer and refunded, but none of its lines ` +
+        `carried a return_id, so no returnCancel was sent. If a Shopify return exists for ` +
+        `this order it is STILL OPEN — find it and close it by hand, or an admin validating ` +
+        `it later will refund the garment too.`
+    );
   }
 
   // 3. Never throws, but a `false` means the hold is still live: the
@@ -96,21 +115,43 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
   }
 
   // 4. `not-found` is not a failure: a free return had nothing to refund.
+  const paymentIntent = (order as any).stripePaymentIntent;
   const refund = await refundOrderPayment({
     id: orderId,
     email: (order as any).email,
-    stripePaymentIntent: (order as any).stripePaymentIntent,
+    stripePaymentIntent: paymentIntent,
   });
   if (!refund.refunded && refund.reason === "error") {
     await alertOps(
       `Refund FAILED after cancelling ${(order as any).orderNumber}`,
       `Order ${orderId} was cancelled at the customer's request and their return is gone, ` +
-        `but the refund did not go through. Refund them by hand in Stripe.`
+        `but the refund did not go through. Refund them by hand in Stripe.\n\n` +
+        // Step 5 clears `stripe_payment_intent` from the row, so this line is
+        // the only surviving pointer to the charge that needs reversing.
+        `Payment intent: ${paymentIntent || "not stored — find the Checkout Session by " +
+          `customer_email ${(order as any).email} and metadata.id ${orderId}`}`
     );
   }
 
   // 5. Clean slate — they can start a fresh return immediately.
-  await resetOrderReturn(orderId);
+  //
+  // Guarded because it is two separate updates and the customer's money has
+  // already moved. A throw escaping here would skip step 6 as well: no email,
+  // no alert, and a row still `confirmed` with a `return_id` for a Shopify
+  // return that no longer exists — a phantom live return on the dashboard that
+  // an admin would settle, refunding the garment on top of the fee.
+  try {
+    await resetOrderReturn(orderId);
+  } catch (error: any) {
+    await alertOps(
+      `Order rows only half-reset after cancelling ${(order as any).orderNumber}`,
+      `Order ${orderId} was cancelled at the customer's request and refunded, but ` +
+        `resetOrderReturn threw:\n${error?.message || error}\n\n` +
+        `The order and/or its lines may still carry confirmed = true and a return_id for a ` +
+        `Shopify return that is already cancelled, so the dashboard may show a PHANTOM live ` +
+        `return. Do not validate it — clear the rows by hand.`
+    );
+  }
 
   // 6. Tell them, in the language they used.
   await sendCancellationEmail(order as any);

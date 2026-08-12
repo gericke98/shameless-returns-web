@@ -121,6 +121,23 @@ describe("resetOrderReturn", () => {
     });
   });
 
+  it("clears the Stripe payment intent, so the NEXT return cannot reuse it", async () => {
+    // Leaving `pi_1` behind poisons the next cancellation two different ways.
+    // If the second return is FREE, `refundOrderPayment` is handed the old
+    // intent and either replays the first refund (Stripe's idempotency makes
+    // that look like success) or errors and tells ops to refund by hand for a
+    // return that cost nothing. And if the second return IS paid but the
+    // webhook's intent write fails — it is swallowed — the stale value
+    // short-circuits `resolvePaymentIntentId`'s session-lookup fallback, so
+    // the customer is never refunded for what they actually paid.
+    const { resetOrderReturn } = await import("@/db/queries");
+
+    await resetOrderReturn("1");
+
+    const orderUpdate = setCalls.find((c) => "locator" in c);
+    expect(orderUpdate).toMatchObject({ stripePaymentIntent: null });
+  });
+
   it("scopes each update to the one order, not the whole table", async () => {
     // A regression that dropped the `.where()` or scoped it by the wrong
     // column would still pass every assertion above — it would just also

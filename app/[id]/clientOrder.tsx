@@ -13,6 +13,7 @@ export const ClientOrder = ({
   order,
   id,
   allProducts,
+  statusPanel,
 }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
@@ -46,6 +47,13 @@ export const ClientOrder = ({
       <Header />
       <div className="flex-1 flex items-center justify-center w-full">
         <div className="bg-white-pattern flex flex-col lg:w-[30%] w-[85%] rounded-3xl items-center py-10 px-4 lg:px-6 min-h-[500px]">
+          {/* The customer's existing return and its cancel control, above the
+              wizard that would start a new one. Inside this card on purpose:
+              it is the only styled surface on the page, and a money-moving
+              action rendered outside it appeared as an unstyled full-bleed
+              strip above the logo. Server-rendered in page.tsx and passed
+              down, so eligibility is never decided on the client. */}
+          {statusPanel}
           <OrderWindow
             position={position}
             name={name}

@@ -9,6 +9,7 @@ import {
   UNKNOWN_TRACKING,
   parseCorreosTracking,
   carrierMovement,
+  tracksWithCorreos,
   type CarrierMovement,
   type TrackingStatus,
 } from "@/lib/trackingStatus";
@@ -411,19 +412,41 @@ export async function obtainLastStatus(
 /**
  * Ask Correos whether this parcel has moved.
  *
+ * ONLY Correos, and only when the parcel actually travels with Correos.
+ * `orders.locator` is overloaded: for a Spanish return it holds a Correos
+ * CodEnvio, but for an international one `actions/amphoraReturn.ts` writes
+ * Amphora's `carrier_number` there — a UPS/DHL/GLS reference. Handing that to
+ * the localizador returns an error block, which reads as "unreadable", which
+ * `cancelEligibility` turns into `carrier-unreadable` and shows the customer
+ * "try again in a few minutes" — a retry that can never succeed. That killed
+ * cancellation for the whole non-Spain lane.
+ *
+ * So a non-Correos parcel answers "not-moved" with no network call. That is
+ * not a claim that it is sitting still: movement for those returns is carried
+ * by the Amphora `returnStatus` gate in `cancelEligibility` (TRAVELLING,
+ * RECEIVED, … all block), which is the only signal we actually have for them.
+ *
+ * `carrier` is matched by NAME via `tracksWithCorreos`, not by presence:
+ * Amphora subcontracts Correos for some destinations and sets `carrier` to
+ * "correos" with a real Correos code, and those must still be queried.
+ *
  * A null locator is "not-moved", not "unreadable": an international return
  * Amphora has not assigned a carrier to has no tracking number and certainly
- * has no parcel in transit — its movement is carried by the Amphora status
- * instead. A domestic return with no locator never got a label at all.
+ * has no parcel in transit. A domestic return with no locator never got a
+ * label at all.
  *
- * Any transport failure is "unreadable", which blocks cancellation.
+ * Any transport failure on a parcel we CAN ask about is "unreadable", which
+ * blocks cancellation.
  */
 export async function readCarrierMovement(
-  locator: string | null | undefined
+  locator: string | null | undefined,
+  carrier?: string | null
 ): Promise<CarrierMovement> {
+  if (!locator) return "not-moved";
+  if (!tracksWithCorreos(carrier)) return "not-moved";
+
   const username = process.env.USERNAME_CORREOS;
   const password = process.env.PASSWORD_CORREOS;
-  if (!locator) return "not-moved";
   if (!username || !password) return "unreadable";
 
   const authToken = Buffer.from(`${username}:${password}`).toString("base64");

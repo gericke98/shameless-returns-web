@@ -66,25 +66,43 @@ export function ReturnStatusPanel({ decision, orderId, locator, carrier }: Props
 
   const cancel = () => {
     startTransition(async () => {
-      const result = await cancelReturnFunction(orderId);
-      if (result.ok) {
-        setDone(true);
-        setConfirming(false);
-        // No reload here: React 18 batches `setDone(true)` with the state
-        // update below it, so a synchronous reload would unload the document
-        // before the confirmation ever paints and the customer would see
-        // nothing. The customer explicitly asks to leave via the "start a new
-        // request" control instead.
-      } else {
-        // Eligibility can have changed between this page's render and this
-        // click (the parcel got scanned, an admin settled it) — when the
-        // failure reason is one we have specific copy for, show that instead
-        // of the generic "couldn't cancel" message.
-        setFailedKey(
-          isCancelBlockedReason(result.reason)
-            ? blockedMessageKey(result.reason) ?? "failed"
-            : "failed"
-        );
+      // `cancelReturnFunction` returns a value for every outcome it knows
+      // about, but it can still REJECT: a dropped connection mid-action, a
+      // 60s function timeout, a Next server-action framing error. Without this
+      // catch the rejection escaped the transition and neither `done` nor
+      // `failedKey` was ever set — the spinner stopped and the customer saw
+      // absolutely nothing after clicking a button about their money.
+      //
+      // The generic message is the only honest one here: a rejection tells us
+      // nothing about how far the chain got, so it must not imply either that
+      // the return survived or that it was cancelled. `t.cancel.failed` points
+      // them at support with their order number, which is the right next step
+      // whichever way it went.
+      try {
+        const result = await cancelReturnFunction(orderId);
+        if (result.ok) {
+          setDone(true);
+          setConfirming(false);
+          // No reload here: React 18 batches `setDone(true)` with the state
+          // update below it, so a synchronous reload would unload the document
+          // before the confirmation ever paints and the customer would see
+          // nothing. The customer explicitly asks to leave via the "start a new
+          // request" control instead.
+        } else {
+          // Eligibility can have changed between this page's render and this
+          // click (the parcel got scanned, an admin settled it) — when the
+          // failure reason is one we have specific copy for, show that instead
+          // of the generic "couldn't cancel" message.
+          setFailedKey(
+            isCancelBlockedReason(result.reason)
+              ? blockedMessageKey(result.reason) ?? "failed"
+              : "failed"
+          );
+          setConfirming(false);
+        }
+      } catch (error) {
+        console.error(`Cancel request failed for order ${orderId}:`, error);
+        setFailedKey("failed");
         setConfirming(false);
       }
     });

@@ -67,6 +67,38 @@ describe("cancelEligibility", () => {
     });
   });
 
+  it("ignores a refunded line left over from a previous, already-reset return", () => {
+    // `resetOrderReturn` deliberately does NOT clear `refunded` — it is the
+    // record that we paid that customer for that garment. But scoping the
+    // settlement check to the whole ORDER meant one settled return disabled
+    // cancellation on every future return for that customer, forever: they
+    // create a return two minutes ago and are told "we've already processed
+    // this return". Only lines that belong to the CURRENT return count, and
+    // `confirmed` is what says so.
+    const order = {
+      products: [
+        { confirmed: false, refunded: true }, // last month's return, settled and reset
+        { confirmed: true, refunded: false }, // the one they just created
+      ],
+      returnStatus: null,
+    };
+    expect(cancelEligibility(order, "not-moved")).toEqual({ cancellable: true });
+  });
+
+  it("still refuses when the line an admin settled is part of THIS return", () => {
+    const order = {
+      products: [
+        { confirmed: false, refunded: true },
+        { confirmed: true, refunded: true },
+      ],
+      returnStatus: null,
+    };
+    expect(cancelEligibility(order, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "already-settled",
+    });
+  });
+
   it("refuses once the parcel is with the carrier", () => {
     expect(cancelEligibility(confirmed(), "moved")).toEqual({
       cancellable: false,

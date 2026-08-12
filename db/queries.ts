@@ -1106,11 +1106,27 @@ export async function cancelShopifyReturn(
  * and stays. This function is the deliberate counterpart: it runs only after
  * eligibility has been verified and the Shopify return has actually been
  * cancelled, so clearing the id records reality rather than hiding it.
+ *
+ * `stripePaymentIntent` is cleared along with the tracking: it belongs to the
+ * charge for the return that no longer exists, and has just been refunded.
+ * Leaving it behind attaches a dead intent to whatever the customer does next
+ * — a free second return would be handed `pi_1` and either replay the first
+ * refund or fail into a manual-refund alert for a return that cost nothing,
+ * and a PAID second return whose webhook intent-write was swallowed would be
+ * short-circuited past `resolvePaymentIntentId`'s session lookup and never
+ * refunded at all. `refunded` on the LINES is not cleared, deliberately: that
+ * is the permanent record that we settled that garment.
  */
 export async function resetOrderReturn(orderId: string): Promise<void> {
   await db
     .update(orders)
-    .set({ locator: null, carrier: null, carrierUrl: null, returnStatus: null })
+    .set({
+      locator: null,
+      carrier: null,
+      carrierUrl: null,
+      returnStatus: null,
+      stripePaymentIntent: null,
+    })
     .where(eq(orders.id, orderId));
 
   await db

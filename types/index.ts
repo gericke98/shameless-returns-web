@@ -1,6 +1,6 @@
 import { orders, productsOrder } from "@/db/schema";
 import type { TrackingPhase, TrackingStatus } from "@/lib/trackingStatus";
-import { Dispatch, SetStateAction } from "react";
+import { Dispatch, ReactNode, SetStateAction } from "react";
 
 // ==========================================
 // Base Types
@@ -298,6 +298,18 @@ export type ClientOrderProps = {
   order: typeof orders.$inferSelect;
   id: string;
   allProducts: Product[];
+  /**
+   * Rendered at the top of the wizard card, inside the page chrome.
+   *
+   * `ClientOrder` owns the entire visible shell — `min-h-screen`, the paper
+   * background, the header and the centred card — and `app/layout.tsx` is a
+   * bare `<main>` with none of it. So anything rendered as a SIBLING of
+   * `ClientOrder` lands full-bleed above the logo on the default background,
+   * which is where the cancel panel was. Passing it through as a node keeps
+   * eligibility computed on the server in `page.tsx` while letting the shell
+   * decide where it sits.
+   */
+  statusPanel?: ReactNode;
 };
 
 export type ClientOrderWindowContentProps = {

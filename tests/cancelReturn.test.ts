@@ -44,19 +44,26 @@ const behaviour = {
   shopifyFails: false,
   releaseFails: false,
   refundOutcome: { refunded: true } as any,
+  resetFails: false,
   emailFails: false,
 };
 
-const ORDER: Record<string, any> = {
-  id: "13217168851270",
-  orderNumber: "#311148",
-  email: "customer@example.com",
-  locale: "es",
-  locator: "PQ1ES",
-  returnStatus: "APROVED",
-  stripePaymentIntent: "pi_stored",
-  products: [{ confirmed: true, refunded: false, return_id: "gid://shopify/Return/1" }],
-};
+const ORDER: Record<string, any> = {};
+
+/** The row as it looks with one live, unsettled return on it. */
+function freshOrder(): Record<string, any> {
+  return {
+    id: "13217168851270",
+    orderNumber: "#311148",
+    email: "customer@example.com",
+    locale: "es",
+    locator: "PQ1ES",
+    carrier: null,
+    returnStatus: "APROVED",
+    stripePaymentIntent: "pi_stored",
+    products: [{ confirmed: true, refunded: false, return_id: "gid://shopify/Return/1" }],
+  };
+}
 
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => behaviour.access }));
 vi.mock("@/db/queries", () => ({
@@ -76,14 +83,30 @@ vi.mock("@/db/queries", () => ({
     calls.sequence.push("shopify");
     return behaviour.shopifyFails ? { success: false, errors: "nope" } : { success: true };
   },
+  // Mirrors the real reset (db/queries.ts) against the in-memory row, so a
+  // SECOND cancellation of the same order sees what the first one left behind
+  // rather than a pristine snapshot. `refunded` is left alone on purpose —
+  // that is what the real one does.
   resetOrderReturn: async (id: string) => {
     calls.reset.push(id);
     calls.sequence.push("reset");
+    if (behaviour.resetFails) throw new Error("neon: connection terminated");
+    ORDER.locator = null;
+    ORDER.carrier = null;
+    ORDER.carrierUrl = null;
+    ORDER.returnStatus = null;
+    ORDER.stripePaymentIntent = null;
+    ORDER.products = ORDER.products.map((line: any) => ({
+      ...line,
+      confirmed: false,
+      return_id: null,
+      return_line_item_id: null,
+    }));
   },
 }));
 vi.mock("@/actions/shipping", () => ({
-  readCarrierMovement: async (locator: string | null | undefined) => {
-    calls.carrierRead.push(String(locator));
+  readCarrierMovement: async (locator: string | null | undefined, carrier?: string | null) => {
+    calls.carrierRead.push(`${locator}/${carrier ?? ""}`);
     return behaviour.movement;
   },
 }));
@@ -141,9 +164,10 @@ beforeEach(() => {
   behaviour.shopifyFails = false;
   behaviour.releaseFails = false;
   behaviour.refundOutcome = { refunded: true };
+  behaviour.resetFails = false;
   behaviour.emailFails = false;
-  ORDER.products = [{ confirmed: true, refunded: false, return_id: "gid://shopify/Return/1" }];
-  ORDER.returnStatus = "APROVED";
+  for (const key of Object.keys(ORDER)) delete ORDER[key];
+  Object.assign(ORDER, freshOrder());
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
 });
 
@@ -271,7 +295,44 @@ describe("when a step fails", () => {
 
     expect(await cancel()).toEqual({ ok: true });
     expect(calls.opsAlert.length).toBeGreaterThan(0);
-    expect(calls.reset).toEqual([ORDER.id]);
+    expect(calls.reset).toEqual(["13217168851270"]);
+  });
+
+  it("names the payment intent in the refund-failure alert", async () => {
+    // `resetOrderReturn` clears `stripe_payment_intent` moments later (it must:
+    // a stale intent poisons the next return's refund). The alert is therefore
+    // the ONLY surviving pointer to the charge ops has to reverse by hand —
+    // without it they are left searching Stripe by email.
+    behaviour.refundOutcome = { refunded: false, reason: "error" };
+
+    await cancel();
+
+    expect(calls.opsAlert.some((entry) => entry.includes("pi_stored"))).toBe(true);
+  });
+
+  it("alerts a human when a line carries no Shopify return id", async () => {
+    // Skipping the cancel silently leaves an OPEN Shopify return behind after
+    // the customer has already been refunded, and an admin validating it later
+    // refunds the garment on top.
+    ORDER.products = [{ confirmed: true, refunded: false, return_id: null }];
+
+    expect(await cancel()).toEqual({ ok: true });
+    expect(calls.shopifyCancel).toHaveLength(0);
+    expect(calls.opsAlert.some((entry) => entry.includes("13217168851270"))).toBe(true);
+    expect(calls.refund).toEqual(["13217168851270"]);
+  });
+
+  it("still emails the customer, and alerts a human, when the reset throws", async () => {
+    // The customer's money has already moved. An escaping throw here would
+    // skip the email AND the alert, and leave the row `confirmed` with a
+    // `return_id` for a Shopify return that no longer exists — so the
+    // dashboard shows a phantom live return and an admin validating it refunds
+    // the garment on top of the fee.
+    behaviour.resetFails = true;
+
+    expect(await cancel()).toEqual({ ok: true });
+    expect(calls.customerEmail).toHaveLength(1);
+    expect(calls.opsAlert.some((entry) => entry.includes("13217168851270"))).toBe(true);
   });
 
   it("does not alert for a return that never owed anything", async () => {
@@ -292,3 +353,66 @@ describe("when a step fails", () => {
     expect(calls.reset).toEqual([ORDER.id]);
   });
 });
+
+describe("cancelling the same return twice", () => {
+  // The realistic shape of this is not a hostile replay: it is a customer on a
+  // slow connection clicking "Yes, cancel it" twice, or refreshing the page and
+  // clicking again on a return that is already gone. The action is reachable
+  // directly, so the guarantee has to live in the action, not the panel's
+  // `isPending` flag.
+
+  it("refunds exactly once and does not re-run the chain", async () => {
+    const first = await cancel();
+    const second = await cancel();
+
+    expect(first).toEqual({ ok: true });
+    // The second click reads the row the first one reset: no confirmed line,
+    // so there is no return to cancel. It is refused at the gate, before
+    // anything destructive or anything that moves money.
+    expect(second).toEqual({ ok: false, reason: "no-return" });
+
+    expect(calls.refund).toEqual(["13217168851270"]);
+    expect(calls.amphoraCancel).toHaveLength(1);
+    expect(calls.shopifyCancel).toHaveLength(1);
+    expect(calls.releaseHold).toHaveLength(1);
+    expect(calls.reset).toHaveLength(1);
+    expect(calls.customerEmail).toHaveLength(1);
+    expect(calls.opsAlert).toHaveLength(0);
+  });
+
+  it("runs the reversal chain exactly once across both calls", async () => {
+    await cancel();
+    await cancel();
+
+    expect(calls.sequence).toEqual([
+      "amphora",
+      "shopify",
+      "release",
+      "refund",
+      "reset",
+      "email",
+    ]);
+  });
+
+  it("does not hand the second call the first call's payment intent", async () => {
+    // `resetOrderReturn` clears `stripe_payment_intent`. If it did not, a
+    // second cancellation — of a return that may have cost nothing — would be
+    // handed `pi_stored` and either replay the refund or fail into a
+    // manual-refund alert for money that was never taken.
+    await cancel();
+
+    expect(ORDER.stripePaymentIntent).toBeNull();
+  });
+
+  it("leaves an already-settled return refused rather than refunded again", async () => {
+    // Belt and braces on the same click: if an admin settles the return in the
+    // window between the two calls, the second is refused as settled — never
+    // walked into a second refund.
+    await cancel();
+    ORDER.products = [{ confirmed: true, refunded: true, return_id: "gid://shopify/Return/2" }];
+
+    expect(await cancel()).toEqual({ ok: false, reason: "already-settled" });
+    expect(calls.refund).toHaveLength(1);
+  });
+});
+

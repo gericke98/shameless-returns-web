@@ -1,4 +1,15 @@
-"use server";
+// DELIBERATELY NOT a server action, and it must never be imported by a client
+// component — importing it from one is what would force `"use server"` back on.
+//
+// The directive published `alertOps` in Next's server-action manifest, i.e. an
+// unauthenticated POST endpoint taking attacker-controlled `subject` and
+// `body` and emailing them to our own ops address. The alerts it sends are
+// instructions to a human to refund a customer by hand, so a forged one is a
+// phishing message arriving from us, in the exact format ops is trained to act
+// on — and enough of them buries the real ones.
+//
+// Verified before removing: the only importer is `actions/cancelReturn.ts`
+// (a server module).
 
 import axios from "axios";
 

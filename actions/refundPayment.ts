@@ -1,4 +1,16 @@
-"use server";
+// DELIBERATELY NOT a server action, and it must never be imported by a client
+// component — importing it from one is what would force `"use server"` back on.
+//
+// The directive published `refundOrderPayment` in Next's server-action
+// manifest, which makes it an addressable POST endpoint. It has no session
+// check (its only caller, `cancelReturn`, is gated by `hasOrderAccess` before
+// it gets here) and it takes `stripePaymentIntent` straight from its argument,
+// so anyone who could reach that endpoint could issue a full refund against
+// ANY PaymentIntent in our Stripe account. It is a server-side helper called
+// from server modules only.
+//
+// Verified before removing: the only importers are `actions/cancelReturn.ts`
+// (a server module) and `tests/refundPayment.test.ts`.
 
 import { stripe } from "@/lib/stripe";
 

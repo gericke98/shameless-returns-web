@@ -11,6 +11,9 @@ import { cookies } from "next/headers";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { LocaleProvider } from "@/lib/i18n/context";
 import { hasOrderAccess } from "@/lib/orderAccess";
+import { readCarrierMovement } from "@/actions/shipping";
+import { cancelEligibility } from "@/lib/cancelEligibility";
+import { ReturnStatusPanel } from "./components/returnStatusPanel";
 
 /**
  * The return submission runs as a server action on THIS segment, and it is a
@@ -85,8 +88,23 @@ export default async function OrderPage({ params }: OrderPageProps) {
 
   const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
 
+  // Computed here for what to SHOW. `cancelReturnFunction` computes it again
+  // from its own fresh reads — what this page rendered is a hint, never the
+  // authority on what may happen.
+  const movement = await readCarrierMovement(orderData.locator);
+  const cancelDecision = cancelEligibility(orderData as any, movement);
+  const hasReturn = orderData.products.some((line: any) => line?.confirmed === true);
+
   return (
     <LocaleProvider locale={locale}>
+      {hasReturn && (
+        <ReturnStatusPanel
+          decision={cancelDecision}
+          orderId={params.id}
+          locator={orderData.locator ?? null}
+          carrier={orderData.carrier ?? null}
+        />
+      )}
       <FeesProvider fees={fees}>
         <ClientOrder
           name={orderData.orderNumber}

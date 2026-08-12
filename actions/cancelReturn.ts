@@ -1,7 +1,7 @@
 "use server";
 
 import axios from "axios";
-import { getOrderById, cancelShopifyReturn, resetOrderReturn } from "@/db/queries";
+import { getOrderByIdFresh, cancelShopifyReturn, resetOrderReturn } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { cancelEligibility, type CancelBlockedReason } from "@/lib/cancelEligibility";
 import { readCarrierMovement } from "./shipping";
@@ -25,7 +25,7 @@ export type CancelResult =
  *
  *   1. Amphora cancel  — FATAL. The only booking either lane lets us release.
  *   2. Shopify cancel  — continue on failure, alert a human.
- *   3. Release hold    — best effort, never throws.
+ *   3. Release hold    — never throws; continue on failure, alert a human.
  *   4. Stripe refund   — continue on failure, alert a human.
  *   5. Reset our rows.
  *   6. Email the customer.
@@ -44,7 +44,15 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
     return { ok: false, reason: "forbidden" };
   }
 
-  const order = await getOrderById(orderId);
+  // `getOrderById` is memoized by React `cache()` for the lifetime of one
+  // render pass — right for a page reading an order from several components,
+  // wrong here: this ACTS on what it reads (refund, settle, reset), and a
+  // warm serverless instance replaying a stale snapshot is exactly the
+  // incident `getOrderByIdFresh` exists to prevent (see db/queries.ts). A
+  // stale `refunded: false` would walk through the already-settled gate into
+  // a second refund; a stale `returnStatus` would walk through in-transit
+  // into refunding a garment already on its way to us.
+  const order = await getOrderByIdFresh(orderId);
   const movement = await readCarrierMovement(order?.locator);
   const decision = cancelEligibility(order as any, movement);
   if (!decision.cancellable) return { ok: false, reason: decision.reason };
@@ -75,8 +83,17 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
     }
   }
 
-  // 3. Best effort by contract; never throws.
-  await releaseExchangeReservation(orderId);
+  // 3. Never throws, but a `false` means the hold is still live: the
+  //    replacement stock stays frozen behind nothing but this alert once
+  //    `resetOrderReturn` (step 5) drops the row from the dashboard.
+  const released = await releaseExchangeReservation(orderId);
+  if (!released) {
+    await alertOps(
+      `Exchange stock hold not released after cancelling ${(order as any).orderNumber}`,
+      `Order ${orderId} was cancelled by the customer, but releaseExchangeReservation failed. ` +
+        `The replacement garment's stock hold may still be live in Shopify — release it by hand.`
+    );
+  }
 
   // 4. `not-found` is not a failure: a free return had nothing to refund.
   const refund = await refundOrderPayment({

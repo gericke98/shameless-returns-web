@@ -59,7 +59,22 @@ describe("refundOrderPayment", () => {
 
     await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" });
 
-    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${ORDER.id}`);
+    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${ORDER.id}:pi_stored`);
+  });
+
+  it("keys a second, different payment on the same order separately", async () => {
+    // A customer can cancel, start a fresh return, pay again, and cancel that
+    // one too. Keying on the order id alone would reuse the first refund's
+    // idempotency key against a different payment_intent, which Stripe
+    // rejects.
+    const { refundOrderPayment } = await import("@/actions/refundPayment");
+
+    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_first" });
+    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_second" });
+
+    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${ORDER.id}:pi_first`);
+    expect(refunds[1].options.idempotencyKey).toBe(`cancel:${ORDER.id}:pi_second`);
+    expect(refunds[0].options.idempotencyKey).not.toBe(refunds[1].options.idempotencyKey);
   });
 
   it("recovers the payment for a return booked before the column existed", async () => {

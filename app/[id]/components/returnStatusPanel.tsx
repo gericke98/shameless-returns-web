@@ -14,10 +14,38 @@ import type { CancelBlockedReason, CancelDecision } from "@/lib/cancelEligibilit
 export function blockedMessageKey(
   reason: CancelBlockedReason
 ): "blockedInTransit" | "blockedSettled" | "blockedUnreadable" | null {
-  if (reason === "in-transit") return "blockedInTransit";
-  if (reason === "already-settled") return "blockedSettled";
-  if (reason === "carrier-unreadable") return "blockedUnreadable";
-  return null;
+  switch (reason) {
+    case "in-transit":
+      return "blockedInTransit";
+    case "already-settled":
+      return "blockedSettled";
+    case "carrier-unreadable":
+      return "blockedUnreadable";
+    case "no-return":
+      return null;
+    default: {
+      // Exhaustiveness guard: if `CancelBlockedReason` ever gains a value,
+      // this assignment stops compiling instead of silently falling through
+      // to a customer seeing nothing.
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+/** The four reasons `blockedMessageKey` knows how to explain. A failed cancel
+ *  can also report `"carrier-cancel-failed"` or `"forbidden"`, neither of
+ *  which is a `CancelBlockedReason` — those fall back to the generic
+ *  `t.cancel.failed` copy instead of being run through this mapping. */
+const CANCEL_BLOCKED_REASONS: ReadonlyArray<CancelBlockedReason> = [
+  "no-return",
+  "already-settled",
+  "in-transit",
+  "carrier-unreadable",
+];
+
+function isCancelBlockedReason(reason: string): reason is CancelBlockedReason {
+  return CANCEL_BLOCKED_REASONS.indexOf(reason as CancelBlockedReason) !== -1;
 }
 
 type Props = {
@@ -27,11 +55,13 @@ type Props = {
   carrier: string | null;
 };
 
+type FailedKey = "blockedInTransit" | "blockedSettled" | "blockedUnreadable" | "failed";
+
 export function ReturnStatusPanel({ decision, orderId, locator, carrier }: Props) {
   const t = useT();
   const [confirming, setConfirming] = useState(false);
   const [done, setDone] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failedKey, setFailedKey] = useState<FailedKey | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const cancel = () => {
@@ -39,11 +69,22 @@ export function ReturnStatusPanel({ decision, orderId, locator, carrier }: Props
       const result = await cancelReturnFunction(orderId);
       if (result.ok) {
         setDone(true);
-        // The order is now a clean slate; re-read the page so the wizard is
-        // usable again rather than showing state that no longer exists.
-        window.location.reload();
+        setConfirming(false);
+        // No reload here: React 18 batches `setDone(true)` with the state
+        // update below it, so a synchronous reload would unload the document
+        // before the confirmation ever paints and the customer would see
+        // nothing. The customer explicitly asks to leave via the "start a new
+        // request" control instead.
       } else {
-        setFailed(true);
+        // Eligibility can have changed between this page's render and this
+        // click (the parcel got scanned, an admin settled it) — when the
+        // failure reason is one we have specific copy for, show that instead
+        // of the generic "couldn't cancel" message.
+        setFailedKey(
+          isCancelBlockedReason(result.reason)
+            ? blockedMessageKey(result.reason) ?? "failed"
+            : "failed"
+        );
         setConfirming(false);
       }
     });
@@ -66,9 +107,21 @@ export function ReturnStatusPanel({ decision, orderId, locator, carrier }: Props
         </p>
       )}
 
-      {done && <p className="mt-3 font-semibold">{t.cancel.doneTitle}</p>}
-      {failed && <p className="mt-3">{t.cancel.failed}</p>}
-      {blockedKey && <p className="mt-3">{t.cancel[blockedKey]}</p>}
+      {done && (
+        <div className="mt-3">
+          <p className="font-semibold">{t.cancel.doneTitle}</p>
+          <p>{t.cancel.doneBody}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-3 underline"
+          >
+            {t.cancel.startNew}
+          </button>
+        </div>
+      )}
+      {failedKey && !done && <p className="mt-3">{t.cancel[failedKey]}</p>}
+      {blockedKey && !done && <p className="mt-3">{t.cancel[blockedKey]}</p>}
 
       {decision.cancellable && !done && !confirming && (
         <button

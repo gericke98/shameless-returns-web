@@ -149,6 +149,7 @@ export const en: Dictionary = {
     doneTitle: "We've cancelled your return",
     doneBody:
       "We'll refund you to the payment method you used. Please don't use the label we sent you.",
+    startNew: "Start a new request",
     blockedInTransit:
       "Your parcel is already on its way to us, so this return can no longer be cancelled.",
     blockedSettled:

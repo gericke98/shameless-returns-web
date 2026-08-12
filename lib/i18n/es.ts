@@ -150,6 +150,7 @@ export const es = {
     doneTitle: "Hemos cancelado tu devolución",
     doneBody:
       "Te devolveremos el importe en el método de pago que usaste. No utilices la etiqueta que te enviamos.",
+    startNew: "Empezar una nueva solicitud",
     blockedInTransit:
       "Tu paquete ya está de camino hacia nosotros, así que esta devolución ya no se puede cancelar.",
     blockedSettled:

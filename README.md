@@ -205,6 +205,26 @@ conversion, `toEuros` in `app/dashboard/shipping-fees/FeesTable.tsx`, which
 formats the fee inputs in the internal admin table. Do not add any more ad hoc
 `/ 100` or `.toFixed(2)` conversions.
 
+### Applying the payment-intent migration
+
+`orders` gains `stripe_payment_intent`, so a return cancellation can refund
+the customer's card without a human searching Stripe by hand. Apply this
+before deploying the code that reads the column:
+
+```sql
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS stripe_payment_intent text;
+```
+
+Nullable with no backfill: existing rows simply hold no intent. The refund
+path (`actions/refundPayment.ts`) falls back to listing Checkout Sessions by
+the order's email for anything booked before this column existed — Stripe's
+Search API does not cover Checkout Sessions, and the metadata set at checkout
+time is never copied onto the PaymentIntent, so listing is the only recovery
+route for pre-migration orders.
+
+**Status: not yet applied to production.** This statement has not been run
+against the live database.
+
 ### Language switcher (ES/EN)
 
 The customer portal and its transactional emails are available in Spanish

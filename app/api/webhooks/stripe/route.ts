@@ -1,9 +1,12 @@
 import { createShippingLabel } from "@/actions/shipping";
 import { createInternationalReturn, isInternationalOrder } from "@/actions/amphoraReturn";
 import { updateFinalOrder } from "@/actions/updateOrder";
+import db from "@/db/drizzle";
 import { getOrderById } from "@/db/queries";
+import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import { stripe } from "@/lib/stripe";
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
@@ -39,6 +42,22 @@ export async function POST(req: Request) {
         return new NextResponse("Metadata is required", { status: 400 });
       }
       const { id, isCredit } = metadata;
+      // Store the payment before anything else can fail. A cancellation later
+      // needs it to refund without a human searching Stripe by hand.
+      const paymentIntentId =
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : session.payment_intent?.id ?? null;
+      if (paymentIntentId) {
+        try {
+          await db
+            .update(orders)
+            .set({ stripePaymentIntent: paymentIntentId })
+            .where(eq(orders.id, id));
+        } catch (error) {
+          console.error(`Could not store payment intent for order ${id}:`, error);
+        }
+      }
       // Una vez se ha procesado el pago vamos con los siguientes pasos
       try {
         // // First update the database

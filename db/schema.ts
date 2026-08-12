@@ -41,6 +41,11 @@ export const orders = pgTable("orders", {
   exchangeReservationId: text("exchange_reservation_id"),
   // Language the customer chose in the portal; drives the transactional email.
   locale: text("locale"),
+  // The PaymentIntent behind the customer's portal charge, so a cancellation
+  // can refund it without a human searching Stripe. Written by the Stripe
+  // webhook. Null for free returns, and for anything booked before 2026-08-12
+  // — those are recovered by listing sessions for the customer's email.
+  stripePaymentIntent: text("stripe_payment_intent"),
 });
 
 export const ordersRelations = relations(orders, ({ many }) => ({

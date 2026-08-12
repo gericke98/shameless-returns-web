@@ -1046,3 +1046,79 @@ export async function getProducts() {
     throw error;
   }
 }
+
+/**
+ * Cancel a Shopify return.
+ *
+ * `returnCancel(id: ID!)` takes the id and nothing else — confirmed by schema
+ * introspection against 2025-01.
+ *
+ * Reports failure rather than throwing. Its only caller has already cancelled
+ * the Amphora return and cannot undo that, so it must be able to carry on and
+ * alert a human instead of dying mid-chain.
+ */
+export async function cancelShopifyReturn(
+  returnId: string
+): Promise<{ success: boolean; errors?: unknown }> {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+
+  const query = `
+    mutation CancelReturn($id: ID!) {
+      returnCancel(id: $id) {
+        return { id status }
+        userErrors { field message }
+      }
+    }
+  `;
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables: { id: returnId } }),
+    });
+    const data = await response.json();
+    const userErrors = data?.data?.returnCancel?.userErrors ?? [];
+
+    if (data.errors || userErrors.length > 0) {
+      console.error("Error cancelling return:", data.errors || userErrors);
+      return { success: false, errors: data.errors || userErrors };
+    }
+    return { success: true };
+  } catch (error) {
+    console.error("Fetch error cancelling return:", error);
+    return { success: false, errors: error };
+  }
+}
+
+/**
+ * Put an order back to the state it was in before the customer submitted.
+ *
+ * NOT `updateFinalOrder(revert)`. That path refuses to reset any row carrying a
+ * `return_id` — a guard added after #310957, where a catch-all revert wiped a
+ * live Shopify return and left the customer with nothing. The guard is correct
+ * and stays. This function is the deliberate counterpart: it runs only after
+ * eligibility has been verified and the Shopify return has actually been
+ * cancelled, so clearing the id records reality rather than hiding it.
+ */
+export async function resetOrderReturn(orderId: string): Promise<void> {
+  await db
+    .update(orders)
+    .set({ locator: null, carrier: null, carrierUrl: null, returnStatus: null })
+    .where(eq(orders.id, orderId));
+
+  await db
+    .update(productsOrder)
+    .set({
+      confirmed: false,
+      return_id: null,
+      return_line_item_id: null,
+      action: null,
+      reason: null,
+      notes: null,
+      new_variant_id: null,
+      new_variant_title: null,
+    })
+    .where(eq(productsOrder.orderId, orderId));
+}

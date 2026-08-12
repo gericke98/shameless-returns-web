@@ -288,6 +288,21 @@ export async function approveAmphoraReturn(
   return data.return_order;
 }
 
+/**
+ * Cancel a return. Verified live 2026-08-11: the record then disappears from
+ * `GET /returns` entirely.
+ *
+ * Throws on a non-2xx (axios default), deliberately — `cancelReturnFunction`
+ * treats a failure here as fatal and aborts before any money moves.
+ */
+export async function cancelAmphoraReturn(returnId: string): Promise<AmphoraReturn> {
+  const data = await amphoraRequest<{ return_order: AmphoraReturn }>(
+    "PATCH",
+    `/returns/${encodeURIComponent(returnId)}/cancel`,
+  );
+  return data.return_order;
+}
+
 /** Create an outbound order (the replacement leg of an exchange). */
 export async function createAmphoraOrder(input: CreateOrderInput): Promise<unknown> {
   const order = {

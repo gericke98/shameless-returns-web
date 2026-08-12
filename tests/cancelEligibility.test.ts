@@ -29,6 +29,34 @@ describe("cancelEligibility", () => {
     });
   });
 
+  it("refuses when products key is missing", () => {
+    expect(cancelEligibility({}, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "no-return",
+    });
+  });
+
+  it("refuses when products is not an array", () => {
+    expect(cancelEligibility({ products: "not-an-array" as any }, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "no-return",
+    });
+  });
+
+  it("refuses when products is a non-array object", () => {
+    expect(cancelEligibility({ products: { confirmed: true } as any }, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "no-return",
+    });
+  });
+
+  it("refuses when products is a number", () => {
+    expect(cancelEligibility({ products: 123 as any }, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "no-return",
+    });
+  });
+
   it("refuses once an admin has settled a line", () => {
     // validateReturn set this: a refund was issued, a gift card minted, or the
     // replacement exchange order created.

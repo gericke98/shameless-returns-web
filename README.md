@@ -222,8 +222,11 @@ Search API does not cover Checkout Sessions, and the metadata set at checkout
 time is never copied onto the PaymentIntent, so listing is the only recovery
 route for pre-migration orders.
 
-**Status: not yet applied to production.** This statement has not been run
-against the live database.
+**Status: applied to production 2026-08-12.** Run against the Neon database
+`ShamelessReturns` (the project holds a second database on the same branch —
+this is the one the app uses). 559 rows before and after, all holding null in
+the new column, which is the expected state: nothing backfills it and only new
+payments write it.
 
 ### Language switcher (ES/EN)
 

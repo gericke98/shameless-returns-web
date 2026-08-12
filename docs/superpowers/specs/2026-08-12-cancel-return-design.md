@@ -84,10 +84,10 @@ trigger a refund against their card.
 
 ```
 0. Re-check eligibility server-side, from fresh reads
-1. Void the carrier booking          <-- FAILURE ABORTS, nothing else runs
-      Spain         -> Correos BajaOp(codCertificado = orders.locator)
-                       AND Amphora PATCH /returns/{id}/cancel
-      International -> Amphora PATCH /returns/{id}/cancel
+1. Cancel the Amphora return         <-- FAILURE ABORTS, nothing else runs
+      Spain         -> the EXTERNAL pre-registration
+      International -> the collection
+   (Correos labels cannot be cancelled at all — see below)
 2. Shopify returnCancel
 3. releaseExchangeReservation(orderId)
 4. Stripe refund
@@ -95,20 +95,28 @@ trigger a refund against their card.
 6. Email the customer, in their locale
 ```
 
-**Step 1 aborts the whole operation.** We must never refund a customer while
-their label still works: they would be paid *and* holding a live pre-paid
-booking to our warehouse. If the carrier will not release it, nothing else
-changes and the customer is told to contact us — the return they had is still
-intact and still theirs.
+**Step 1 aborts the whole operation.** It is the one reversal that tells the
+warehouse to stop expecting a parcel, and it is the only booking either carrier
+path lets us release. If Amphora will not cancel, nothing else changes and the
+customer is told to contact us — the return they had is still intact and still
+theirs.
+
+Note what step 1 can **not** promise. The original design had it void the
+Correos label first, so that no refund was ever issued against a working label.
+That guarantee is unavailable: Correos has no cancellation we can reach (below),
+so for a Spanish return the label stays live no matter what we do. What
+protects us instead is the eligibility gate — a parcel Correos has never
+scanned is a parcel the customer still has.
 
 **Past step 1 the logic inverts.** The label is dead, so the customer is owed
 their money whatever else fails. Steps 2–4 each continue on failure rather than
 abort, because the alternative leaves someone with a voided label and no
 refund — strictly the worst outcome available.
 
-**Spain needs two cancellations, not one.** Since `cbcf511` a domestic return is
-both a Correos label and an Amphora EXTERNAL pre-registration. Cancelling only
-the label leaves Amphora expecting a parcel forever.
+**Spain has only one cancellation available.** Since `cbcf511` a domestic return
+is both a Correos label and an Amphora EXTERNAL pre-registration. Only the
+Amphora side can be cancelled, so that is the one that must not be skipped —
+without it the warehouse expects a parcel forever.
 
 **Step 5 cannot reuse `updateFinalOrder(revert)`.** That path refuses outright
 to reset any row carrying a `return_id`:
@@ -225,15 +233,48 @@ cancellation email — is a key in both dictionaries in `lib/i18n`, and the emai
 is sent in `orders.locale` exactly as the confirmation email is. A customer who
 did the whole return in English must not be told it was cancelled in Spanish.
 
-## The stale label
+## The stale label — the residual risk, now measured
 
-A cancelled Correos label has already been emailed as a PDF. If `BajaOp` truly
-voids it, shipping on it fails at the counter. If it does not, a parcel can
-still arrive at Algete against a cancelled return.
+A cancelled Spanish return leaves a **working** Correos label in the customer's
+inbox. This was probed live on 2026-08-12 and is settled, not assumed:
 
-The cancellation email says plainly that the old label no longer works and a new
-return needs a new label. That is a mitigation in wording, not in code, and it
-is the residual risk of this feature.
+| Attempt | Result |
+| --- | --- |
+| `BajaOp(codCertificado = <our locator>)` | `Resultado 1`, error 502, "The shipment is not pre-registered in PS2C." |
+| `BajaOp(codCertificado = <our CodExpedicion>)` | same 502 |
+| `BajaOp(codCertificado = <nonexistent code>)` | same 502 — so 502 is not a "not found" |
+| `AnularOp(Oid="", Eid="", codCertificado = <our locator>)` | `Resultado 0` — **and nothing happened** |
+| `AnularOp(Oid="AZXT", Eid="AZXT", …)` | 502 again |
+
+The `Resultado 0` is the dangerous one: it looks like success. Two independent
+reads afterwards proved it was not. `DocumentacionAduaneraCN23CP71Op` still
+found the shipment with its original message, and `SolicitudEtiquetaOp` still
+returned `Resultado 0` **with the label PDF**. Correos tracking was also
+unchanged, still a single `PRE-ADMISIÓN / Prerregistrado` event.
+
+Accepted, ignored, and indistinguishable from success by the response alone —
+the same failure mode as Amphora's `carrier_data` returning 201 while silently
+dropping the field. **Never conclude an external write applied from its own
+status code; verify through a second, independent read.**
+
+That the identifier is right was proved separately, so 502 cannot be blamed on
+it: `DocumentacionAduaneraCN23CP71Op(codCertificado = <our locator>)` located
+the shipment and objected only that a domestic `S0132` product carries no
+CN23/CP71 — a correct answer about a real record. `codCertificado` is the
+`CodEnvio`. `BajaOp` simply operates on a store ("PS2C") our pre-registrations
+do not live in, and `AnularOp` needs `Oid`/`Eid` that appear in no request or
+response available to us.
+
+So the mitigation is wording, and only wording: the cancellation email states
+plainly that the previous label must not be used and that a new return issues a
+new one. If a customer ships on the old label anyway, the parcel arrives at
+Algete against a return that no longer exists, and it becomes a warehouse
+exception like any other unexpected parcel.
+
+Worth revisiting if it bites: because a cancelled locator stays readable, a
+periodic check could catch exactly this — a locator belonging to a cancelled
+return that reaches `admitido` means the customer shipped anyway. Not in scope
+here; noted so the option is not rediscovered from scratch.
 
 ## Modules
 
@@ -241,7 +282,7 @@ is the residual risk of this feature.
 | --- | --- | --- |
 | `lib/cancelEligibility.ts` | **New, pure.** Order row + carrier movement → eligible, or a machine-readable reason. | nothing |
 | `lib/trackingStatus.ts` | Existing. Gains the movement predicate over `TrackingPhase`. | nothing |
-| `actions/shipping.ts` | Gains `cancelCorreosLabel(locator)` (`BajaOp`) and a reachability-preserving tracking read. | Correos |
+| `actions/shipping.ts` | Gains a reachability-preserving tracking read. No label cancellation — Correos exposes none we can reach. | Correos |
 | `actions/amphora.ts` | Gains `cancelAmphoraReturn(returnId)`. | Amphora |
 | `actions/cancelReturn.ts` | **New.** Orchestrates the seven steps. Nothing else calls the externals in this order. | all of the above |
 | `app/[id]/components/returnStatusPanel.tsx` | **New.** Renders status + the button or the reason. | `lib/cancelEligibility` |
@@ -268,8 +309,8 @@ Orchestration with mocked externals — `tests/cancelReturn.test.ts`:
 
 - happy path: Correos voided, Amphora cancelled, Shopify cancelled, hold
   released, refund issued, rows reset, customer emailed
-- a Spanish return cancels **both** Correos and Amphora
-- **Correos `BajaOp` fails → no Shopify call, no refund, rows untouched**
+- a Spanish return cancels the Amphora pre-registration and never calls Correos
+- **Amphora cancel fails → no Shopify call, no refund, rows untouched**
 - Shopify `returnCancel` fails → refund still issued, ops email sent
 - an order that owed nothing → no Stripe call
 - an order with no stored intent → recovered by session lookup
@@ -285,29 +326,39 @@ Existing tests that must stay green: the 16 in `orderSession.test.ts`, the
 ES5 iterator spread reached main and broke two production deploys for nine
 days.
 
-## Open question, to settle with a live probe
+## Appendix — the Correos service, for whoever looks next
 
-**Does `BajaOp` void a pre-registration, and is `codCertificado` the
-`CodEnvio`?**
+There is no public documentation for this service. `developers.correos.es` is
+behind a login, the old `interfacepreregistroenvios` URL redirects into it, and
+the WSDL carries zero `xs:documentation`. Everything below came from reading
+the WSDL and probing it.
 
-The WSDL at `https://preregistroenvios.correos.es/preregistroenvios?wsdl`
-(HTTP Basic, same credentials as `PreRegistro`) declares:
+Fetch the contract with the same HTTP Basic credentials as `PreRegistro`:
+
+```
+https://preregistroenvios.correos.es/preregistroenvios?wsdl
+```
+
+It declares **21 operations**, not the one we use. Relevant ones:
 
 ```
 PeticionAnular : Oid, Eid, codCertificado, IdiomaErrores?
 PeticionBaja   : codCertificado, IdiomaErrores?
-RespuestaBaja  : FechaRespuesta, Resultado, ErroresValidacion?, IdiomaErrores?
+SolicitudEtiqueta            : FechaOperacion, CodEnvio, Care, ModDevEtiqueta …
+SolicitudDocumentacionAduaneraCN23CP71 : codCertificado, IdiomaErrores?
 ```
 
-`AnularOp` is unreachable for us: it requires `Oid` and `Eid`, and
-`PreregistroEnvio` neither accepts nor returns either. `BajaOp` needs only
-`codCertificado`, which is very likely the `CodEnvio` we store as
-`orders.locator`.
+`codCertificado` and `CodEnvio` are the same identifier under two names — every
+post-creation operation takes `codCertificado` and three of them answer with
+`CodEnvio` for that same shipment. `codCertificado` is also the only camelCase
+element in an otherwise PascalCase schema, which dates it as a later addition.
 
-To be proven against a label **we create ourselves on a test order**, the way
-the #38594 end-to-end runs were done. Never against a customer's label: a
-successful probe destroys it.
+Neither cancellation operation is usable; see the stale-label section for the
+probe results. Two things there are worth carrying forward regardless of this
+feature:
 
-If `BajaOp` does not void the label, step 1 for Spain degrades to cancelling
-the Amphora pre-registration only, and the stale-label risk above becomes
-permanent rather than theoretical. Everything else in this design is unchanged.
+- **`Resultado 0` from this service does not mean the write applied.**
+  `AnularOp` returned it while changing nothing.
+- **`SolicitudEtiquetaOp` re-issues the label PDF for any live
+  pre-registration** — a cheap, non-destructive existence check, and the read
+  that disproved the cancellation.

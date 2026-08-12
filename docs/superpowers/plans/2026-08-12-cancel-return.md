@@ -629,19 +629,18 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
-const orderRow: Record<string, any> = { id: "1", locator: "PQ1ES", carrier: "CORREOS" };
-const productRows: Array<Record<string, any>> = [];
-const setCalls: Array<{ table: string; values: Record<string, any> }> = [];
+// Every `.set()` the reset performs, in order. Which table each one targeted is
+// deliberately NOT recorded: the assertions identify updates by the columns
+// they write, which is the behaviour under test, and reaching into Drizzle's
+// internal table symbols to learn the name would couple the test to the ORM's
+// private shape for no gain.
+const setCalls: Array<Record<string, any>> = [];
 
 vi.mock("@/db/drizzle", () => {
-  let current = "";
   const chain: any = {
-    update: (table: any) => {
-      current = table === undefined ? "" : String(table?.[Symbol.for("drizzle:Name")] ?? "");
-      return chain;
-    },
+    update: () => chain,
     set: (values: Record<string, any>) => {
-      setCalls.push({ table: current, values });
+      setCalls.push(values);
       return chain;
     },
     where: () => Promise.resolve(),
@@ -696,8 +695,8 @@ describe("resetOrderReturn", () => {
 
     await resetOrderReturn("1");
 
-    const orderUpdate = setCalls.find((c) => "locator" in c.values);
-    expect(orderUpdate?.values).toMatchObject({
+    const orderUpdate = setCalls.find((c) => "locator" in c);
+    expect(orderUpdate).toMatchObject({
       locator: null,
       carrier: null,
       carrierUrl: null,
@@ -710,8 +709,8 @@ describe("resetOrderReturn", () => {
 
     await resetOrderReturn("1");
 
-    const lineUpdate = setCalls.find((c) => "confirmed" in c.values);
-    expect(lineUpdate?.values).toMatchObject({
+    const lineUpdate = setCalls.find((c) => "confirmed" in c);
+    expect(lineUpdate).toMatchObject({
       confirmed: false,
       return_id: null,
       return_line_item_id: null,
@@ -723,8 +722,8 @@ describe("resetOrderReturn", () => {
 
     await resetOrderReturn("1");
 
-    const lineUpdate = setCalls.find((c) => "confirmed" in c.values);
-    expect(lineUpdate?.values).toMatchObject({
+    const lineUpdate = setCalls.find((c) => "confirmed" in c);
+    expect(lineUpdate).toMatchObject({
       action: null,
       reason: null,
       notes: null,
@@ -1145,9 +1144,79 @@ The only place the reversal order lives. Step 1 aborts everything; past it, each
   - `export type CancelResult = { ok: true } | { ok: false; reason: CancelBlockedReason | "carrier-cancel-failed" | "forbidden" }`
   - `export async function cancelReturnFunction(orderId: string): Promise<CancelResult>`
 
-- [ ] **Step 1: Write the ops alert**
+- [ ] **Step 1: Add the cancellation copy to both dictionaries**
 
-Create `actions/opsAlert.ts`. No test of its own — it is asserted through the orchestrator's tests, which is where its contract actually matters.
+The orchestrator sends the customer's email, so the copy has to exist before it
+compiles. `en.ts` is typed against `es.ts`; adding a key to one and not the
+other is a compile error.
+
+In `lib/i18n/es.ts`, before the closing `} as const;`:
+
+```ts
+  cancel: {
+    heading: "Tu devolución",
+    trackingLabel: "Número de seguimiento",
+    carrierLabel: "Transportista",
+    button: "Cancelar mi devolución",
+    confirmQuestion: "¿Seguro que quieres cancelar?",
+    confirmDetail:
+      "Te devolveremos todo lo que has pagado. La etiqueta que te enviamos dejará de ser válida.",
+    confirmYes: "Sí, cancelar",
+    confirmNo: "No, mantenerla",
+    cancelling: "Cancelando...",
+    doneTitle: "Hemos cancelado tu devolución",
+    doneBody:
+      "Te devolveremos el importe en el método de pago que usaste. No utilices la etiqueta que te enviamos.",
+    blockedInTransit:
+      "Tu paquete ya está de camino hacia nosotros, así que esta devolución ya no se puede cancelar.",
+    blockedSettled:
+      "Ya hemos procesado esta devolución, así que no se puede cancelar. Escríbenos si necesitas ayuda.",
+    blockedUnreadable:
+      "Ahora mismo no podemos comprobar el estado de tu paquete. Inténtalo de nuevo en unos minutos.",
+    failed:
+      "No hemos podido cancelar tu devolución. Escríbenos a hello@shamelesscollective.com con tu número de pedido.",
+    emailSubject: "Hemos cancelado la devolución de tu pedido",
+    emailBody:
+      "Hemos cancelado tu devolución y te reembolsaremos lo que pagaste en el método de pago original.",
+    emailLabelWarning:
+      "IMPORTANTE: la etiqueta de envío que te enviamos ya no es válida. Si quieres devolver algo más adelante, empieza una nueva solicitud y te enviaremos una etiqueta nueva.",
+  },
+```
+
+In `lib/i18n/en.ts`, the same keys with English text:
+
+```ts
+  cancel: {
+    heading: "Your return",
+    trackingLabel: "Tracking number",
+    carrierLabel: "Carrier",
+    button: "Cancel my return",
+    confirmQuestion: "Are you sure you want to cancel?",
+    confirmDetail:
+      "We'll refund everything you paid. The label we sent you will stop working.",
+    confirmYes: "Yes, cancel it",
+    confirmNo: "No, keep it",
+    cancelling: "Cancelling...",
+    doneTitle: "We've cancelled your return",
+    doneBody:
+      "We'll refund you to the payment method you used. Please don't use the label we sent you.",
+    blockedInTransit:
+      "Your parcel is already on its way to us, so this return can no longer be cancelled.",
+    blockedSettled:
+      "We've already processed this return, so it can't be cancelled. Get in touch if you need a hand.",
+    blockedUnreadable:
+      "We can't check on your parcel right now. Please try again in a few minutes.",
+    failed:
+      "We couldn't cancel your return. Please email hello@shamelesscollective.com with your order number.",
+    emailSubject: "We've cancelled the return for your order",
+    emailBody:
+      "We've cancelled your return and will refund what you paid to your original payment method.",
+    emailLabelWarning:
+      "IMPORTANT: the shipping label we sent you is no longer valid. If you'd like to return something later, start a new request and we'll send you a fresh label.",
+  },
+```
+
+Then create `actions/opsAlert.ts`. No test of its own — its contract is asserted through the orchestrator's tests, where the thing that matters is *that an alert is raised on the failure paths*, not how it is transported.
 
 ```ts
 "use server";
@@ -1565,7 +1634,7 @@ async function sendCancellationEmail(order: {
 }
 ```
 
-This references `t.cancel.*`, added in Task 7. Add those dictionary keys **now** if you are running tasks strictly in order, or accept a type error until Task 7 — do not leave it unresolved at commit time.
+`t.cancel.*` comes from Step 1 of this task, so this compiles as written.
 
 - [ ] **Step 5: Run test to verify it passes**
 
@@ -1594,73 +1663,19 @@ git commit -m "feat: cancel a return, reverse it in order, refund the customer"
 - Consumes: `CancelDecision`, `CancelBlockedReason` (Task 2); `cancelReturnFunction` (Task 6)
 - Produces: `export function ReturnStatusPanel(props: { decision: CancelDecision; orderId: string; locator: string | null; carrier: string | null })`
 
-- [ ] **Step 1: Add the dictionary keys**
+- [ ] **Step 1: Confirm the copy is already in place**
 
-In `lib/i18n/es.ts`, before the closing `} as const;`:
+The `cancel:` block was added to both `lib/i18n/es.ts` and `lib/i18n/en.ts` in
+Task 6 Step 1, because the cancellation email needed it to compile. Verify it
+is there before building the panel against it:
 
-```ts
-  cancel: {
-    heading: "Tu devolución",
-    trackingLabel: "Número de seguimiento",
-    carrierLabel: "Transportista",
-    button: "Cancelar mi devolución",
-    confirmQuestion: "¿Seguro que quieres cancelar?",
-    confirmDetail:
-      "Te devolveremos todo lo que has pagado. La etiqueta que te enviamos dejará de ser válida.",
-    confirmYes: "Sí, cancelar",
-    confirmNo: "No, mantenerla",
-    cancelling: "Cancelando...",
-    doneTitle: "Hemos cancelado tu devolución",
-    doneBody:
-      "Te devolveremos el importe en el método de pago que usaste. No utilices la etiqueta que te enviamos.",
-    blockedInTransit:
-      "Tu paquete ya está de camino hacia nosotros, así que esta devolución ya no se puede cancelar.",
-    blockedSettled:
-      "Ya hemos procesado esta devolución, así que no se puede cancelar. Escríbenos si necesitas ayuda.",
-    blockedUnreadable:
-      "Ahora mismo no podemos comprobar el estado de tu paquete. Inténtalo de nuevo en unos minutos.",
-    failed:
-      "No hemos podido cancelar tu devolución. Escríbenos a hello@shamelesscollective.com con tu número de pedido.",
-    emailSubject: "Hemos cancelado la devolución de tu pedido",
-    emailBody:
-      "Hemos cancelado tu devolución y te reembolsaremos lo que pagaste en el método de pago original.",
-    emailLabelWarning:
-      "IMPORTANTE: la etiqueta de envío que te enviamos ya no es válida. Si quieres devolver algo más adelante, empieza una nueva solicitud y te enviaremos una etiqueta nueva.",
-  },
+```bash
+grep -c 'blockedInTransit' lib/i18n/es.ts lib/i18n/en.ts
 ```
 
-In `lib/i18n/en.ts`, the same keys with English text:
-
-```ts
-  cancel: {
-    heading: "Your return",
-    trackingLabel: "Tracking number",
-    carrierLabel: "Carrier",
-    button: "Cancel my return",
-    confirmQuestion: "Are you sure you want to cancel?",
-    confirmDetail:
-      "We'll refund everything you paid. The label we sent you will stop working.",
-    confirmYes: "Yes, cancel it",
-    confirmNo: "No, keep it",
-    cancelling: "Cancelling...",
-    doneTitle: "We've cancelled your return",
-    doneBody:
-      "We'll refund you to the payment method you used. Please don't use the label we sent you.",
-    blockedInTransit:
-      "Your parcel is already on its way to us, so this return can no longer be cancelled.",
-    blockedSettled:
-      "We've already processed this return, so it can't be cancelled. Get in touch if you need a hand.",
-    blockedUnreadable:
-      "We can't check on your parcel right now. Please try again in a few minutes.",
-    failed:
-      "We couldn't cancel your return. Please email hello@shamelesscollective.com with your order number.",
-    emailSubject: "We've cancelled the return for your order",
-    emailBody:
-      "We've cancelled your return and will refund what you paid to your original payment method.",
-    emailLabelWarning:
-      "IMPORTANT: the shipping label we sent you is no longer valid. If you'd like to return something later, start a new request and we'll send you a fresh label.",
-  },
-```
+Expected: `1` for each file. If either is `0`, add the block from Task 6 Step 1
+before continuing — `en.ts` is typed against `es.ts`, so a key in one and not
+the other is a compile error.
 
 - [ ] **Step 2: Write the failing test**
 

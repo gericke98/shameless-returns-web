@@ -15,6 +15,7 @@ import {
   noteForOtherReason,
   toShopifyReturnReason,
 } from "@/lib/shopifyReturnReason";
+import { variantGid } from "@/lib/shopifyIds";
 
 /** The fields of a `productsorder` row this module needs, plus the fulfillment
  *  line item resolved from Shopify. Deliberately structural: callers pass
@@ -146,13 +147,21 @@ export function buildReturnInput(
       };
     });
 
+  // Same double-prefix that cost every exchange its stock hold: `new_variant_id`
+  // is already a GID. Unreachable today because NATIVE_EXCHANGES is off, so
+  // this would have failed `returnCreate` the first time that flag was turned
+  // on. A line whose id will not resolve is dropped, like one with no
+  // fulfillment line item above.
   const exchangeLineItems = options.includeExchangeItems
     ? lines
         .filter((line) => line.action === "CAMBIO" && !!line.new_variant_id)
         .map((line) => ({
-          variantId: `gid://shopify/ProductVariant/${line.new_variant_id}`,
+          variantId: variantGid(line.new_variant_id),
           quantity: Math.max(1, Number(line.quantity) || 1),
         }))
+        .filter(
+          (item): item is ExchangeLineItemInput => item.variantId !== null
+        )
     : [];
 
   return {

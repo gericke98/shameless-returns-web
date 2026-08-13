@@ -28,14 +28,25 @@ const ORDER = {
   shippingPhone: "+34600000000",
 };
 
+// Ids as `productsorder` actually stores them, which is NOT consistent:
+// `new_variant_id` is written as a full GID, `variant_id` bare. These were
+// "aaa"/"bbb" — placeholders no Shopify id could ever look like, which is
+// exactly why this suite asserted the double-prefixing happily while the hold
+// had never once been placed in production. See tests/exchangeReservationGid.test.ts.
+const GID_STORED = "gid://shopify/ProductVariant/55904239845702";
+const BARE_STORED = "54793363751238";
+
 const LINES = [
-  { variant_id: "111", new_variant_id: "aaa", action: "CAMBIO", quantity: 1, confirmed: true, refunded: false },
-  { variant_id: "222", new_variant_id: "bbb", action: "CAMBIO", quantity: 1, confirmed: true, refunded: false },
+  { variant_id: "55904239812934", new_variant_id: GID_STORED, action: "CAMBIO", quantity: 1, confirmed: true, refunded: false },
+  { variant_id: "54793363718470", new_variant_id: BARE_STORED, action: "CAMBIO", quantity: 1, confirmed: true, refunded: false },
 ];
 
 describe("reservableLines", () => {
   it("takes the confirmed, unsettled exchange lines", () => {
-    expect(reservableLines(LINES).map((l) => l.new_variant_id)).toEqual(["aaa", "bbb"]);
+    expect(reservableLines(LINES).map((l) => l.new_variant_id)).toEqual([
+      GID_STORED,
+      BARE_STORED,
+    ]);
   });
 
   it("ignores plain returns — there is nothing to send back", () => {
@@ -80,9 +91,11 @@ describe("buildReservationDraft", () => {
   const draft = buildReservationDraft(ORDER, LINES, "2026-08-29T12:00:00.000Z");
 
   it("reserves every replacement garment in ONE draft", () => {
+    // Both shapes normalise to the same canonical GID — no double prefix on the
+    // stored-as-GID line, and the bare one still gets wrapped.
     expect(draft.lineItems).toEqual([
-      { variantId: "gid://shopify/ProductVariant/aaa", quantity: 1, requiresShipping: true },
-      { variantId: "gid://shopify/ProductVariant/bbb", quantity: 1, requiresShipping: true },
+      { variantId: "gid://shopify/ProductVariant/55904239845702", quantity: 1, requiresShipping: true },
+      { variantId: "gid://shopify/ProductVariant/54793363751238", quantity: 1, requiresShipping: true },
     ]);
   });
 

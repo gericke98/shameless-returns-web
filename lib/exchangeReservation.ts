@@ -15,6 +15,8 @@
  * this is a pure stock mechanism that can be switched off without trace.
  */
 
+import { variantGid } from "@/lib/shopifyIds";
+
 /** Fields this module needs from a `productsorder` row. Structural, so callers
  *  pass their own rows unchanged. */
 export type ExchangeLine = {
@@ -93,11 +95,21 @@ export function buildReservationDraft(
   const held = reservableLines(lines);
 
   return {
-    lineItems: held.map((line) => ({
-      variantId: `gid://shopify/ProductVariant/${line.new_variant_id}`,
-      quantity: Math.max(1, Number(line.quantity) || 1),
-      requiresShipping: true,
-    })),
+    // `new_variant_id` is stored as a full GID; prefixing it again produced an
+    // id Shopify refused, which failed the draft and left the stock unheld —
+    // silently, because the caller is best-effort. A line whose id cannot be
+    // resolved is dropped rather than sent malformed: a partial hold beats one
+    // junk row costing every other garment its reservation.
+    lineItems: held
+      .map((line) => ({
+        variantId: variantGid(line.new_variant_id),
+        quantity: Math.max(1, Number(line.quantity) || 1),
+        requiresShipping: true,
+      }))
+      .filter(
+        (item): item is { variantId: string; quantity: number; requiresShipping: boolean } =>
+          item.variantId !== null
+      ),
     reserveInventoryUntil: expiryIso,
     // A stock hold, not an offer. Shopify can email a draft order as an
     // invoice; the customer must never receive one for this.

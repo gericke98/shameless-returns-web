@@ -23,6 +23,7 @@ import {
 import {
   buildReturnInput,
   matchReturnLineItems,
+  presentmentRateFromOrder,
   type ReturnableLine,
 } from "@/lib/returnPayload";
 import { FulfillmentLineItem, OrderData, OrderLineItem } from "@/types";
@@ -387,9 +388,14 @@ export async function updateFinalOrder(
   // customer is exchanging FOR, which is what links the replacement to the
   // return in Shopify. See docs — it changes where the warehouse sees the
   // replacement, so it stays dark until Amphora confirms they act on it.
+  // The fee is priced in EUR but has to be declared in the currency the
+  // customer was shown, taken from the order's own money set. See
+  // `presentmentRateFromOrder` — a hardcoded EUR here cost order #310741 its
+  // whole return.
   const result = await createReturn(
     buildReturnInput(String(totalOrder.id), lines, returnFeeEuros, {
       includeExchangeItems: process.env.NATIVE_EXCHANGES === "true",
+      presentment: presentmentRateFromOrder(totalOrder.total_price_set),
     })
   );
 

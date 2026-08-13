@@ -1140,6 +1140,15 @@ export async function resetOrderReturn(orderId: string): Promise<void> {
       notes: null,
       new_variant_id: null,
       new_variant_title: null,
+      // `changed` belongs to the selection being cleared, not to the history
+      // being kept. It is what the portal RENDERS from: productLineClient
+      // strikes the size through on `changed`, and shows the replacement
+      // beside it only when `new_variant_title` survives too. Clearing one
+      // without the other left #311258's line struck through with nothing
+      // next to it — an exchange for nothing, on a return already cancelled
+      // and refunded. `refunded` on the lines is still deliberately kept
+      // (see above); this is not that.
+      changed: false,
     })
     .where(eq(productsOrder.orderId, orderId));
 }

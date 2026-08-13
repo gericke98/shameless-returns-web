@@ -170,6 +170,24 @@ describe("resetOrderReturn", () => {
     });
   });
 
+  it("clears the exchange flag, not just the exchange data", async () => {
+    // `changed` is the ONLY selection column this reset used to leave behind,
+    // and it is the one the portal renders from: `productLineClient` strikes
+    // the size through whenever `changed` is true, and shows the replacement
+    // beside it only when `new_variant_title` is also set. Clearing the latter
+    // without the former left a cancelled line struck through with nothing
+    // next to it — the customer's garment displayed as an exchange for
+    // nothing, on a return they had just cancelled.
+    //
+    // Order #311258 (elvidibu, cancelled 2026-08-13) is the row that showed it.
+    const { resetOrderReturn } = await import("@/db/queries");
+
+    await resetOrderReturn("1");
+
+    const lineUpdate = setCalls.find((c) => "confirmed" in c);
+    expect(lineUpdate).toMatchObject({ changed: false });
+  });
+
   it("clears the customer's selections so they get a clean wizard", async () => {
     const { resetOrderReturn } = await import("@/db/queries");
 

@@ -63,7 +63,12 @@ vi.mock("@/actions/payments", () => ({
 // Its own duplicate guard is already tested; here it must not be what saves us.
 vi.mock("@/actions/updateOrder", () => ({ updateFinalOrder: async () => {} }));
 
-vi.mock("@/db/queries", () => ({ getOrderById: async () => order }));
+vi.mock("@/db/queries", () => ({
+  getOrderById: async () => order,
+  getOrderByIdFresh: async () => order,
+  saveReturnLabel: async () => {},
+  getLatestReturnLabel: async () => null,
+}));
 
 // Persist what the code writes, so the second submit sees the first one's work.
 vi.mock("@/db/drizzle", () => {

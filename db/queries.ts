@@ -2,8 +2,8 @@
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
 import db from "./drizzle";
-import { eq } from "drizzle-orm";
-import { orders, productsOrder } from "./schema";
+import { desc, eq } from "drizzle-orm";
+import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
 
@@ -1151,4 +1151,47 @@ export async function resetOrderReturn(orderId: string): Promise<void> {
       changed: false,
     })
     .where(eq(productsOrder.orderId, orderId));
+}
+
+/**
+ * Keep the Correos label PDF so it can be sent again.
+ *
+ * Best-effort by construction: the parcel is already registered by the time
+ * this runs, so failing to file the PDF must never fail the return. The cost
+ * of losing it is only that a re-send needs a fresh registration — which is
+ * exactly the situation this exists to end, but it is not worth a customer's
+ * return.
+ */
+export async function saveReturnLabel(
+  orderId: string,
+  trackingNumber: string,
+  pdfBase64: string
+): Promise<void> {
+  try {
+    await db.insert(returnLabels).values({ orderId, trackingNumber, pdfBase64 });
+  } catch (error: any) {
+    console.error(
+      `Could not store the label PDF for order ${orderId} (${trackingNumber}) — a re-send will need a new registration:`,
+      error?.message || error
+    );
+  }
+}
+
+/**
+ * The most recently registered label for an order, or null if we hold none.
+ *
+ * Newest wins: a re-registration supersedes the older parcel, and that is the
+ * one whose tracking is on `orders.locator` and in the customer's hands.
+ *
+ * Null for anything registered before 2026-08-17 — those PDFs were never kept
+ * and cannot be recovered from Correos.
+ */
+export async function getLatestReturnLabel(orderId: string) {
+  const [label] = await db
+    .select()
+    .from(returnLabels)
+    .where(eq(returnLabels.orderId, orderId))
+    .orderBy(desc(returnLabels.createdAt), desc(returnLabels.id))
+    .limit(1);
+  return label ?? null;
 }

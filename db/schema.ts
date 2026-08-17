@@ -87,6 +87,50 @@ export const productsOrderRelations = relations(productsOrder, ({ one }) => ({
   }),
 }));
 
+/**
+ * The Correos label PDF, kept so it can be sent again.
+ *
+ * Correos returns the PDF exactly once, in the `<Fichero>` of the PreRegistro
+ * response, and we used to throw it away and keep only the tracking string.
+ * That made a lost confirmation email unrecoverable: the only way to put a
+ * label back in a customer's hands was to register a WHOLE NEW PARCEL. During
+ * the August 2026 email outage that cost five real registrations for two
+ * customers, and it permanently desynced the warehouse — an Amphora EXTERNAL
+ * return pins its `carrier_number` at approval and will not accept a new one
+ * (see docs + the amphora-pins-carrier-number note), so the new label the
+ * customer holds no longer matches the parcel Algete is expecting.
+ *
+ * DELIBERATELY ITS OWN TABLE, NOT A COLUMN ON `orders`. Drizzle's
+ * `db.query.orders.findFirst()` builds an explicit column list from this file
+ * and selects EVERY declared column, so a ~139KB base64 PDF on `orders` would
+ * be read on every order lookup in the portal. It is also intentionally not
+ * wired into `ordersRelations`: nothing should be able to pull it in with a
+ * casual `with:`.
+ *
+ * History is kept (one row per registration, newest wins) so a re-registered
+ * parcel does not erase the label the customer may already be holding.
+ */
+export const returnLabels = pgTable(
+  "return_labels",
+  {
+    id: serial("id").primaryKey(),
+    orderId: text("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    // The Correos CodEnvio this PDF is the label for. Not unique: a
+    // re-registration is a different parcel and gets its own row.
+    trackingNumber: text("tracking_number").notNull(),
+    // Base64 as Correos hands it over, ready to attach to a Postmark message.
+    pdfBase64: text("pdf_base64").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    orderIdx: index("return_labels_order_id_idx").on(table.orderId),
+  })
+);
+
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
   username: text("username").notNull().unique(),

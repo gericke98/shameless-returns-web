@@ -1,6 +1,11 @@
 "use server";
 import db from "@/db/drizzle";
-import { getOrderById } from "@/db/queries";
+import {
+  getLatestReturnLabel,
+  getOrderById,
+  getOrderByIdFresh,
+  saveReturnLabel,
+} from "@/db/queries";
 import { orders } from "@/db/schema";
 import { base64img } from "@/placeholder";
 import { buildCorreosEmail, type ExchangeInfo } from "@/lib/emails";
@@ -13,6 +18,7 @@ import {
   type CarrierMovement,
   type TrackingStatus,
 } from "@/lib/trackingStatus";
+import { extractLabelPdf } from "@/lib/correosLabel";
 import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
@@ -221,6 +227,10 @@ async function sendShippingLabel(soapBody: string): Promise<ShippingResponse> {
   }
 }
 
+/**
+ * Takes the PDF itself rather than the SOAP envelope it arrived in, so a
+ * re-send from `return_labels` and a first send from Correos are the same code.
+ */
 async function sendEmail(
   base64Pdf: string,
   recipientEmail: string,
@@ -228,22 +238,9 @@ async function sendEmail(
   locale: Locale,
   exchange: ExchangeInfo | null
 ): Promise<ShippingResponse> {
-  const base64Match = base64Pdf.match(/<Fichero>(.*?)<\/Fichero>/);
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
-
-  // Told apart deliberately. These two need completely different responses:
-  // one is our configuration, the other is Correos handing back a registered
-  // parcel with no label to put on it — which `sendShippingLabel` does not
-  // check for, because it validates <Resultado> and <CodEnvio> only.
   if (!postmarkToken) {
     return { status: 500, error: "POSTMARK_SERVER_TOKEN is not set" };
-  }
-  if (!base64Match) {
-    return {
-      status: 500,
-      error:
-        "Correos returned no <Fichero>, so there is no label PDF to attach — the parcel IS registered",
-    };
   }
 
   try {
@@ -255,7 +252,7 @@ async function sendEmail(
       Attachments: [
         {
           Name: "Return_label.pdf",
-          Content: base64Match[1],
+          Content: base64Pdf,
           ContentType: "application/pdf",
         },
         {
@@ -357,15 +354,29 @@ export async function createShippingLabel(id: string): Promise<number> {
       .set({ locator: trackingNumber })
       .where(eq(orders.id, id));
 
+    // File the PDF BEFORE emailing it. Correos hands the label over exactly
+    // once and we cannot ask for it again, so if the email fails we still want
+    // the means to re-send without registering a second parcel.
+    const labelPdf = extractLabelPdf(shippingResponse.data);
+    if (labelPdf) {
+      await saveReturnLabel(id, trackingNumber, labelPdf);
+    }
+
     // Language the customer chose in the portal, persisted on the order when the
     // return was created (see actions/return.ts). `readLocale` falls back to "es".
-    const emailResponse = await sendEmail(
-      shippingResponse.data,
-      order.email,
-      name,
-      readLocale(order.locale),
-      exchangeFromProducts((order as any).products)
-    );
+    const emailResponse = labelPdf
+      ? await sendEmail(
+          labelPdf,
+          order.email,
+          name,
+          readLocale(order.locale),
+          exchangeFromProducts((order as any).products)
+        )
+      : {
+          status: 500,
+          error:
+            "Correos returned no <Fichero>, so there is no label PDF to attach — the parcel IS registered",
+        };
     if (emailResponse.status !== 200) {
       console.error(
         `Correos label ${trackingNumber} registered for order ${id} but the confirmation email failed (status ${emailResponse.status}). Customer needs the label sending manually.`
@@ -410,6 +421,58 @@ export async function createShippingLabel(id: string): Promise<number> {
     );
   }
 
+  return 200;
+}
+
+/**
+ * Send a customer their existing return label again — no new parcel.
+ *
+ * The point of storing the PDF. Before this, "re-send the label" meant
+ * registering a SECOND Correos parcel: a real shipment that can never be
+ * cancelled, a second charge, and — because an Amphora EXTERNAL return pins its
+ * `carrier_number` at approval and refuses a new one — a warehouse permanently
+ * expecting a tracking number the customer no longer holds.
+ *
+ * Deliberately NOT gated on `orders.locator`: the whole point is to reach
+ * someone who already has a registered parcel. It is safe to run twice — the
+ * worst case is a duplicate email about a parcel that does exist, which is the
+ * cheap direction.
+ *
+ * Returns 409 when we hold no PDF (anything registered before 2026-08-17, or a
+ * response that carried no `<Fichero>`). That is the case where a new
+ * registration really is the only option, and it should be a deliberate choice.
+ */
+export async function resendReturnLabel(id: string): Promise<number> {
+  const order = await getOrderByIdFresh(id);
+  if (!order) return 404;
+
+  const label = await getLatestReturnLabel(id);
+  if (!label) {
+    console.error(
+      `No stored label PDF for order ${id} — it predates label storage, or Correos sent no <Fichero>. Re-sending requires registering a new parcel.`
+    );
+    return 409;
+  }
+
+  const { name } = parseShippingName(order.shippingName);
+  const response = await sendEmail(
+    label.pdfBase64,
+    order.email,
+    name,
+    readLocale(order.locale),
+    exchangeFromProducts((order as any).products)
+  );
+
+  if (response.status !== 200) {
+    console.error(
+      `Re-send failed for order ${id} (label ${label.trackingNumber}): ${response.error ?? response.status}`
+    );
+    return response.status;
+  }
+
+  console.log(
+    `[labels] re-sent stored label ${label.trackingNumber} for order ${id} to ${order.email}`
+  );
   return 200;
 }
 

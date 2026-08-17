@@ -48,7 +48,12 @@ const ORDER: Record<string, any> = {
 
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => ORDER,
+  getOrderByIdFresh: async () => ORDER,
   getVariantSkusByIds: async () => ({ "1": "SKU-1" }),
+  // Label storage is not what this file pins; its own behaviour lives in
+  // tests/returnLabelStorage.test.ts.
+  saveReturnLabel: async () => {},
+  getLatestReturnLabel: async () => null,
 }));
 
 vi.mock("@/db/drizzle", () => {

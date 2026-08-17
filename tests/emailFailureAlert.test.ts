@@ -55,7 +55,12 @@ const CORREOS_NO_PDF = `<Resultado>0</Resultado><CodEnvio>${TRACKING}</CodEnvio>
 const behaviour = { correos: CORREOS_OK, emailFails: false };
 const alerts: { subject: string; body: string }[] = [];
 
-vi.mock("@/db/queries", () => ({ getOrderById: async () => ORDER }));
+vi.mock("@/db/queries", () => ({
+  getOrderById: async () => ORDER,
+  getOrderByIdFresh: async () => ORDER,
+  saveReturnLabel: async () => {},
+  getLatestReturnLabel: async () => null,
+}));
 
 vi.mock("@/db/drizzle", () => {
   const chain: any = {

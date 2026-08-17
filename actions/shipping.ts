@@ -17,6 +17,7 @@ import { readLocale, type Locale } from "@/lib/i18n";
 import axios from "axios";
 import { eq } from "drizzle-orm";
 import { preregisterDomesticReturn } from "./amphoraReturn";
+import { alertOps } from "./opsAlert";
 
 // Types
 type ShippingResponse = {
@@ -229,8 +230,20 @@ async function sendEmail(
 ): Promise<ShippingResponse> {
   const base64Match = base64Pdf.match(/<Fichero>(.*?)<\/Fichero>/);
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
-  if (!postmarkToken || !base64Match) {
-    return { status: 500, error: "Missing required data" };
+
+  // Told apart deliberately. These two need completely different responses:
+  // one is our configuration, the other is Correos handing back a registered
+  // parcel with no label to put on it — which `sendShippingLabel` does not
+  // check for, because it validates <Resultado> and <CodEnvio> only.
+  if (!postmarkToken) {
+    return { status: 500, error: "POSTMARK_SERVER_TOKEN is not set" };
+  }
+  if (!base64Match) {
+    return {
+      status: 500,
+      error:
+        "Correos returned no <Fichero>, so there is no label PDF to attach — the parcel IS registered",
+    };
   }
 
   try {
@@ -263,8 +276,15 @@ async function sendEmail(
     });
     return { status: result.status };
   } catch (error: any) {
-    console.error("Email error:", error.response?.data || error.message);
-    return { status: 500, error: "Failed to send email" };
+    // Carry Postmark's own words up to the alert. "Failed to send email" is
+    // what three days of this outage looked like from the outside; the reason
+    // it actually refused is the whole diagnosis.
+    const detail =
+      typeof error?.response?.data === "object"
+        ? JSON.stringify(error.response.data)
+        : error?.response?.data || error?.message || String(error);
+    console.error("Email error:", detail);
+    return { status: 500, error: `Postmark refused the message: ${detail}` };
   }
 }
 
@@ -349,6 +369,29 @@ export async function createShippingLabel(id: string): Promise<number> {
     if (emailResponse.status !== 200) {
       console.error(
         `Correos label ${trackingNumber} registered for order ${id} but the confirmation email failed (status ${emailResponse.status}). Customer needs the label sending manually.`
+      );
+
+      // Swallowing this is correct — the parcel is registered and reporting
+      // failure would revert a live return. Swallowing it QUIETLY is what let
+      // six customers go three days with a return they had never been told
+      // about. The log line above expires in about an hour; this does not.
+      await alertOps(
+        `[returns] LABEL BUT NO EMAIL — ${order.orderNumber}`,
+        [
+          `A Correos label is registered and the customer has not been told.`,
+          ``,
+          `Order:     ${order.orderNumber} (id ${id})`,
+          `Customer:  ${order.email}`,
+          `Tracking:  ${trackingNumber}`,
+          ``,
+          `Failure:   ${emailResponse.error ?? `email status ${emailResponse.status}`}`,
+          ``,
+          `The return itself is fine — Shopify, the label and the warehouse`,
+          `pre-registration all exist. The customer is simply holding a parcel`,
+          `they cannot send. We do not store the label PDF, so it cannot be`,
+          `re-sent from the dashboard: re-register the label or fetch the PDF`,
+          `from Correos for this tracking number, then email it.`,
+        ].join("\n")
       );
     }
 

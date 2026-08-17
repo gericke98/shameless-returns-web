@@ -10,6 +10,7 @@ import { normalizeCountry } from "@/lib/countries";
 import { buildAmphoraEmail, type ExchangeInfo } from "@/lib/emails";
 import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale, type Locale } from "@/lib/i18n";
+import { alertOps } from "./opsAlert";
 import {
   amphoraOrderIdFromShopifyId,
   approveAmphoraReturn,
@@ -35,9 +36,11 @@ async function sendAmphoraConfirmationEmail(
   ret: AmphoraReturn | undefined,
   locale: Locale,
   exchange: ExchangeInfo | null
-): Promise<number> {
+): Promise<{ status: number; error?: string }> {
   const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
-  if (!postmarkToken) return 500;
+  if (!postmarkToken) {
+    return { status: 500, error: "POSTMARK_SERVER_TOKEN is not set" };
+  }
 
   const emailData = {
     ...buildAmphoraEmail(
@@ -58,10 +61,16 @@ async function sendAmphoraConfirmationEmail(
         "X-Postmark-Server-Token": postmarkToken,
       },
     });
-    return res.status;
+    return { status: res.status };
   } catch (error: any) {
-    console.error("Amphora email error:", error.response?.data || error.message);
-    return 500;
+    // Postmark's own words, carried up to the alert. A bare 500 is what made
+    // the August 2026 outage undiagnosable after the logs expired.
+    const detail =
+      typeof error?.response?.data === "object"
+        ? JSON.stringify(error.response.data)
+        : error?.response?.data || error?.message || String(error);
+    console.error("Amphora email error:", detail);
+    return { status: 500, error: `Postmark refused the message: ${detail}` };
   }
 }
 
@@ -242,17 +251,41 @@ export async function createInternationalReturn(id: string): Promise<number> {
 
     // Language the customer chose in the portal, persisted on the order when the
     // return was created (see actions/return.ts). `readLocale` falls back to "es".
-    const emailStatus = await sendAmphoraConfirmationEmail(
+    const emailResult = await sendAmphoraConfirmationEmail(
       order.email,
       order.shippingName,
       ret,
       readLocale(order.locale),
       exchangeFromProducts(products)
     );
-    if (emailStatus !== 200) {
+    if (emailResult.status !== 200) {
       // Best-effort: log loudly for manual follow-up, but the return succeeded.
       console.error(
-        `Amphora return ${id}: collection booked but confirmation email failed (status ${emailStatus}). Customer needs a manual collection/tracking notice.`
+        `Amphora return ${id}: collection booked but confirmation email failed (status ${emailResult.status}). Customer needs a manual collection/tracking notice.`
+      );
+
+      // "Log loudly" was not loud enough: Vercel drops the line within the
+      // hour, and four international customers went unnoticed for three days
+      // in August 2026 behind exactly this branch. Amphora usually emails the
+      // customer their own label, so this is rarely an emergency — but nobody
+      // can make that call if nobody hears about it.
+      await alertOps(
+        `[returns] COLLECTION BUT NO EMAIL — ${order.orderNumber}`,
+        [
+          `An Amphora collection is booked and our confirmation never reached the customer.`,
+          ``,
+          `Order:      ${order.orderNumber} (id ${id})`,
+          `Customer:   ${order.email}`,
+          `Country:    ${order.shippingCountry}`,
+          `Collection: ${ret?.id ?? "(unknown)"}`,
+          `Carrier:    ${ret?.carrier ?? "(not assigned yet)"} ${ret?.carrier_number ?? ""}`.trim(),
+          ``,
+          `Failure:    ${emailResult.error ?? `email status ${emailResult.status}`}`,
+          ``,
+          `The return is fine. Amphora normally emails the customer the label`,
+          `and QR directly, so check whether they already have it before`,
+          `sending anything — and do not book a second collection.`,
+        ].join("\n")
       );
     }
   } catch (error: any) {

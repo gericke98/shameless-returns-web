@@ -3,20 +3,18 @@
 **Send these from `hello@shamelesscollective.com`.** The Gmail MCP session
 expired mid-session, so these are written out rather than created as drafts.
 
-⚠️ **Postmark is currently discarding every message** (accepts the API call,
-returns `ErrorCode 0 "OK"` + a MessageID, then the message does not exist and
-never sends). **Fix the Postmark account first** — otherwise none of this
-arrives either, and our own system still cannot send anyone a label.
+✅ **Postmark was fixed 2026-08-17 ~18:51Z and sending is verified working.**
 
-Once Postmark is working, the two Spanish customers should get their label from
-**our own system** (it attaches the PDF, which we never store and cannot attach
-by hand). Re-run the recovery; these notes are the personal covering reply.
+✅ **Adrià (#311199) and Iker (#311318) have already been sent their labels by
+our own system** — both DELIVERED (Gmail `250 2.0.0 OK`, `Return_label.pdf`
+attached) at 18:53Z. So drafts 1 and 2 below are now just the personal covering
+reply; the label is already with them.
 
 ---
 
 ## 1. Adrià Costa — `acospe2008@gmail.com` — #311199 — REPLY to his email
 
-Order #311199, exchange, new Correos label `PQAZXT9800005490128110Q`.
+Order #311199, exchange, new Correos label `PQAZXT9800005510128110D`.
 
 ⚠️ **CHECK BEFORE SENDING:** his exchange is recorded as *WITHOUT SHAME **FOREST**
 CREWNECK Medium* → *WITHOUT SHAME **BERRY** CREWNECK Large* — a colour change as
@@ -33,11 +31,11 @@ chose before promising him the Berry.
 > problema en nuestro sistema de correo impidió que te llegara el email con la
 > etiqueta de devolución. No fuiste el único, y ya lo tenemos identificado.
 >
-> Te acabamos de generar una etiqueta nueva y te llega en un correo aparte, con
-> el PDF adjunto. Solo tienes que imprimirla, pegarla en el paquete y llevarlo a
+> Ya te hemos enviado una etiqueta nueva en un correo aparte, con el PDF
+> adjunto ("Tu cambio se ha confirmado"). Solo tienes que imprimirla, pegarla en el paquete y llevarlo a
 > tu oficina de Correos.
 >
-> Número de seguimiento: PQAZXT9800005490128110Q
+> Número de seguimiento: PQAZXT9800005510128110D
 >
 > En cuanto recibamos la prenda en el almacén te enviamos la talla L. Si no te
 > llega el correo con la etiqueta en las próximas horas, dínoslo y te la
@@ -52,7 +50,7 @@ chose before promising him the Berry.
 
 ## 2. Iker Escriva — `ikerescriva52@gmail.com` — #311318
 
-Order #311318, return, new Correos label `PQAZXT9800005500128110P`.
+Order #311318, return, new Correos label `PQAZXT9800005520128110X`.
 He has not written in — this is proactive.
 
 > Asunto: Tu devolución del pedido #311318 — etiqueta
@@ -64,10 +62,11 @@ He has not written in — this is proactive.
 > llegaste a recibir el email con la etiqueta. La culpa es nuestra y ya está
 > localizado.
 >
-> Te enviamos la etiqueta en un correo aparte, con el PDF adjunto. Imprímela,
+> Ya te hemos enviado la etiqueta en un correo aparte, con el PDF adjunto
+> ("Tu devolución se ha creado correctamente"). Imprímela,
 > pégala en el paquete y llévalo a tu oficina de Correos más cercana.
 >
-> Número de seguimiento: PQAZXT9800005500128110P
+> Número de seguimiento: PQAZXT9800005520128110X
 >
 > Tu devolución sigue activa y no tienes que volver a solicitarla. Perdona las
 > molestias.

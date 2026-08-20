@@ -11,6 +11,7 @@ import { updateFinalOrder } from "./updateOrder";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
+import { alertOps } from "./opsAlert";
 import { createInternationalReturn, isInternationalOrder } from "./amphoraReturn";
 
 /**
@@ -67,6 +68,60 @@ async function persistOrderLocale(id: string) {
   }
 }
 
+/**
+ * The free lane's equivalent of the webhook's `alertPaidButNoReturn`.
+ *
+ * Order #311174, 2026-08-12 07:39:36Z: the Shopify return was created, the
+ * Correos booking failed, and the customer was sent to /success. The only
+ * trace was a `console.error` in logs Vercel keeps for about an hour, so this
+ * surfaced eight days later, from the customer, and by then the reason Correos
+ * refused was long gone.
+ *
+ * There is no charge to refund here — that is the whole difference from the
+ * paid path — but the customer is in a worse position than an untouched one:
+ * they believe the return is booked. So the alert has to say that plainly,
+ * because nobody should be waiting for them to complain.
+ *
+ * Best effort, and never allowed to throw: this is already the failure path,
+ * and the redirect to /success must still happen.
+ */
+async function alertReturnWithoutLabel(id: string, detail: string) {
+  try {
+    let order: Awaited<ReturnType<typeof getOrderById>> | null = null;
+    try {
+      order = await getOrderById(id);
+    } catch {
+      // An alert naming only the raw id beats no alert because the lookup that
+      // just failed is still failing.
+    }
+
+    await alertOps(
+      `[returns] NO LABEL — ${order?.orderNumber ?? `order ${id}`}`,
+      [
+        `A return was submitted and no carrier booking exists for it.`,
+        ``,
+        `Order:     ${order?.orderNumber ?? "(unknown)"} (id ${id})`,
+        `Customer:  ${order?.email ?? "(unknown)"}`,
+        `Country:   ${order?.shippingCountry ?? "(unknown)"}`,
+        `Postcode:  ${order?.shippingZip ?? "(unknown)"}`,
+        ``,
+        `Failure:   ${detail}`,
+        ``,
+        `Nothing was charged. The customer was still shown /success, so they`,
+        `believe the return is booked and will not necessarily write in —`,
+        `do not wait for them to.`,
+        ``,
+        `The revert refuses any row that already carries a Shopify return, so`,
+        `the return is probably live with no label against it. Check the order,`,
+        `then re-run the booking — a fresh label is a real, uncancellable`,
+        `parcel, so book exactly one and email it.`,
+      ].join("\n")
+    );
+  } catch (alertError) {
+    console.error("Could not raise the no-label alert:", alertError);
+  }
+}
+
 export async function returnFunction(
   id: string,
   isCredit: boolean,
@@ -103,14 +158,25 @@ export async function returnFunction(
       // If label creation fails, undo database changes
       await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter
       console.error("Failed to create shipping label");
+      await alertReturnWithoutLabel(id, `carrier booking returned ${statusLabel}`);
     }
   } catch (error) {
     console.error("Error in order processing:", error);
+    const detail = error instanceof Error ? error.message : String(error);
     // Attempt to undo database changes if there was an error
     try {
       await updateFinalOrder(id, true, isCredit);
+      await alertReturnWithoutLabel(id, detail);
     } catch (undoError) {
       console.error("Failed to revert database changes:", undoError);
+      // Worse than the original failure: our records now disagree with
+      // reality as well. Say so, rather than reporting only the first error.
+      await alertReturnWithoutLabel(
+        id,
+        `${detail} — AND the revert then failed (${
+          undoError instanceof Error ? undoError.message : String(undoError)
+        }), so the database may be inconsistent`
+      );
     }
   }
   redirect(`/success`);

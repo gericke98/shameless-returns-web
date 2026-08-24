@@ -1,7 +1,9 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
 import { ClientOrderProps } from "@/types";
+import type { ReturnMethod } from "@/lib/returnMethods";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
+import { TrackingCapture } from "@/app/[id]/components/trackingCapture";
 import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
@@ -17,6 +19,10 @@ export const ClientOrder = ({
 }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
+  // Lowest common ancestor of ReturnMethodChoice (inside LastWindow) and
+  // AsyncButton, which are siblings under this component. "CORREOS" matches
+  // what AsyncButton effectively sent before self-booking existed.
+  const [method, setMethod] = useState<ReturnMethod>("CORREOS");
   const [isPending, startTransition] = useTransition();
   const t = useT();
 
@@ -54,6 +60,17 @@ export const ClientOrder = ({
               strip above the logo. Server-rendered in page.tsx and passed
               down, so eligibility is never decided on the client. */}
           {statusPanel}
+          {/* Gated on the two facts that actually describe "a self-booked
+              return is waiting for its tracking number", not on the lane alone.
+              `returnMethod` is written BEFORE the Stripe redirect and is not
+              evidence a return exists: a customer who abandoned checkout would
+              otherwise be shown this panel forever, and `submitReturnTracking`
+              would accept the submission (it only checks the lane), writing
+              tracking onto an order with no return and firing an
+              `approveAmphoraReturn` 404 into a false ops alert. */}
+          {order.returnSubmittedAt != null && order.trackingSubmittedAt == null && (
+            <TrackingCapture id={order.id} />
+          )}
           <OrderWindow
             position={position}
             name={name}
@@ -63,6 +80,8 @@ export const ClientOrder = ({
             setPosition={setPosition}
             credito={credito}
             setCredito={setCredito}
+            method={method}
+            setMethod={setMethod}
             onItemChange={handleItemChange}
             allProducts={allProducts}
           />
@@ -73,6 +92,7 @@ export const ClientOrder = ({
                 id={id}
                 isCredit={credito}
                 email={order.email}
+                method={method}
               />
             ) : (
               <ContinueButton

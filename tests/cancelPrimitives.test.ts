@@ -138,6 +138,59 @@ describe("resetOrderReturn", () => {
     expect(orderUpdate).toMatchObject({ stripePaymentIntent: null });
   });
 
+  it("clears the self-booked columns, so the cancelled return is neither chased nor blocking", async () => {
+    // Cancel-before-posting is the PRIMARY self-booked cancel path, so these
+    // four surviving the reset is not a corner case. Two things go wrong:
+    //
+    //  (a) `getSelfReturnsAwaitingTracking` still matches the row, so at day 3
+    //      the customer is emailed "Have you sent your return yet?" about a
+    //      return we cancelled and refunded, and at day 10 ops is told the
+    //      Shopify return is live and the Amphora ticket still PENDING — both
+    //      false.
+    //  (b) `createSelfBookedReturn` treats a non-null `returnSubmittedAt` as a
+    //      duplicate submit and returns 200, so a SECOND self-booked return is
+    //      swallowed whole: no Amphora ticket, no instructions email, no
+    //      tracking link, no revert and no alert.
+    const { resetOrderReturn } = await import("@/db/queries");
+
+    await resetOrderReturn("1");
+
+    const orderUpdate = setCalls.find((c) => "locator" in c);
+    expect(orderUpdate).toMatchObject({
+      returnMethod: null,
+      returnSubmittedAt: null,
+      trackingSubmittedAt: null,
+      trackingNudgeStage: 0,
+    });
+
+    // And the consequences those values exist to prevent, stated against the
+    // row the reset actually produces. The two predicates below MIRROR
+    // `getSelfReturnsAwaitingTracking`'s WHERE clause and
+    // `createSelfBookedReturn`'s duplicate guard — there is no test database
+    // here, so a mirror is the only way to state them; each is quoted next to
+    // its assertion so a drift is visible.
+    const afterReset = {
+      returnMethod: "SELF",
+      returnSubmittedAt: new Date("2026-08-18T09:00:00Z"),
+      trackingSubmittedAt: null,
+      trackingNudgeStage: 1,
+      ...orderUpdate,
+    };
+
+    // returnMethod = 'SELF' AND return_submitted_at IS NOT NULL
+    //   AND tracking_submitted_at IS NULL AND tracking_nudge_stage < 2
+    const sweepWouldChaseIt =
+      afterReset.returnMethod === "SELF" &&
+      afterReset.returnSubmittedAt !== null &&
+      afterReset.trackingSubmittedAt === null &&
+      afterReset.trackingNudgeStage < 2;
+    expect(sweepWouldChaseIt).toBe(false);
+
+    // `if (order.returnSubmittedAt) return 200;`
+    const secondReturnWouldBeSwallowed = Boolean(afterReset.returnSubmittedAt);
+    expect(secondReturnWouldBeSwallowed).toBe(false);
+  });
+
   it("scopes each update to the one order, not the whole table", async () => {
     // A regression that dropped the `.where()` or scoped it by the wrong
     // column would still pass every assertion above — it would just also

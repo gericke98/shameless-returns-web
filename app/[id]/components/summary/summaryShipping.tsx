@@ -29,6 +29,11 @@ const Line = ({ label, amount }: { label: string; amount: number }) => {
  * labelled plain "Shipping": naming it "Return shipping" when there is no
  * other leg to distinguish it from only raises the question of what the other
  * one would have been.
+ *
+ * A `returnCost` of 0 is the mirror image, and is what a self-booked return
+ * looks like: the customer is paying their own courier for that journey, so
+ * there is no line to show. Itemising it at 0.00 would bill them for a leg
+ * they arranged themselves.
  */
 export const SummaryShipping = ({
   returnCost,
@@ -38,16 +43,21 @@ export const SummaryShipping = ({
   outboundCost: number;
 }) => {
   const t = useT();
-  const hasBothLegs = outboundCost > 0;
+  const hasBothLegs = returnCost > 0 && outboundCost > 0;
 
   return (
     <div className="w-full h-full flex flex-col pl-4 mt-4 gap-2">
-      <Line
-        label={hasBothLegs ? t.summary.returnShipping : t.summary.shipping}
-        amount={returnCost}
-      />
-      {hasBothLegs && (
-        <Line label={t.summary.deliveryShipping} amount={outboundCost} />
+      {returnCost > 0 && (
+        <Line
+          label={hasBothLegs ? t.summary.returnShipping : t.summary.shipping}
+          amount={returnCost}
+        />
+      )}
+      {outboundCost > 0 && (
+        <Line
+          label={hasBothLegs ? t.summary.deliveryShipping : t.summary.shipping}
+          amount={outboundCost}
+        />
       )}
     </div>
   );

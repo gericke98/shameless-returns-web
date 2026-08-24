@@ -363,3 +363,155 @@ export function buildReturnReceivedEmail(
       </div>`,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Self-booked — the customer arranges their own courier                      */
+/* -------------------------------------------------------------------------- */
+
+/** Where the customer posts the parcel. Same warehouse the Correos label is
+ *  addressed to — see generateSoapBody in actions/shipping.ts. */
+const WAREHOUSE_ADDRESS = [
+  "Shameless Collective (Amphora Logistics)",
+  "Calle Pelaya 25, Poligono Industrial Rio de Janeiro",
+  "28110 Algete, Madrid",
+  "España",
+].join("<br/>");
+
+const SELF_COPY = {
+  es: {
+    subject: "Tu devolución: envíala cuando quieras",
+    reminderSubject: "¿Ya has enviado tu devolución?",
+    text: "Tu devolución se ha creado. Envíala con el transportista que prefieras.",
+    greeting: (name: string) => `Hola <strong>${name}</strong>,`,
+    intro:
+      "Has elegido enviar tu devolución por tu cuenta, así que <strong>no adjuntamos ninguna etiqueta</strong> — el envío lo organizas tú, con el transportista que prefieras.",
+    stepsTitle: "Pasos para completar tu devolución:",
+    steps: [
+      "Empaqueta los artículos en su envoltorio original.",
+      "Escribe tu número de pedido en el exterior del paquete.",
+      "Envíalo a la dirección de abajo con el transportista que elijas.",
+      "Vuelve al portal y dinos el transportista y el número de seguimiento.",
+    ],
+    addressTitle: "Dirección de envío:",
+    trackingCta: "Enviar mi número de seguimiento",
+    // The link lands on `/[id]`, which redirects to the lookup form without a
+    // live portal session — and ORDER_SESSION_TTL_MS is 2 hours. This email is
+    // read AFTER the post office, and the day-3 reminder is by construction
+    // ~72h after the session was issued, so the customer will be asked to
+    // identify themselves essentially every time. Saying so beforehand is the
+    // difference between "log in again" and "this link is broken".
+    linkNote:
+      "Te pediremos tu número de pedido y tu email para identificarte — es el mismo email al que te hemos enviado este mensaje.",
+    trackingWhy:
+      "Sin el número de seguimiento no podemos avisar al almacén de que tu paquete está en camino, y tu reembolso puede retrasarse.",
+    customs:
+      "<strong>Si envías desde fuera de la Unión Europea</strong>, el paquete pasará por aduanas y la documentación corre de tu cuenta. Un envío mal declarado puede quedarse retenido o devolverse, y esos gastos no los podemos cubrir.",
+    reminderIntro:
+      "Hace unos días creaste una devolución para enviarla por tu cuenta y todavía no nos has dicho el número de seguimiento.",
+    contact: "Si tienes alguna pregunta, no dudes en contactarnos en",
+    signoff:
+      "Saludos cordiales,<br/><strong>El equipo de Shameless Collective</strong>",
+  },
+  en: {
+    subject: "Your return: send it whenever you like",
+    reminderSubject: "Have you sent your return yet?",
+    text: "Your return has been created. Send it with any carrier you like.",
+    greeting: (name: string) => `Hello <strong>${name}</strong>,`,
+    intro:
+      "You chose to ship your return yourself, so <strong>there is no label attached</strong> — you arrange the shipment, with whichever carrier you prefer.",
+    stepsTitle: "Steps to complete your return:",
+    steps: [
+      "Pack the items in their original wrapping.",
+      "Write your order number on the outside of the parcel.",
+      "Send it to the address below with the carrier of your choice.",
+      "Come back to the portal and tell us the carrier and tracking number.",
+    ],
+    addressTitle: "Shipping address:",
+    trackingCta: "Send us my tracking number",
+    // See the Spanish note above.
+    linkNote:
+      "We will ask for your order number and email to identify you — the same email address this message was sent to.",
+    trackingWhy:
+      "Without the tracking number we cannot tell the warehouse your parcel is on its way, and your refund may be delayed.",
+    customs:
+      "<strong>If you are shipping from outside the European Union</strong>, the parcel will pass through customs and the paperwork is yours to arrange. A badly declared shipment can be held or returned, and we cannot cover those costs.",
+    reminderIntro:
+      "A few days ago you created a return to ship yourself, and we still do not have a tracking number for it.",
+    contact: "If you have any questions, contact us at",
+    signoff: "Best regards,<br/><strong>The Shameless Collective team</strong>",
+  },
+} as const;
+
+/** `portalUrl` is the absolute base URL of the portal, passed in by the caller
+ *  so this module never reads `process.env` — see the module header. */
+function selfReturnLink(orderId: string, portalUrl: string): string {
+  return `${portalUrl}/${orderId}`;
+}
+
+function selfReturnShell(
+  c: (typeof SELF_COPY)[Locale],
+  name: string,
+  orderId: string,
+  portalUrl: string,
+  intro: string
+): string {
+  const p = 'style="font-size: 16px; color: #555;"';
+  return `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; background-color: #f9f9f9; padding: 20px; border: 1px solid #ddd; border-radius: 8px; max-width: 600px; margin: 20px auto;">
+      <div style="text-align: center; margin-bottom: 20px;">
+        <img src="cid:embedded-image" alt="Shameless Collective Logo" style="max-width: 400px; height: auto;"/>
+      </div>
+      <div>
+        <p ${p}>${c.greeting(name)}</p>
+        <p ${p}>${intro}</p>
+        <p ${p}>${c.stepsTitle}</p>
+        <ol style="font-size: 16px; color: #555; margin-left: 20px; padding-left: 10px;">
+          ${c.steps.map((s) => `<li style="margin-bottom: 10px;">${s}</li>`).join("")}
+        </ol>
+        <p ${p}><strong>${c.addressTitle}</strong><br/>${WAREHOUSE_ADDRESS}</p>
+        <p ${p}>
+          <a href="${selfReturnLink(orderId, portalUrl)}" style="color: #0073e6;">${c.trackingCta}</a>
+        </p>
+        <p ${p}>${c.linkNote}</p>
+        <p ${p}>${c.trackingWhy}</p>
+        <p ${p}>${c.customs}</p>
+        <p ${p}>${c.contact}
+          <a href="mailto:${FROM}" style="color: #0073e6; text-decoration: none;">${FROM}</a>.
+        </p>
+        <p ${p}>${c.signoff}</p>
+      </div>
+    </div>
+  `;
+}
+
+export function buildSelfReturnInstructionsEmail(
+  name: string,
+  locale: Locale,
+  orderId: string,
+  portalUrl: string
+): EmailPayload {
+  const c = SELF_COPY[locale];
+  return {
+    From: FROM,
+    To: "",
+    Subject: c.subject,
+    TextBody: c.text,
+    HtmlBody: selfReturnShell(c, name, orderId, portalUrl, c.intro),
+  };
+}
+
+export function buildSelfReturnReminderEmail(
+  name: string,
+  locale: Locale,
+  orderId: string,
+  portalUrl: string
+): EmailPayload {
+  const c = SELF_COPY[locale];
+  return {
+    From: FROM,
+    To: "",
+    Subject: c.reminderSubject,
+    TextBody: c.reminderIntro,
+    HtmlBody: selfReturnShell(c, name, orderId, portalUrl, c.reminderIntro),
+  };
+}

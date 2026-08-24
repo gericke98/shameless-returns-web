@@ -24,6 +24,10 @@ export type CancelDecision =
 export type CancellableOrder = {
   products?: Array<{ confirmed?: boolean | null; refunded?: boolean | null }> | null;
   returnStatus?: string | null;
+  /** 'CORREOS' | 'AMPHORA' | 'SELF'. Null on rows predating self-booking. */
+  returnMethod?: string | null;
+  /** The customer's own tracking number, once they have given us one. */
+  locator?: string | null;
 };
 
 /** Amphora statuses that mean the collection has already happened. Wire
@@ -73,6 +77,32 @@ export function cancelEligibility(
 
   const status = order.returnStatus ?? null;
   if (status && MOVED_STATUSES.indexOf(status) !== -1) return blocked("in-transit");
+
+  // A self-booked return with no tracking has had nothing booked and nothing
+  // posted: no Correos label, no collection, and an Amphora ticket still at
+  // PENDING. That is strictly safer to cancel than a domestic return with a
+  // live label, which is already allowed.
+  //
+  // It has to be decided BEFORE the movement checks, because those are what
+  // trap these customers: a non-Correos carrier reads `unreadable`, which
+  // blocks — correct once a parcel is in the network, wrong for a customer who
+  // changed their mind on the way to the post office.
+  if (order.returnMethod === "SELF" && !order.locator) {
+    return { cancellable: true };
+  }
+
+  // And once tracking DOES exist the parcel is presumed in the network, which
+  // the movement checks below cannot see: `readCarrierMovement` returns
+  // "not-moved" for any non-Correos carrier without a network call, on purpose
+  // — movement for those is meant to come from the Amphora `returnStatus` gate
+  // above. For a self-booked return that gate never closes in time. Domestic
+  // rows are skipped by the Amphora sync entirely, and an international one is
+  // only APROVED (deliberately NOT a moved status) until the parcel physically
+  // lands. So without this a customer could cancel and be refunded for a
+  // garment they had already posted, on both lanes. Tracking is only ever
+  // submitted after the post office, so failing closed here costs nothing
+  // legitimate.
+  if (order.returnMethod === "SELF" && order.locator) return blocked("in-transit");
 
   if (movement === "moved") return blocked("in-transit");
   if (movement === "unreadable") return blocked("carrier-unreadable");

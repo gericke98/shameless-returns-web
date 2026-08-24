@@ -125,6 +125,26 @@ export const es = {
     refundDelayBold: "pueden pasar hasta 15 días",
     refundDelayEnd: "hasta que recibas tu dinero.",
   },
+  method: {
+    title: "¿Cómo quieres enviarlo?",
+    ourLabel: "Lo enviamos nosotros",
+    selfLabel: "Lo envío yo",
+    selfHint:
+      "Tú eliges el transportista y pagas el envío. Después nos dices el número de seguimiento.",
+    free: "gratis",
+  },
+  tracking: {
+    title: "Dinos el número de seguimiento",
+    intro:
+      "Cuando hayas enviado el paquete, dinos con quién lo has enviado para que el almacén lo espere.",
+    carrier: "Transportista",
+    number: "Número de seguimiento",
+    submit: "Enviar",
+    permanent:
+      "No podremos cambiarlo después, así que revísalo bien antes de enviarlo.",
+    done: "¡Gracias! El almacén ya sabe que tu paquete está en camino.",
+    error: "No hemos podido guardarlo. Revisa los datos e inténtalo de nuevo.",
+  },
   success: {
     title: "¡Hemos recibido tu solicitud correctamente!",
     body: "Hemos recibido tu solicitud y te hemos enviado un correo electrónico con los próximos pasos.",

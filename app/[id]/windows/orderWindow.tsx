@@ -27,6 +27,8 @@ const OrderWindowBase = ({
       setPosition={props.setPosition}
       setCredito={props.setCredito}
       credito={props.credito}
+      method={props.method}
+      setMethod={props.setMethod}
       onItemChange={onItemChange}
       allProducts={props.allProducts}
     />

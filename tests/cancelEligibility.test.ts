@@ -147,3 +147,79 @@ describe("cancelEligibility", () => {
     });
   });
 });
+
+describe("self-booked returns before the parcel is posted", () => {
+  const selfReturn = (over: Record<string, any> = {}) => ({
+    products: [{ confirmed: true, refunded: false }],
+    returnStatus: null,
+    returnMethod: "SELF",
+    locator: null,
+    ...over,
+  });
+
+  it("is cancellable while no tracking exists", () => {
+    // Nothing has been booked and nothing posted — strictly safer than a
+    // domestic return with a live Correos label, which is already allowed.
+    // Without this the customer hits carrier-unreadable and is trapped.
+    expect(cancelEligibility(selfReturn(), "unreadable")).toEqual({
+      cancellable: true,
+    });
+  });
+
+  it("blocks once tracking exists — the parcel is presumed in the network", () => {
+    // "not-moved" with a non-Correos carrier is the REACHABLE state here, and
+    // the one that used to let a posted parcel be cancelled and refunded:
+    // `readCarrierMovement` short-circuits to "not-moved" for any carrier that
+    // is not Correos, without a network call, and the Amphora `returnStatus`
+    // that is supposed to cover those never advances in time for a SELF
+    // return — domestic rows are skipped by the sync, international ones sit
+    // at APROVED until the parcel lands.
+    //
+    // This case previously passed `movement: "unreadable"`, which
+    // `readCarrierMovement` can never return for this row shape, so it was
+    // green for the wrong reason and hid the defect.
+    const posted = selfReturn({ locator: "JD0123456789", carrier: "SEUR" });
+
+    expect(cancelEligibility(posted, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "in-transit",
+    });
+  });
+
+  it("blocks a posted international self-booked return still sitting at APROVED", () => {
+    // APROVED is deliberately NOT in MOVED_STATUSES — Amphora only advances to
+    // TRAVELLING once the parcel physically arrives, i.e. after the window in
+    // which cancelling would be a mistake has already closed.
+    const posted = selfReturn({
+      locator: "1Z999AA10123456784",
+      carrier: "UPS",
+      returnStatus: "APROVED",
+    });
+
+    expect(cancelEligibility(posted, "not-moved")).toEqual({
+      cancellable: false,
+      reason: "in-transit",
+    });
+  });
+
+  it("still blocks a settled self-booked return", () => {
+    // Money already moved; the lane does not change that.
+    const settled = selfReturn({
+      products: [{ confirmed: true, refunded: true }],
+    });
+
+    expect(cancelEligibility(settled, "unreadable")).toEqual({
+      cancellable: false,
+      reason: "already-settled",
+    });
+  });
+
+  it("still blocks when Amphora says the parcel moved", () => {
+    const moved = selfReturn({ returnStatus: "RECEIVED" });
+
+    expect(cancelEligibility(moved, "unreadable")).toEqual({
+      cancellable: false,
+      reason: "in-transit",
+    });
+  });
+});

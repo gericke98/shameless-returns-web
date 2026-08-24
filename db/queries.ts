@@ -2,7 +2,7 @@
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
 import db from "./drizzle";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
@@ -164,6 +164,23 @@ export async function getOrderByNumberFresh(orderNumber: string) {
     with: {
       products: true,
     },
+  });
+}
+
+/**
+ * Self-booked returns still waiting for the customer's tracking number.
+ *
+ * Deliberately NOT cached — the nudge sweep must see stage changes made by its
+ * own previous pass.
+ */
+export async function getSelfReturnsAwaitingTracking() {
+  return db.query.orders.findMany({
+    where: and(
+      eq(orders.returnMethod, "SELF"),
+      isNull(orders.trackingSubmittedAt),
+      isNotNull(orders.returnSubmittedAt),
+      lt(orders.trackingNudgeStage, 2)
+    ),
   });
 }
 
@@ -1126,6 +1143,28 @@ export async function resetOrderReturn(orderId: string): Promise<void> {
       carrierUrl: null,
       returnStatus: null,
       stripePaymentIntent: null,
+      // The self-booked lane's four columns belong to the return being undone
+      // just as much as the tracking above, and cancel-before-posting is the
+      // PRIMARY self-booked cancel path — so leaving them set is not a corner
+      // case. Two things go wrong if they survive:
+      //
+      //  (a) `getSelfReturnsAwaitingTracking` still matches the row on every
+      //      clause, and the nudge sweep reads no line-item state. At day 3 the
+      //      customer is asked "Have you sent your return yet?" for a return we
+      //      cancelled and refunded; at day 10 ops gets an alert asserting the
+      //      Shopify return is live and the Amphora ticket still PENDING, both
+      //      false. That is the class of misleading alert that nearly caused a
+      //      wrong refund on #311329.
+      //  (b) `createSelfBookedReturn` reads a non-null `returnSubmittedAt` as a
+      //      duplicate submit and returns 200 — so a SECOND self-booked return
+      //      is silently swallowed: `returnFunction` does not revert and does
+      //      not alert, and the customer lands on /success with a live Shopify
+      //      return, no Amphora ticket, no instructions email and no tracking
+      //      link.
+      returnMethod: null,
+      returnSubmittedAt: null,
+      trackingSubmittedAt: null,
+      trackingNudgeStage: 0,
     })
     .where(eq(orders.id, orderId));
 

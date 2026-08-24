@@ -310,6 +310,85 @@ export async function createRefund(
 }
 
 /**
+ * Record a store-credit return as refunded on Shopify, moving no money.
+ *
+ * The credit lane pays the customer with `giftCardCreate` and used to stop
+ * there, which left Shopify believing nothing had come back: the order kept
+ * reading `PAID` with `totalRefunded 0.00` and an empty `refunds` list forever,
+ * so every returned garment still counted as revenue. #311449 (Borja Bueno) is
+ * the row that showed it — gift card EUR 37.41 issued, refund record absent.
+ *
+ * `orderTransactions` is deliberately OMITTED rather than sent as zero. It is
+ * optional on `ReturnRefundInput`, and it is the field that decides whether
+ * money leaves the gateway. The customer has already been paid, in credit;
+ * naming a transaction here would refund them to their card as well and pay
+ * them twice for one garment. What is left is the accounting half — the goods
+ * come back, the revenue is reversed, the gift card stands as the liability.
+ */
+export async function createStoreCreditRefund(
+  returnId: string,
+  returnLineItemId: string
+) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+      mutation returnRefund($input: ReturnRefundInput!) {
+        returnRefund(returnRefundInput: $input) {
+          refund {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+  const variables = {
+    input: {
+      // The customer already has their money as credit, and the gift card
+      // email told them so. A second notification here announces a refund to
+      // a card that is never coming.
+      notifyCustomer: false,
+      returnId,
+      returnRefundLineItems: [
+        {
+          quantity: 1,
+          returnLineItemId,
+        },
+      ],
+    },
+  };
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const data = await response.json();
+
+    if (data.errors || data.data.returnRefund.userErrors.length > 0) {
+      console.error(
+        "Error recording store-credit refund:",
+        data.errors || data.data.returnRefund.userErrors
+      );
+      return {
+        success: false,
+        errors: data.errors || data.data.returnRefund.userErrors,
+      };
+    }
+
+    return { success: true, data: data.data.returnRefund.refund };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
+/**
  * Create the replacement order for an exchange.
  *
  * Takes the LINE ITEMS, plural. It used to take a single product and was called
@@ -605,10 +684,22 @@ export async function createReturn(input: ReturnCreateInput) {
   }
 }
 
+/**
+ * Mint the store-credit gift card and record it against the line that earned it.
+ *
+ * Takes the ORDER too, and not because it is convenient: the stamp used to be
+ * scoped by `variant_id` alone, which is not an identity. Every customer who
+ * ever returned the same garment shares that value, so minting one card wrote
+ * its id onto all of their rows — a different customer's settled money refund
+ * would start reporting a gift card it never received. Settling #311449 (Borja
+ * Bueno, 2026-08-24) overwrote #310927 (Marcos G. Merino) exactly that way, and
+ * 30 of the 150 stamped rows in production were already sharing an id.
+ */
 export async function processGiftCardReturn(
   customerId: string,
   price: number,
-  variantId: string
+  variantId: string,
+  orderId: string
 ) {
   const increasedPrice = price.toString();
 
@@ -624,7 +715,12 @@ export async function processGiftCardReturn(
       .set({
         gift_card_id: giftCardResult.data.id,
       })
-      .where(eq(productsOrder.variant_id, variantId.toString()));
+      .where(
+        and(
+          eq(productsOrder.orderId, orderId.toString()),
+          eq(productsOrder.variant_id, variantId.toString())
+        )
+      );
   }
 
   return giftCardResult;

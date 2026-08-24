@@ -93,6 +93,10 @@ vi.mock("@/db/queries", () => ({
     refunds.push(amount);
     return { success: true };
   },
+  // The credit lane records the return on Shopify without moving money. It is
+  // not what this file is about — see creditLaneSettlement.test.ts — but the
+  // gift-card cases below go through it.
+  createStoreCreditRefund: async () => ({ success: true }),
   createOrder: async () => ({ success: true }),
   closeReturn: async () => ({ success: true }),
 }));

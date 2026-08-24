@@ -5,6 +5,7 @@ import {
   closeReturn,
   createOrder,
   createRefund,
+  createStoreCreditRefund,
   getOrderById,
   getOrderTotal,
   processGiftCardReturn,
@@ -19,6 +20,7 @@ import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { isAdmin } from "@/lib/requireAdmin";
 import { releaseExchangeReservation } from "./exchangeReservation";
+import { alertOps } from "./opsAlert";
 
 /**
  * Did the customer ship this return with their own courier?
@@ -108,9 +110,43 @@ export async function validateReturn(product: any, status: string, order: any) {
       const resultGiftCard = await processGiftCardReturn(
         customerId,
         giftCardValue,
-        trustedLine.variant_id
+        trustedLine.variant_id,
+        String(order?.id ?? "")
       );
       if (resultGiftCard.success) {
+        // Tell Shopify the goods came back. The gift card above pays the
+        // customer; this is the other half, and without it the order reads
+        // PAID at 0.00 refunded for good — the money lane has always done
+        // this via `createRefund` and the credit lane never did.
+        //
+        // Read the line item from the row, not from `product`: the caller's
+        // object is untrusted everywhere else in this function for exactly
+        // the reason it is untrusted here — it names what Shopify refunds.
+        const refundRecord = await createStoreCreditRefund(
+          product.return_id,
+          String(trustedLine.return_line_item_id ?? "")
+        );
+        if (!refundRecord.success) {
+          // Carry on rather than bail, and the asymmetry is the reason.
+          //
+          // By this line the customer HAS been paid — the card is minted and
+          // Shopify has emailed it. Bailing would leave `refunded` unset, and
+          // the guard at the top of this function is exactly that flag, so the
+          // next click on the row would mint a SECOND card for one garment.
+          // A revenue figure a human can correct in the admin beats paying
+          // twice, so the alert carries the ids needed to fix it by hand.
+          await alertOps(
+            `Store-credit refund not recorded on Shopify — order ${order?.id}`,
+            [
+              `Gift card ${resultGiftCard.data?.id ?? "(id unknown)"} was issued to the customer, so they HAVE been paid.`,
+              `What failed is the Shopify refund record, so order ${order?.id} still reads PAID with 0.00 refunded and the garment still counts as revenue.`,
+              `Return: ${product.return_id}`,
+              `Return line item: ${trustedLine.return_line_item_id}`,
+              `Fix by refunding the return in the Shopify admin WITHOUT sending money — the customer already has the credit.`,
+              `Error: ${JSON.stringify(refundRecord.errors ?? refundRecord.error)}`,
+            ].join("\n")
+          );
+        }
         // Cierro el return
         result2 = await closeReturn(product.return_id);
         await db

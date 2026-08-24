@@ -10,35 +10,72 @@ import { createShippingLabel } from "./shipping";
 import { updateFinalOrder } from "./updateOrder";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";
-import { defaultMethodFor } from "@/lib/returnMethods";
+import { defaultMethodFor, resolveReturnMethod, type ReturnMethod } from "@/lib/returnMethods";
+import { getFeeTable } from "@/db/fees";
+import { loadBasket } from "@/lib/loadBasket";
+import { feesForCountry, resolveFee } from "@/lib/fees";
+import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "./opsAlert";
-import { createInternationalReturn, isInternationalOrder } from "./amphoraReturn";
+import { createInternationalReturn } from "./amphoraReturn";
+import { createSelfBookedReturn } from "./selfBookedReturn";
 
 /**
- * Route the physical return:
- *  1. International → Amphora collection (gated by
+ * Route the physical return. Three lanes now:
+ *  1. SELF     → the customer ships it; we book nothing.
+ *  2. AMPHORA  → international collection (gated by
  *     AMPHORA_INTL_RETURNS_ENABLED).
- *  2. Spain, or the flag off → Correos label (unchanged).
- * Returns an HTTP-style status (200 = success) in every case. With the flag
- * off this is behaviour-identical to the Correos-only flow.
+ *  3. CORREOS  → Spain, or the flag off.
  *
- * There was a third lane here: Sendcloud pre-paid drop-off labels for the EU,
- * taking priority over Amphora. It is gone, along with its module. Amphora
- * already covers every international destination, and the return-method screen
- * tells international customers their parcel will be collected — which a
- * drop-off label would have contradicted for EU orders.
+ * Returns an HTTP-style status (200 = success) in every case, so all three are
+ * interchangeable to the caller.
+ *
+ * There was a fourth lane here once: Sendcloud pre-paid drop-off labels for
+ * the EU, taking priority over Amphora. It is gone, along with its module.
+ * Amphora already covers every international destination, and the
+ * return-method screen tells international customers their parcel will be
+ * collected — which a drop-off label would have contradicted for EU orders.
  */
-async function createReturnShipment(id: string): Promise<number> {
-  const order = await getOrderById(id);
-  if (
-    order &&
-    isInternationalOrder(order.shippingCountry) &&
-    process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
-  ) {
-    return createInternationalReturn(id);
-  }
+async function createReturnShipment(id: string, method: ReturnMethod): Promise<number> {
+  if (method === "SELF") return createSelfBookedReturn(id);
+  if (method === "AMPHORA") return createInternationalReturn(id);
   return createShippingLabel(id);
+}
+
+/**
+ * What the customer's claimed method actually resolves to, and the return-leg
+ * price that decides whether SELF was even on offer.
+ *
+ * Derived server-side from the order and the fee table, never from the claim —
+ * the same rule `createStripeUrl` applies to the amount.
+ *
+ * `resolveReturnMethod` only needs the fee table to arbitrate a SELF claim —
+ * every other case, including no claim at all, resolves from the address
+ * alone via `defaultMethodFor`. Short-circuiting there keeps every non-SELF
+ * submit exactly as cheap (one `getOrderById`, no basket, no fee lookup) as it
+ * was before self-booking existed, instead of paying for a fee-table lookup
+ * whose result is never even asked for.
+ */
+async function decideMethod(id: string, claimed: unknown): Promise<ReturnMethod> {
+  const amphoraEnabled = process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
+
+  if (claimed !== "SELF") {
+    const order = await getOrderById(id);
+    return defaultMethodFor(order?.shippingCountry, amphoraEnabled);
+  }
+
+  const loaded = await loadBasket(id);
+  if (!loaded) return "CORREOS";
+
+  const { order, basket } = loaded;
+  const feeTable = await getFeeTable();
+  const fees = feesForCountry(
+    feeTable,
+    resolveZone(order.shippingCountry, order.shippingZip)
+  );
+  const { returnLegCents } = resolveFee(fees, basket);
+
+  return resolveReturnMethod(claimed, order.shippingCountry, amphoraEnabled, returnLegCents);
 }
 
 /**
@@ -66,6 +103,24 @@ async function persistOrderLocale(id: string) {
     await db.update(orders).set({ locale }).where(eq(orders.id, id));
   } catch (error) {
     console.error(`Failed to persist locale for order ${id}:`, error);
+  }
+}
+
+/**
+ * Persist the lane the customer chose, for the same reason `persistOrderLocale`
+ * persists the language: the Stripe webhook is an inbound request from Stripe
+ * with no cookies and no client state, so the row is the only channel that
+ * survives the redirect.
+ *
+ * Must run BEFORE `createStripeUrl` — that call reads the order through the
+ * request-scoped `cache()`d `getOrderById`, so a later write would be invisible
+ * to the free path's own read.
+ */
+async function persistReturnMethod(id: string, method: ReturnMethod) {
+  try {
+    await db.update(orders).set({ returnMethod: method }).where(eq(orders.id, id));
+  } catch (error) {
+    console.error(`Failed to persist return method for order ${id}:`, error);
   }
 }
 
@@ -126,7 +181,8 @@ async function alertReturnWithoutLabel(id: string, detail: string) {
 export async function returnFunction(
   id: string,
   isCredit: boolean,
-  email: string
+  email: string,
+  claimedMethod?: unknown
 ) {
   // `id` arrives from the client. Without this the caller only had to know an
   // order id — which is the sequential Shopify order id — to submit somebody
@@ -143,22 +199,15 @@ export async function returnFunction(
   // through the webhook, which reads the column from the database.
   await persistOrderLocale(id);
 
+  // Resolved and persisted before createStripeUrl for the same reason as the
+  // locale above: the webhook has no session and no client state, so the row
+  // is the only channel that survives the redirect.
+  const method = await decideMethod(id, claimedMethod);
+  await persistReturnMethod(id, method);
+
   // Whether the customer owes anything is decided server-side, inside
   // createStripeUrl. A null URL means nothing to pay.
-  //
-  // The method passed here is always the address-derived default — this call
-  // site does not yet let the customer choose SELF, so behaviour for every
-  // existing customer is unchanged. Task 7 replaces this with their real
-  // choice. `getOrderById` is React-`cache()`d, so this extra call is free.
-  const order = await getOrderById(id);
-  const url = (
-    await createStripeUrl(
-      id,
-      email,
-      isCredit,
-      defaultMethodFor(order?.shippingCountry, process.env.AMPHORA_INTL_RETURNS_ENABLED === "true")
-    )
-  ).data;
+  const url = (await createStripeUrl(id, email, isCredit, method)).data;
   if (url) {
     redirect(url);
   }
@@ -166,8 +215,8 @@ export async function returnFunction(
     // Caso en el que no tiene que pagar nada
     // First update the database
     await updateFinalOrder(id, false, isCredit);
-    // // Then create the return shipment (Correos label or Amphora collection)
-    const statusLabel = await createReturnShipment(id);
+    // // Then create the return shipment (Correos label, Amphora collection, or self-booked)
+    const statusLabel = await createReturnShipment(id, method);
     if (statusLabel !== 200) {
       // If label creation fails, undo database changes
       await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter

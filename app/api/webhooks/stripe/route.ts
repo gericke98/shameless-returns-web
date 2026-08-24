@@ -1,11 +1,13 @@
 import { createShippingLabel } from "@/actions/shipping";
-import { createInternationalReturn, isInternationalOrder } from "@/actions/amphoraReturn";
+import { createInternationalReturn } from "@/actions/amphoraReturn";
+import { createSelfBookedReturn } from "@/actions/selfBookedReturn";
 import { alertOps } from "@/actions/opsAlert";
 import { updateFinalOrder } from "@/actions/updateOrder";
 import db from "@/db/drizzle";
 import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
+import { defaultMethodFor, type ReturnMethod } from "@/lib/returnMethods";
 import { stripe } from "@/lib/stripe";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -178,13 +180,21 @@ export async function POST(req: Request) {
         await updateFinalOrder(id, false, isCredit);
         // // // Then create the return shipment (Correos label or Amphora collection)
         const order = await getOrderById(id);
-        const useAmphora =
-          !!order &&
-          isInternationalOrder(order.shippingCountry) &&
-          process.env.AMPHORA_INTL_RETURNS_ENABLED === "true";
-        const statusLabel = useAmphora
-          ? await createInternationalReturn(id)
-          : await createShippingLabel(id);
+        // The lane the customer chose, persisted before they left for Stripe.
+        // Null on rows created before self-booking existed, which fall back to
+        // the country rule exactly as they always did.
+        const method: ReturnMethod =
+          ((order as any)?.returnMethod as ReturnMethod) ??
+          defaultMethodFor(
+            order?.shippingCountry,
+            process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
+          );
+        const statusLabel =
+          method === "SELF"
+            ? await createSelfBookedReturn(id)
+            : method === "AMPHORA"
+              ? await createInternationalReturn(id)
+              : await createShippingLabel(id);
         if (statusLabel !== 200) {
           // If label creation fails, undo database changes
           await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter
@@ -193,9 +203,7 @@ export async function POST(req: Request) {
             id,
             session,
             paymentIntentId,
-            `carrier booking returned ${statusLabel} (${
-              useAmphora ? "Amphora collection" : "Correos label"
-            })`
+            `carrier booking returned ${statusLabel} (${method})`
           );
         }
       } catch (error) {

@@ -41,6 +41,10 @@ const behaviour = {
   access: true,
   movement: "not-moved" as "moved" | "not-moved" | "unreadable",
   amphoraFails: false,
+  // When amphoraFails is true, the HTTP status the mock's error carries.
+  // Undefined mirrors a plain thrown Error with no `.response` at all, which
+  // is what the pre-existing tests below expect to stay fatal.
+  amphoraFailureStatus: undefined as number | undefined,
   shopifyFails: false,
   releaseFails: false,
   refundOutcome: { refunded: true } as any,
@@ -59,6 +63,7 @@ function freshOrder(): Record<string, any> {
     locale: "es",
     locator: "PQ1ES",
     carrier: null,
+    returnMethod: "CORREOS",
     returnStatus: "APROVED",
     stripePaymentIntent: "pi_stored",
     products: [{ confirmed: true, refunded: false, return_id: "gid://shopify/Return/1" }],
@@ -113,7 +118,13 @@ vi.mock("@/actions/shipping", () => ({
 vi.mock("@/actions/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   cancelAmphoraReturn: async (id: string) => {
-    if (behaviour.amphoraFails) throw new Error("amphora 500");
+    if (behaviour.amphoraFails) {
+      const error: any = new Error("amphora cancel failed");
+      if (behaviour.amphoraFailureStatus !== undefined) {
+        error.response = { status: behaviour.amphoraFailureStatus };
+      }
+      throw error;
+    }
     calls.amphoraCancel.push(id);
     calls.sequence.push("amphora");
     return { id };
@@ -161,6 +172,7 @@ beforeEach(() => {
   behaviour.access = true;
   behaviour.movement = "not-moved";
   behaviour.amphoraFails = false;
+  behaviour.amphoraFailureStatus = undefined;
   behaviour.shopifyFails = false;
   behaviour.releaseFails = false;
   behaviour.refundOutcome = { refunded: true };
@@ -267,6 +279,42 @@ describe("when a step fails", () => {
     expect(calls.shopifyCancel).toHaveLength(0);
     expect(calls.refund).toHaveLength(0);
     expect(calls.reset).toHaveLength(0);
+  });
+
+  it("still cancels a self-booked return whose Amphora ticket was never opened (404)", async () => {
+    // createSelfBookedReturn alerts and continues when the create fails, so
+    // there is nothing on Amphora's side to cancel. Treating the 404 as fatal
+    // would trap the customer in a return that exists only on our side.
+    ORDER.returnMethod = "SELF";
+    behaviour.amphoraFails = true;
+    behaviour.amphoraFailureStatus = 404;
+
+    expect(await cancel()).toEqual({ ok: true });
+    expect(calls.amphoraCancel).toHaveLength(0);
+    expect(calls.refund).toEqual([ORDER.id]);
+    expect(calls.reset).toEqual([ORDER.id]);
+  });
+
+  it("still aborts a self-booked return when Amphora fails for any other reason (500)", async () => {
+    // A warehouse still expecting a parcel is exactly what step 1 guards —
+    // the SELF exemption is narrow to the 404 case only.
+    ORDER.returnMethod = "SELF";
+    behaviour.amphoraFails = true;
+    behaviour.amphoraFailureStatus = 500;
+
+    expect(await cancel()).toEqual({ ok: false, reason: "carrier-cancel-failed" });
+    expect(calls.refund).toHaveLength(0);
+    expect(calls.reset).toHaveLength(0);
+  });
+
+  it("still aborts a non-self-booked return on a 404, even though the status matches", async () => {
+    // The exemption is scoped to returnMethod === "SELF"; a 404 on a
+    // Correos/Amphora-booked return is still a real, unexplained failure.
+    behaviour.amphoraFails = true;
+    behaviour.amphoraFailureStatus = 404;
+
+    expect(await cancel()).toEqual({ ok: false, reason: "carrier-cancel-failed" });
+    expect(calls.refund).toHaveLength(0);
   });
 
   it("still refunds when Shopify will not cancel, and alerts a human", async () => {

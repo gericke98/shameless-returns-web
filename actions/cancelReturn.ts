@@ -65,11 +65,22 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
   try {
     await cancelAmphoraReturn(amphoraOrderIdFromShopifyId(orderId));
   } catch (error: any) {
-    console.error(
-      `Cancel aborted for ${orderId}: Amphora would not cancel the return:`,
-      error?.message || error
+    // A self-booked return whose ticket was never opened has nothing for
+    // Amphora to cancel — createSelfBookedReturn alerts and continues when the
+    // create fails. Treating that 404 as fatal would trap the customer in a
+    // return that exists only on our side. Any other failure stays fatal: the
+    // warehouse still expecting a parcel is exactly what step 1 guards.
+    const missing = error?.response?.status === 404;
+    if (!((order as any)?.returnMethod === "SELF" && missing)) {
+      console.error(
+        `Cancel aborted for ${orderId}: Amphora would not cancel the return:`,
+        error?.message || error
+      );
+      return { ok: false, reason: "carrier-cancel-failed" };
+    }
+    console.warn(
+      `Order ${orderId}: no Amphora ticket to cancel for a self-booked return — continuing.`
     );
-    return { ok: false, reason: "carrier-cancel-failed" };
   }
 
   // 2. Continue on failure — an open Shopify return is an ops problem, and

@@ -147,3 +147,52 @@ describe("cancelEligibility", () => {
     });
   });
 });
+
+describe("self-booked returns before the parcel is posted", () => {
+  const selfReturn = (over: Record<string, any> = {}) => ({
+    products: [{ confirmed: true, refunded: false }],
+    returnStatus: null,
+    returnMethod: "SELF",
+    locator: null,
+    ...over,
+  });
+
+  it("is cancellable while no tracking exists", () => {
+    // Nothing has been booked and nothing posted — strictly safer than a
+    // domestic return with a live Correos label, which is already allowed.
+    // Without this the customer hits carrier-unreadable and is trapped.
+    expect(cancelEligibility(selfReturn(), "unreadable")).toEqual({
+      cancellable: true,
+    });
+  });
+
+  it("falls back to the normal rules once tracking exists", () => {
+    const posted = selfReturn({ locator: "JD0123456789" });
+
+    expect(cancelEligibility(posted, "unreadable")).toEqual({
+      cancellable: false,
+      reason: "carrier-unreadable",
+    });
+  });
+
+  it("still blocks a settled self-booked return", () => {
+    // Money already moved; the lane does not change that.
+    const settled = selfReturn({
+      products: [{ confirmed: true, refunded: true }],
+    });
+
+    expect(cancelEligibility(settled, "unreadable")).toEqual({
+      cancellable: false,
+      reason: "already-settled",
+    });
+  });
+
+  it("still blocks when Amphora says the parcel moved", () => {
+    const moved = selfReturn({ returnStatus: "RECEIVED" });
+
+    expect(cancelEligibility(moved, "unreadable")).toEqual({
+      cancellable: false,
+      reason: "in-transit",
+    });
+  });
+});

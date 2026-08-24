@@ -125,6 +125,14 @@ export const es = {
     refundDelayBold: "pueden pasar hasta 15 días",
     refundDelayEnd: "hasta que recibas tu dinero.",
   },
+  method: {
+    title: "¿Cómo quieres enviarlo?",
+    ourLabel: "Lo enviamos nosotros",
+    selfLabel: "Lo envío yo",
+    selfHint:
+      "Tú eliges el transportista y pagas el envío. Después nos dices el número de seguimiento.",
+    free: "gratis",
+  },
   success: {
     title: "¡Hemos recibido tu solicitud correctamente!",
     body: "Hemos recibido tu solicitud y te hemos enviado un correo electrónico con los próximos pasos.",

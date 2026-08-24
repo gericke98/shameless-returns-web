@@ -3,17 +3,26 @@ import { useTransition } from "react";
 import { returnFunction } from "@/actions/return";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n/context";
+import type { ReturnMethod } from "@/lib/returnMethods";
 
 export const AsyncButton = ({
   text,
   id,
   isCredit,
   email,
+  method,
 }: {
   text: string;
   id: string;
   isCredit: boolean;
   email: string;
+  /**
+   * The customer's claimed shipping lane, from ReturnMethodChoice. Optional:
+   * the server re-derives the real lane via resolveReturnMethod and ignores
+   * any claim that is not exactly "SELF", so an absent value here just means
+   * "no self-booking claim" — identical to today's behaviour.
+   */
+  method?: ReturnMethod;
 }) => {
   const t = useT();
   const [isPending, startTransition] = useTransition();
@@ -39,7 +48,7 @@ export const AsyncButton = ({
       onClick={() => {
         if (isPending) return;
         startTransition(async () => {
-          await returnFunction(id, isCredit, email);
+          await returnFunction(id, isCredit, email, method);
         });
       }}
     >

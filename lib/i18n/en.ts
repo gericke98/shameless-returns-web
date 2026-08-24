@@ -124,6 +124,14 @@ export const en: Dictionary = {
     refundDelayBold: "it can take up to 15 days",
     refundDelayEnd: "for you to receive your money.",
   },
+  method: {
+    title: "How would you like to send it?",
+    ourLabel: "We ship it",
+    selfLabel: "I'll ship it myself",
+    selfHint:
+      "You choose the carrier and pay the postage. Afterwards you tell us the tracking number.",
+    free: "free",
+  },
   success: {
     title: "We have received your request!",
     body: "We have received your request and sent you an email with the next steps.",

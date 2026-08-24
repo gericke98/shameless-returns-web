@@ -1143,6 +1143,28 @@ export async function resetOrderReturn(orderId: string): Promise<void> {
       carrierUrl: null,
       returnStatus: null,
       stripePaymentIntent: null,
+      // The self-booked lane's four columns belong to the return being undone
+      // just as much as the tracking above, and cancel-before-posting is the
+      // PRIMARY self-booked cancel path — so leaving them set is not a corner
+      // case. Two things go wrong if they survive:
+      //
+      //  (a) `getSelfReturnsAwaitingTracking` still matches the row on every
+      //      clause, and the nudge sweep reads no line-item state. At day 3 the
+      //      customer is asked "Have you sent your return yet?" for a return we
+      //      cancelled and refunded; at day 10 ops gets an alert asserting the
+      //      Shopify return is live and the Amphora ticket still PENDING, both
+      //      false. That is the class of misleading alert that nearly caused a
+      //      wrong refund on #311329.
+      //  (b) `createSelfBookedReturn` reads a non-null `returnSubmittedAt` as a
+      //      duplicate submit and returns 200 — so a SECOND self-booked return
+      //      is silently swallowed: `returnFunction` does not revert and does
+      //      not alert, and the customer lands on /success with a live Shopify
+      //      return, no Amphora ticket, no instructions email and no tracking
+      //      link.
+      returnMethod: null,
+      returnSubmittedAt: null,
+      trackingSubmittedAt: null,
+      trackingNudgeStage: 0,
     })
     .where(eq(orders.id, orderId));
 

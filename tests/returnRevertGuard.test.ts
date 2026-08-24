@@ -85,6 +85,10 @@ vi.mock("@/db/queries", () => ({
   createReturn,
   getFulfillmentLineItems: async () => FULFILLMENT_LINE_ITEMS,
   getOrderById: async () => ({ shippingCountry: "Germany", shippingZip: "80933" }),
+  // `updateFinalOrder` reads the lane FRESH — the cached read is primed with a
+  // pre-`persistReturnMethod` snapshot on the free path — so this export has to
+  // exist for the module to run at all.
+  getOrderByIdFresh: async () => ({ shippingCountry: "Germany", shippingZip: "80933" }),
   getOrderProductsById: async () => state.rows,
   getOrderTotal: async () => TOTAL_ORDER,
 }));

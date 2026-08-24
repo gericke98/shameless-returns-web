@@ -5,6 +5,7 @@ import {
   createReturn,
   getFulfillmentLineItems,
   getOrderById,
+  getOrderByIdFresh,
   getOrderProductsById,
   getOrderTotal,
 } from "@/db/queries";
@@ -375,9 +376,23 @@ export async function updateFinalOrder(
   // One parcel, one weight: the band comes from the whole return, not from
   // any single product in it.
   const loadedForWeight = await loadBasket(id);
-  const returnFeeEuros = centsToEuros(
-    feesForWeight(orderFees, loadedForWeight?.basket.grams ?? 0).returnFeeCents
-  );
+  // A self-booked return pays its own courier, so the leg we declare to Shopify
+  // is zero — the same subtraction `createStripeUrl` already applied to the
+  // charge. Declaring the full leg here is the settlement half of the same
+  // deduction and would take it straight out of the refund the customer was
+  // shown.
+  //
+  // Read FRESH, not through `getOrderById`: that is request-scoped `cache()`d,
+  // and on the free path `decideMethod` has already primed it with the
+  // pre-`persistReturnMethod` snapshot, which still says null. A self-booked
+  // pure return is free by construction, so that is exactly the case this has
+  // to get right.
+  const selfBooked = (await getOrderByIdFresh(id))?.returnMethod === "SELF";
+  const returnFeeEuros = selfBooked
+    ? 0
+    : centsToEuros(
+        feesForWeight(orderFees, loadedForWeight?.basket.grams ?? 0).returnFeeCents
+      );
 
   const lines = await resolveFulfillmentLineItems(
     products.map((p) => ({ ...p, action: p.action || undefined })),

@@ -91,6 +91,19 @@ export function cancelEligibility(
     return { cancellable: true };
   }
 
+  // And once tracking DOES exist the parcel is presumed in the network, which
+  // the movement checks below cannot see: `readCarrierMovement` returns
+  // "not-moved" for any non-Correos carrier without a network call, on purpose
+  // — movement for those is meant to come from the Amphora `returnStatus` gate
+  // above. For a self-booked return that gate never closes in time. Domestic
+  // rows are skipped by the Amphora sync entirely, and an international one is
+  // only APROVED (deliberately NOT a moved status) until the parcel physically
+  // lands. So without this a customer could cancel and be refunded for a
+  // garment they had already posted, on both lanes. Tracking is only ever
+  // submitted after the post office, so failing closed here costs nothing
+  // legitimate.
+  if (order.returnMethod === "SELF" && order.locator) return blocked("in-transit");
+
   if (movement === "moved") return blocked("in-transit");
   if (movement === "unreadable") return blocked("carrier-unreadable");
 

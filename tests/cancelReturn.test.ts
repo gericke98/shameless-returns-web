@@ -286,6 +286,12 @@ describe("when a step fails", () => {
     // there is nothing on Amphora's side to cancel. Treating the 404 as fatal
     // would trap the customer in a return that exists only on our side.
     ORDER.returnMethod = "SELF";
+    // A self-booked return is only cancellable BEFORE the customer posts it,
+    // which is exactly a null locator: `cancelEligibility` treats tracking on a
+    // SELF row as "already in the network" and blocks. `freshOrder()` carries a
+    // Correos locator, which is not a state a self-booked return can be in
+    // while it is still cancellable.
+    ORDER.locator = null;
     behaviour.amphoraFails = true;
     behaviour.amphoraFailureStatus = 404;
 
@@ -299,6 +305,8 @@ describe("when a step fails", () => {
     // A warehouse still expecting a parcel is exactly what step 1 guards —
     // the SELF exemption is narrow to the 404 case only.
     ORDER.returnMethod = "SELF";
+    // Not yet posted — see the 404 case above.
+    ORDER.locator = null;
     behaviour.amphoraFails = true;
     behaviour.amphoraFailureStatus = 500;
 

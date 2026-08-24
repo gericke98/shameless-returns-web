@@ -20,6 +20,19 @@ import { loadBasket } from "@/lib/loadBasket";
 import { isAdmin } from "@/lib/requireAdmin";
 import { releaseExchangeReservation } from "./exchangeReservation";
 
+/**
+ * Did the customer ship this return with their own courier?
+ *
+ * Settlement is the SECOND place the return leg is collected — `createStripeUrl`
+ * is the first — and the two have to agree. A self-booked return is advertised
+ * as free and charged nothing up front, so deducting the leg here would take it
+ * from the refund instead, silently, after the customer was shown a larger
+ * number. Read from the row, never from the caller's object: `validateReturn`
+ * already refuses to trust it for anything that decides money.
+ */
+const isSelfBooked = (row: { returnMethod?: string | null } | null | undefined) =>
+  row?.returnMethod === "SELF";
+
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
 
@@ -84,8 +97,14 @@ export async function validateReturn(product: any, status: string, order: any) {
       // deducts the least and so favours the customer.
       const loaded = await loadBasket(String(order?.id ?? ""));
       const fees = feesForWeight(orderFees, loaded?.basket.grams ?? 0);
+      // A self-booked return paid its own courier. `createStripeUrl` charged
+      // nothing for the return leg and the portal showed the undocked figure,
+      // so deducting it here would dock the customer for shipping we never did
+      // ON TOP of the postage they bought themselves — less money than the
+      // number they were shown.
+      const returnFeeCents = isSelfBooked(dbOrder) ? 0 : fees.returnFeeCents;
       const giftCardValue =
-        (Number(trustedLine.price) - centsToEuros(fees.returnFeeCents)) * 1.15;
+        (Number(trustedLine.price) - centsToEuros(returnFeeCents)) * 1.15;
       const resultGiftCard = await processGiftCardReturn(
         customerId,
         giftCardValue,
@@ -166,7 +185,11 @@ export async function validateReturn(product: any, status: string, order: any) {
       }
     } else {
       if (product.return_id && product.return_line_item_id) {
-        let amountToRefund = Number(product.price) - 5;
+        // Same rule as the gift-card branch above: a self-booked return's
+        // return leg is zero at settlement, because it was zero at checkout.
+        const settlementOrder = await getOrderById(String(order?.id ?? ""));
+        let amountToRefund =
+          Number(product.price) - (isSelfBooked(settlementOrder) ? 0 : 5);
         result = await createRefund(
           product.return_id,
           product.return_line_item_id,

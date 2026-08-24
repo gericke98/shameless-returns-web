@@ -29,7 +29,12 @@ const alerts: any[] = [];
 const written: any[] = [];
 
 vi.mock("@/db/queries", () => ({
+  // The implementation reads via `getOrderByIdFresh`, deliberately bypassing
+  // React `cache()` — see the comment in actions/selfBookedReturn.ts. Kept
+  // both exports mocked so a regression back to the cached read still
+  // resolves an order rather than failing for an unrelated reason.
   getOrderById: async () => ORDER,
+  getOrderByIdFresh: async () => ORDER,
   getVariantSkusByIds: async () => ({ "1": "SKU-1" }),
 }));
 
@@ -144,5 +149,22 @@ describe("createSelfBookedReturn", () => {
 
     await expect(run()).resolves.toBe(200);
     expect(alerts).toHaveLength(1);
+  });
+
+  it("does not open a second ticket on a duplicate submit", async () => {
+    // A resubmit must see whatever the FIRST submit just wrote, not a snapshot
+    // read before it — a cached read here would open a second Amphora ticket
+    // and send a second instructions email for one parcel.
+    const queries = await import("@/db/queries");
+    vi.spyOn(queries, "getOrderByIdFresh").mockResolvedValueOnce({
+      ...ORDER,
+      returnSubmittedAt: new Date("2026-08-20T00:00:00Z"),
+    } as any);
+
+    await expect(run()).resolves.toBe(200);
+
+    expect(created).toHaveLength(0);
+    expect(written).toHaveLength(0);
+    expect(emails).toHaveLength(0);
   });
 });

@@ -3,7 +3,7 @@
 import { eq } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
-import { getOrderById, getVariantSkusByIds } from "@/db/queries";
+import { getOrderByIdFresh, getVariantSkusByIds } from "@/db/queries";
 import { amphoraOrderIdFromShopifyId, createAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
 import { sendSelfReturnInstructions } from "@/actions/selfReturnEmails";
@@ -27,7 +27,13 @@ import { readLocale } from "@/lib/i18n";
  * lanes identically.
  */
 export async function createSelfBookedReturn(id: string): Promise<number> {
-  const order = await getOrderById(id);
+  // Deliberately NOT `getOrderById` — that is wrapped in React `cache()` and
+  // would serve a stale row (from an earlier read in this warm serverless
+  // instance) to a second submit arriving right behind the first, defeating
+  // the idempotency guard below. `db/queries.ts` documents a real incident of
+  // exactly this staleness reaching production. `submitReturnTracking` reads
+  // fresh for the same reason — the two guards must not disagree.
+  const order = await getOrderByIdFresh(id);
   if (!order) return 404;
 
   // Idempotency, the same guard the other two lanes apply: a resubmit must not

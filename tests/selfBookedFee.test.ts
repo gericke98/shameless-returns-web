@@ -79,10 +79,25 @@ describe("SELF drops the return leg", () => {
     expect(chargedCents()).toBe(1100);
   });
 
-  it("charges a pure return nothing at all", async () => {
-    // The customer is owed money and pays their own postage, so there is
-    // nothing to collect and no Stripe session should exist.
-    basket.netAmount = 52.5;
+  it("still charges the return fee on a pure return when not self-booked", async () => {
+    // netAmount 3 against a 6.50 return fee: the customer owes the
+    // difference. This is the control half of the next test — same
+    // netAmount, only the method differs — so together they prove SELF
+    // actually changes the outcome rather than the two lanes coincidentally
+    // agreeing.
+    basket.netAmount = 3;
+
+    await priceIt("AMPHORA");
+
+    expect(chargedCents()).toBe(350);
+  });
+
+  it("charges a self-booked pure return nothing at all", async () => {
+    // Same netAmount as above, same order — only the method differs. A pure
+    // return's outboundLegCents is 0 regardless of method, and SELF charges
+    // outboundLegCents only, so nothing is owed and no Stripe session should
+    // exist.
+    basket.netAmount = 3;
 
     const result = await priceIt("SELF");
 

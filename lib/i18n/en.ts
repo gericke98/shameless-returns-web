@@ -132,6 +132,17 @@ export const en: Dictionary = {
       "You choose the carrier and pay the postage. Afterwards you tell us the tracking number.",
     free: "free",
   },
+  tracking: {
+    title: "Tell us the tracking number",
+    intro:
+      "Once you have sent the parcel, tell us who you sent it with so the warehouse can expect it.",
+    carrier: "Carrier",
+    number: "Tracking number",
+    submit: "Send",
+    permanent: "We cannot change this later, so please check it carefully.",
+    done: "Thank you! The warehouse now knows your parcel is on its way.",
+    error: "We could not save that. Check the details and try again.",
+  },
   success: {
     title: "We have received your request!",
     body: "We have received your request and sent you an email with the next steps.",

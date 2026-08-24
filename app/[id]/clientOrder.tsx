@@ -3,6 +3,7 @@ import { useMemo, useState, useTransition } from "react";
 import { ClientOrderProps } from "@/types";
 import type { ReturnMethod } from "@/lib/returnMethods";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
+import { TrackingCapture } from "@/app/[id]/components/trackingCapture";
 import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
@@ -59,6 +60,9 @@ export const ClientOrder = ({
               strip above the logo. Server-rendered in page.tsx and passed
               down, so eligibility is never decided on the client. */}
           {statusPanel}
+          {order.returnMethod === "SELF" && !order.locator && (
+            <TrackingCapture id={order.id} />
+          )}
           <OrderWindow
             position={position}
             name={name}

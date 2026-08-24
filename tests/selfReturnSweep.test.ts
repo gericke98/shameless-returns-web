@@ -7,6 +7,11 @@ const rows: any[] = [];
 const reminders: any[] = [];
 const alerts: any[] = [];
 const written: any[] = [];
+// One shared, ordered log. `written[0]` and `reminders[0]` are two
+// independent arrays with no relative sequence between them — only a single
+// interleaved log can prove the write happened BEFORE the send, not just that
+// both happened.
+const events: string[] = [];
 
 vi.mock("@/db/queries", () => ({
   getSelfReturnsAwaitingTracking: async () => rows,
@@ -14,6 +19,10 @@ vi.mock("@/db/queries", () => ({
 
 vi.mock("@/actions/selfReturnEmails", () => ({
   sendSelfReturnReminder: async (to: string) => {
+    if (to === "throws@example.com") {
+      throw new Error("Postmark is down");
+    }
+    events.push(`send:${to}`);
     reminders.push(to);
     return 200;
   },
@@ -29,6 +38,7 @@ vi.mock("@/db/drizzle", () => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
+      events.push(`stage:${values.trackingNudgeStage}`);
       written.push(values);
       return chain;
     },
@@ -60,6 +70,7 @@ beforeEach(() => {
   reminders.length = 0;
   alerts.length = 0;
   written.length = 0;
+  events.length = 0;
 });
 
 describe("sweepSelfReturns", () => {
@@ -78,6 +89,9 @@ describe("sweepSelfReturns", () => {
     await sweep();
 
     expect(written[0]).toEqual({ trackingNudgeStage: 1 });
+    // The load-bearing assertion: one shared, ordered log proves the write
+    // landed BEFORE the send fired, not merely that both happened.
+    expect(events).toEqual(["stage:1", "send:customer@example.com"]);
   });
 
   it("alerts a human after ten days", async () => {
@@ -97,11 +111,17 @@ describe("sweepSelfReturns", () => {
 
   it("keeps sweeping when one row throws", async () => {
     // One bad row must not rob the others of their notification — the same
-    // rule the Amphora sync applies.
-    rows.push(row({ email: null }), row({ id: "999", orderNumber: "#311175" }));
+    // rule the Amphora sync applies. The first row's send genuinely throws
+    // (see the "throws@example.com" special-case in the email mock above);
+    // the second row must still get its reminder.
+    rows.push(
+      row({ id: "bad-1", orderNumber: "#311175", email: "throws@example.com" }),
+      row({ id: "999", orderNumber: "#311176", email: "second@example.com" })
+    );
 
     const result = await sweep();
 
-    expect(result.reminded).toBeGreaterThanOrEqual(1);
+    expect(result.reminded).toBe(1);
+    expect(reminders).toEqual(["second@example.com"]);
   });
 });

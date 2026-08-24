@@ -196,6 +196,13 @@ vi.mock("@/db/queries", () => ({
     Object.values(ORDERS).find((o: any) => o.orderNumber === name),
 }));
 
+// The sweep is exercised on its own in tests/selfReturnSweep.test.ts. Here it
+// only needs to not pull in the real db connection, since this file mocks
+// none of `@/db/drizzle`.
+vi.mock("@/actions/selfReturnSweep", () => ({
+  sweepSelfReturns: async () => ({ reminded: 0, alerted: 0 }),
+}));
+
 async function call(headers: Record<string, string> = {}) {
   const { GET } = await import("@/app/api/cron/amphora-sync/route");
   return GET(new Request("https://x.test/api/cron/amphora-sync", { headers }));

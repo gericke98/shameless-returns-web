@@ -4,6 +4,7 @@ import { applyReturnStatus } from "@/actions/amphoraStatusSync";
 import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
 import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { isInternationalOrder } from "@/lib/countries";
+import { sweepSelfReturns } from "@/actions/selfReturnSweep";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -204,10 +205,6 @@ export async function GET(req: Request) {
 
   let selfReturns = { reminded: 0, alerted: 0 };
   try {
-    // Imported dynamically, not at module scope: it pulls in the real db
-    // connection, and the Amphora poll above must still run (and this route
-    // must still 401 correctly) even in a context with no DATABASE_URL.
-    const { sweepSelfReturns } = await import("@/actions/selfReturnSweep");
     selfReturns = await sweepSelfReturns();
   } catch (error: any) {
     // The Amphora poll above already did its work; a sweep failure must not

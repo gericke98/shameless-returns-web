@@ -4,6 +4,7 @@ import {
   text,
   pgTable,
   serial,
+  smallint,
   boolean,
   timestamp,
   index,
@@ -46,6 +47,18 @@ export const orders = pgTable("orders", {
   // webhook. Null for free returns, and for anything booked before 2026-08-12
   // — those are recovered by listing sessions for the customer's email.
   stripePaymentIntent: text("stripe_payment_intent"),
+  // Which lane shipped this return: 'CORREOS' | 'AMPHORA' | 'SELF'. Null on
+  // rows created before self-booking existed, which are inferred by country
+  // exactly as they were.
+  returnMethod: text("return_method"),
+  // When the return was confirmed. `orders` has no other timestamp column, so
+  // without this there is nothing to measure the abandonment window against.
+  returnSubmittedAt: timestamp("return_submitted_at", { withTimezone: true }),
+  // Null while a SELF return is still waiting for the customer's tracking.
+  trackingSubmittedAt: timestamp("tracking_submitted_at", { withTimezone: true }),
+  // 0 none, 1 reminder sent, 2 ops alerted. A stored fact, so a cron running
+  // every 15 minutes cannot re-send by recomputing from age.
+  trackingNudgeStage: smallint("tracking_nudge_stage").notNull().default(0),
 });
 
 export const ordersRelations = relations(orders, ({ many }) => ({

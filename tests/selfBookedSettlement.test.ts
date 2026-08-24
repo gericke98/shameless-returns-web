@@ -62,8 +62,17 @@ const LINE_ROWS = [
 ];
 const returnInputs: any[] = [];
 
+// `getOrderById` is request-scoped React `cache()`d, and on the FREE path
+// `decideMethod` primes it BEFORE `persistReturnMethod` writes the lane — so the
+// cached snapshot still says `returnMethod: null` while the row says "SELF".
+// Flipping this makes the two readers disagree exactly the way production does,
+// which is the only way a test can tell which one `updateFinalOrder` actually
+// calls. Default false, so every other test in this file is unaffected.
+const cachedIsStale = { value: false };
+
 vi.mock("@/db/queries", () => ({
-  getOrderById: async () => ORDER,
+  getOrderById: async () =>
+    cachedIsStale.value ? { ...ORDER, returnMethod: null } : ORDER,
   getOrderByIdFresh: async () => ORDER,
   getProducts: async () => [],
   getOrderTotal: async () => ({ ...TOTAL_ORDER, customer: { id: "c1" } }),
@@ -146,6 +155,7 @@ beforeEach(() => {
     returnMethod: null,
     products: [],
   });
+  cachedIsStale.value = false;
   dbLine.value = {
     id: 7,
     orderId: "13192219558214",
@@ -214,6 +224,29 @@ describe("settling a self-booked return", () => {
     // The other half of the same deduction: Shopify applies
     // `returnShippingFee` when the return is refunded, so leaving it at the
     // full leg docks the customer there instead.
+    ORDER.returnMethod = "SELF";
+
+    await createTheShopifyReturn();
+
+    expect(returnInputs).toHaveLength(1);
+    expect(returnInputs[0].returnShippingFee).toEqual({
+      amount: { amount: "0.00", currencyCode: "EUR" },
+    });
+  });
+
+  it("reads the lane FRESH, not through the request cache", async () => {
+    // Regression guard for the fix, not for the feature.
+    //
+    // `updateFinalOrder` must call `getOrderByIdFresh`. Every other test here
+    // mocks both readers to the same object, so swapping the call back to the
+    // cached `getOrderById` would leave them all green while silently
+    // re-introducing the settlement double-charge for the headline case: a free
+    // self-booked return on the free path, where `decideMethod` has already
+    // primed the cache with the pre-persist snapshot.
+    //
+    // Here the two readers disagree the way they do in production — cached says
+    // null, the row says SELF. Reading the wrong one declares the full 6.50.
+    cachedIsStale.value = true;
     ORDER.returnMethod = "SELF";
 
     await createTheShopifyReturn();

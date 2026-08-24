@@ -294,7 +294,7 @@ export async function updateFinalOrder(
     const products = await db.query.productsOrder.findMany({
       where: eq(productsOrder.orderId, id),
     });
-    await Promise.all(
+    const refusals = await Promise.all(
       products.map(async (product) => {
         // A row carrying a `return_id` has a REAL Shopify return behind it, and
         // reverting cannot delete that return — it only blanks our copy of it,
@@ -312,7 +312,7 @@ export async function updateFinalOrder(
           console.error(
             `Order ${id}: refusing to revert variant ${product.variant_id} — it already carries Shopify return ${product.return_id}. Needs manual review, not a revert.`
           );
-          return;
+          return true;
         }
         if (product.confirmed) {
           await db
@@ -325,12 +325,24 @@ export async function updateFinalOrder(
               )
             );
         }
+        return false;
       })
     );
     // The return is being undone, so the stock hold must go with it —
     // otherwise the replacement garments stay frozen for a return that no
     // longer exists.
-    await releaseExchangeReservation(id);
+    //
+    // UNLESS the revert was refused. A refused line carries a live Shopify
+    // return, and the hold belongs to THAT return — releasing it frees the
+    // replacement garment for a return that very much still exists. Order
+    // #311329 (2026-08-21): a paid Netherlands exchange whose Amphora booking
+    // reported 501 after the collection had in fact been committed. The line
+    // refused correctly, the return, the collection and the customer's
+    // confirmation email all survived — and this call, one level outside the
+    // loop's result, quietly deleted the draft order holding their Medium.
+    if (!refusals.some(Boolean)) {
+      await releaseExchangeReservation(id);
+    }
     revalidatePath("/", "layout");
     return;
   }

@@ -3,7 +3,7 @@ import { createInternationalReturn, isInternationalOrder } from "@/actions/ampho
 import { alertOps } from "@/actions/opsAlert";
 import { updateFinalOrder } from "@/actions/updateOrder";
 import db from "@/db/drizzle";
-import { getOrderById } from "@/db/queries";
+import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import { stripe } from "@/lib/stripe";
@@ -45,7 +45,9 @@ async function alertPaidButNoReturn(
   try {
     let order: Awaited<ReturnType<typeof getOrderById>> | null = null;
     try {
-      order = await getOrderById(id);
+      // Fresh, not the request-scoped cached copy: this runs AFTER the revert,
+      // and the whole point is to report what the revert actually left behind.
+      order = await getOrderByIdFresh(id);
     } catch {
       // Reporting beats accuracy here: an alert naming only the raw id is far
       // better than no alert because the lookup that failed a moment ago is
@@ -73,15 +75,60 @@ async function alertPaidButNoReturn(
         ``,
         `Failure:   ${detail}`,
         ``,
-        `The database has been reverted, so this order looks unsubmitted in the`,
-        `dashboard and the portal will ask the customer to pay a second time.`,
-        `Either re-run the return for the existing payment or refund it —`,
-        `do not leave it, and do not let them pay twice.`,
+        ...survivingReturn(order),
       ].join("\n")
     );
   } catch (alertError) {
     console.error("Could not raise the paid-but-no-return alert:", alertError);
   }
+}
+
+/**
+ * What the revert actually left behind, in the alert's own words.
+ *
+ * `updateFinalOrder` REFUSES to revert any line already carrying a Shopify
+ * return (the #310957 lesson), so "the database has been reverted" is false
+ * whenever the return was created before the booking failed — which is the
+ * normal ordering. Order #311329 (2026-08-21) was alerted with that text while
+ * its return, its Amphora collection, its DHL tracking and its confirmation
+ * email were all alive and correct, and the alert told the responder to refund
+ * the customer or re-run the return. Both would have been wrong.
+ *
+ * An alert that misdescribes the damage is worse than a quiet failure: it sends
+ * a human to break something that works.
+ */
+function survivingReturn(
+  order:
+    | { products?: Array<{ confirmed?: boolean | null; return_id?: string | null }> }
+    | null
+    | undefined
+): string[] {
+  const live = (order?.products ?? []).filter(
+    (line) => line?.confirmed === true && line?.return_id
+  );
+
+  if (live.length === 0) {
+    return [
+      `The database has been reverted, so this order looks unsubmitted in the`,
+      `dashboard and the portal will ask the customer to pay a second time.`,
+      `Either re-run the return for the existing payment or refund it —`,
+      `do not leave it, and do not let them pay twice.`,
+    ];
+  }
+
+  return [
+    `The revert was REFUSED: this order still carries a live Shopify return.`,
+    ...live.map((line) => `  ${line.return_id}`),
+    ``,
+    `So the customer is NOT back at square one, and the portal will not ask`,
+    `them to pay again. Do not refund and do not re-run blindly — check what`,
+    `actually exists first: the Shopify return above, whether the carrier was`,
+    `booked (orders.locator / orders.carrier), and whether the customer was`,
+    `emailed. The 15-minute Amphora sync may have reconciled it already.`,
+    ``,
+    `Whatever you find, confirm the exchange stock hold is still in place`,
+    `(orders.exchange_reservation_id) — a refused revert used to release it.`,
+  ];
 }
 
 export async function POST(req: Request) {

@@ -27,6 +27,10 @@ const ORDER: any = {
   orderNumber: "#310741",
   email: "coeneleanor@gmail.com",
   shippingCountry: "United States",
+  // What the revert actually left behind. Empty = a clean revert; a line
+  // carrying a return_id = a revert that was refused because the Shopify
+  // return is real.
+  products: [],
 };
 
 const alerts: Array<{ subject: string; body: string }> = [];
@@ -61,7 +65,12 @@ vi.mock("@/actions/amphoraReturn", () => ({
   isInternationalOrder: () => false,
 }));
 
-vi.mock("@/db/queries", () => ({ getOrderById: async () => ORDER }));
+vi.mock("@/db/queries", () => ({
+  getOrderById: async () => ORDER,
+  // The alert reads the order AFTER the revert ran, so it must not be served
+  // the request-scoped cached copy from before it.
+  getOrderByIdFresh: async () => ORDER,
+}));
 
 vi.mock("@/db/drizzle", () => {
   const chain: any = {
@@ -105,6 +114,7 @@ beforeEach(() => {
   updateFinalOrderCalls.length = 0;
   behaviour.updateFinalOrderThrows = false;
   behaviour.labelStatus = 200;
+  ORDER.products = [];
   vi.resetModules();
 });
 
@@ -170,5 +180,61 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
     await post();
 
     expect(alerts.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("the alert must describe the state that actually exists", () => {
+  // Order #311329 (2026-08-21). A paid Netherlands exchange: the Amphora
+  // booking reported 501, the webhook reverted — and the per-line revert
+  // REFUSED, because every line carried a live Shopify return. The alert said
+  // "The database has been reverted, so this order looks unsubmitted" and
+  // "the portal will ask the customer to pay a second time". Both were false.
+  // The return, the collection, the carrier and the customer's confirmation
+  // email all existed.
+  //
+  // A responder who believed it would have refunded a customer whose exchange
+  // was already booked, or re-run a return that was already there.
+  const live = () => {
+    ORDER.products = [
+      { confirmed: true, return_id: "gid://shopify/Return/57356845382" },
+    ];
+  };
+
+  it("does not claim a revert that was refused", async () => {
+    live();
+    behaviour.labelStatus = 501;
+
+    await post();
+
+    expect(alerts[0].body).not.toContain("has been reverted");
+  });
+
+  it("does not threaten a second charge when the return is still live", async () => {
+    live();
+    behaviour.labelStatus = 501;
+
+    await post();
+
+    expect(alerts[0].body).not.toContain("pay a second time");
+  });
+
+  it("says the Shopify return survived, and names it", async () => {
+    live();
+    behaviour.labelStatus = 501;
+
+    await post();
+
+    expect(alerts[0].body).toContain("gid://shopify/Return/57356845382");
+  });
+
+  it("still gives the old guidance when the revert genuinely undid everything", async () => {
+    // Nothing confirmed: the row really is back to "unsubmitted", and the
+    // original warning is the correct one.
+    ORDER.products = [{ confirmed: false, return_id: null }];
+    behaviour.labelStatus = 501;
+
+    await post();
+
+    expect(alerts[0].body).toContain("pay a second time");
   });
 });

@@ -2,7 +2,7 @@
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
 import db from "./drizzle";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
@@ -164,6 +164,23 @@ export async function getOrderByNumberFresh(orderNumber: string) {
     with: {
       products: true,
     },
+  });
+}
+
+/**
+ * Self-booked returns still waiting for the customer's tracking number.
+ *
+ * Deliberately NOT cached — the nudge sweep must see stage changes made by its
+ * own previous pass.
+ */
+export async function getSelfReturnsAwaitingTracking() {
+  return db.query.orders.findMany({
+    where: and(
+      eq(orders.returnMethod, "SELF"),
+      isNull(orders.trackingSubmittedAt),
+      isNotNull(orders.returnSubmittedAt),
+      lt(orders.trackingNudgeStage, 2)
+    ),
   });
 }
 

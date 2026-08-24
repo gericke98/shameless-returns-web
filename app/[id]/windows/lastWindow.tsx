@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo } from "react";
 import { Progress } from "@/components/ui/progress";
 import { productsOrder } from "@/db/schema";
 import { Product } from "@/types";
@@ -18,6 +18,14 @@ type Props = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
   credito: boolean | null;
+  /**
+   * The customer's claimed return lane. Lifted up to ClientOrder — the
+   * lowest common ancestor of this component and AsyncButton — so the choice
+   * made here actually reaches the submit button. See ReturnMethodChoice for
+   * the gate that decides whether the control is shown at all.
+   */
+  method: ReturnMethod;
+  setMethod: React.Dispatch<React.SetStateAction<ReturnMethod>>;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
   allProducts: Product[];
@@ -28,6 +36,8 @@ const LastWindowBase = ({
   position,
   setPosition,
   credito,
+  method,
+  setMethod,
   onItemChange,
   id,
   allProducts,
@@ -35,7 +45,6 @@ const LastWindowBase = ({
   const fees = useFees();
   const t = useT();
   const locale = useLocale();
-  const [method, setMethod] = useState<ReturnMethod>("CORREOS");
   const { finalTotal, returnLegCents } = useMemo(() => {
     // One shared valuation (lib/basket.ts) — the same one payments.ts charges
     // from. Only the numbers are needed here; nothing on this screen renders a

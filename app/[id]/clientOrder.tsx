@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState, useTransition } from "react";
 import { ClientOrderProps } from "@/types";
+import type { ReturnMethod } from "@/lib/returnMethods";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
 import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
@@ -17,6 +18,10 @@ export const ClientOrder = ({
 }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
   const [credito, setCredito] = useState<boolean>(true);
+  // Lowest common ancestor of ReturnMethodChoice (inside LastWindow) and
+  // AsyncButton, which are siblings under this component. "CORREOS" matches
+  // what AsyncButton effectively sent before self-booking existed.
+  const [method, setMethod] = useState<ReturnMethod>("CORREOS");
   const [isPending, startTransition] = useTransition();
   const t = useT();
 
@@ -63,6 +68,8 @@ export const ClientOrder = ({
             setPosition={setPosition}
             credito={credito}
             setCredito={setCredito}
+            method={method}
+            setMethod={setMethod}
             onItemChange={handleItemChange}
             allProducts={allProducts}
           />
@@ -73,6 +80,7 @@ export const ClientOrder = ({
                 id={id}
                 isCredit={credito}
                 email={order.email}
+                method={method}
               />
             ) : (
               <ContinueButton

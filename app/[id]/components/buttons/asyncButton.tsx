@@ -17,12 +17,12 @@ export const AsyncButton = ({
   isCredit: boolean;
   email: string;
   /**
-   * The customer's claimed shipping lane, from ReturnMethodChoice. Optional:
-   * the server re-derives the real lane via resolveReturnMethod and ignores
-   * any claim that is not exactly "SELF", so an absent value here just means
-   * "no self-booking claim" — identical to today's behaviour.
+   * The customer's claimed shipping lane, from ReturnMethodChoice (lifted up
+   * to ClientOrder, the lowest common ancestor of the choice and this
+   * button). Not trusted as-is: the server re-derives the real lane via
+   * resolveReturnMethod and ignores any claim that is not exactly "SELF".
    */
-  method?: ReturnMethod;
+  method: ReturnMethod;
 }) => {
   const t = useT();
   const [isPending, startTransition] = useTransition();

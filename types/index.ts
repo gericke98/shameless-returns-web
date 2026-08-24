@@ -1,5 +1,6 @@
 import { orders, productsOrder } from "@/db/schema";
 import type { TrackingPhase, TrackingStatus } from "@/lib/trackingStatus";
+import type { ReturnMethod } from "@/lib/returnMethods";
 import { Dispatch, ReactNode, SetStateAction } from "react";
 
 // ==========================================
@@ -320,6 +321,15 @@ export type ClientOrderWindowContentProps = {
   setPosition: Dispatch<SetStateAction<number>>;
   credito: boolean;
   setCredito: Dispatch<SetStateAction<boolean>>;
+  /**
+   * The customer's claimed return lane, chosen on the summary screen
+   * (ReturnMethodChoice, inside LastWindow) and consumed by AsyncButton — two
+   * siblings of OrderWindow under ClientOrder. Threaded through as plain
+   * props, same as credito/setCredito, so the choice actually reaches the
+   * submit button instead of dying inside LastWindow's own state.
+   */
+  method: ReturnMethod;
+  setMethod: Dispatch<SetStateAction<ReturnMethod>>;
 };
 
 export type OrderWindowContentProps = {
@@ -332,6 +342,8 @@ export type OrderWindowContentProps = {
   setCredito: Dispatch<SetStateAction<boolean>>;
   credito: boolean;
   allProducts: Product[];
+  method: ReturnMethod;
+  setMethod: Dispatch<SetStateAction<ReturnMethod>>;
 };
 
 export type Prices = {

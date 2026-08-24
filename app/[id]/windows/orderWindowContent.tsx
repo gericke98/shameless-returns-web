@@ -34,6 +34,8 @@ export const OrderWindowContent = ({
   setPosition,
   setCredito,
   credito,
+  method,
+  setMethod,
   onItemChange,
   allProducts,
 }: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
@@ -93,6 +95,8 @@ export const OrderWindowContent = ({
         position={position}
         setPosition={setPosition}
         credito={credito}
+        method={method}
+        setMethod={setMethod}
         onItemChange={onItemChange}
         id={id}
         allProducts={allProducts}

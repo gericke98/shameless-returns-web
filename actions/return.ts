@@ -115,12 +115,40 @@ async function persistOrderLocale(id: string) {
  * Must run BEFORE `createStripeUrl` — that call reads the order through the
  * request-scoped `cache()`d `getOrderById`, so a later write would be invisible
  * to the free path's own read.
+ *
+ * Unlike `persistOrderLocale`, a failure here is NOT best-effort. The locale
+ * has a sane fallback; this column decides which lane the webhook books, so a
+ * swallowed failure prices the checkout at the SELF rate (outbound leg only)
+ * and then books a full Correos/Amphora lane. Reports whether the write landed
+ * so the caller can price what it will actually book.
+ *
+ * It becomes deterministically reachable once the deferred DDL lands: the
+ * `orders_self_return_needs_carrier` CHECK rejects `return_method = 'SELF'` on
+ * a row with a locator and no carrier — exactly a live Correos label. A
+ * customer with one who starts a second, self-booked return on the remaining
+ * items trips it.
  */
-async function persistReturnMethod(id: string, method: ReturnMethod) {
+async function persistReturnMethod(id: string, method: ReturnMethod): Promise<boolean> {
   try {
     await db.update(orders).set({ returnMethod: method }).where(eq(orders.id, id));
+    return true;
   } catch (error) {
-    console.error(`Failed to persist return method for order ${id}:`, error);
+    await alertOps(
+      `[returns] RETURN METHOD NOT PERSISTED — order ${id}`,
+      [
+        `The customer's chosen return lane (${method}) could not be written to the order.`,
+        ``,
+        `Order:   ${id}`,
+        `Failure: ${error instanceof Error ? error.message : String(error)}`,
+        ``,
+        `The row is the only channel that survives the Stripe redirect, so the`,
+        `webhook would have booked the wrong lane. The submit has fallen back to`,
+        `the address-derived lane and priced the checkout for THAT, so the`,
+        `customer is charged correctly — they just did not get the self-booked`,
+        `option they asked for. Check the column, and the CHECK constraint.`,
+      ].join("\n")
+    );
+    return false;
   }
 }
 
@@ -202,8 +230,18 @@ export async function returnFunction(
   // Resolved and persisted before createStripeUrl for the same reason as the
   // locale above: the webhook has no session and no client state, so the row
   // is the only channel that survives the redirect.
-  const method = await decideMethod(id, claimedMethod);
-  await persistReturnMethod(id, method);
+  let method = await decideMethod(id, claimedMethod);
+  // If the write did not land, the webhook cannot know the customer chose SELF
+  // — it will read a null column and book the address-derived lane. Pricing
+  // must follow the lane we will actually book, or the customer pays the
+  // outbound leg only and then gets a full Correos/Amphora booking on top.
+  if (!(await persistReturnMethod(id, method)) && method === "SELF") {
+    const order = await getOrderById(id);
+    method = defaultMethodFor(
+      order?.shippingCountry,
+      process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
+    );
+  }
 
   // Whether the customer owes anything is decided server-side, inside
   // createStripeUrl. A null URL means nothing to pay.

@@ -16,6 +16,7 @@ import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
+import type { ReturnMethod } from "@/lib/returnMethods";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect)[];
@@ -23,6 +24,16 @@ type Props = {
   final: boolean;
   credito?: boolean;
   allProducts?: Product[];
+  /**
+   * The lane the customer has chosen, where a choice has been offered. This box
+   * and the refund paragraph below it are rendered two lines apart on the same
+   * screen, so a component that cannot see the choice states a total that
+   * disagrees with the one beside it by exactly the return leg — and itemises a
+   * return-shipping charge the customer is not paying. Optional: the earlier
+   * windows render before the choice exists, and undefined behaves exactly as
+   * before self-booking.
+   */
+  method?: ReturnMethod;
 };
 
 export const SummaryComponent = ({
@@ -31,6 +42,7 @@ export const SummaryComponent = ({
   final,
   credito,
   allProducts = [],
+  method,
 }: Props) => {
   const t = useT();
   const locale = useLocale();
@@ -66,9 +78,14 @@ export const SummaryComponent = ({
     fees,
     basket
   );
-  const shippingCost = centsToEuros(feeCents);
-  // Split for display only. The charge is feeCents; these two add up to it.
-  const returnLegCost = centsToEuros(returnLegCents);
+  // Mirror actions/payments.ts exactly: a self-booked return pays the outbound
+  // leg only, never the return leg. The customer is paying their own courier
+  // for that journey.
+  const selfBooked = method === "SELF";
+  const chargeCents = selfBooked ? outboundLegCents : feeCents;
+  const shippingCost = centsToEuros(chargeCents);
+  // Split for display only. The charge is chargeCents; these two add up to it.
+  const returnLegCost = centsToEuros(selfBooked ? 0 : returnLegCents);
   const outboundLegCost = centsToEuros(outboundLegCents);
 
   const totalPrice = basket.netAmount - shippingCost;
@@ -84,7 +101,11 @@ export const SummaryComponent = ({
   // anything was selected. An exchange-only basket was charged shipping under
   // a heading that did not mention it.
   const hasNewItems = itemsToCambio.length > 0;
-  const showsShipping = shipping && itemsToDevolver.length > 0;
+  // `chargeCents > 0` because a self-booked pure return is charged nothing at
+  // all: heading the section "& Shipping" and itemising "- 0.00" bills the
+  // customer, on screen, for a leg they arranged and paid for themselves.
+  const showsShipping =
+    shipping && itemsToDevolver.length > 0 && chargeCents > 0;
 
   const creditBonus = credito ? totalPrice * 0.15 : 0;
   const finalTotal = credito ? totalPrice * 1.15 : totalPrice;

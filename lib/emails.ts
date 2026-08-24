@@ -394,6 +394,14 @@ const SELF_COPY = {
     ],
     addressTitle: "Dirección de envío:",
     trackingCta: "Enviar mi número de seguimiento",
+    // The link lands on `/[id]`, which redirects to the lookup form without a
+    // live portal session — and ORDER_SESSION_TTL_MS is 2 hours. This email is
+    // read AFTER the post office, and the day-3 reminder is by construction
+    // ~72h after the session was issued, so the customer will be asked to
+    // identify themselves essentially every time. Saying so beforehand is the
+    // difference between "log in again" and "this link is broken".
+    linkNote:
+      "Te pediremos tu número de pedido y tu email para identificarte — es el mismo email al que te hemos enviado este mensaje.",
     trackingWhy:
       "Sin el número de seguimiento no podemos avisar al almacén de que tu paquete está en camino, y tu reembolso puede retrasarse.",
     customs:
@@ -420,6 +428,9 @@ const SELF_COPY = {
     ],
     addressTitle: "Shipping address:",
     trackingCta: "Send us my tracking number",
+    // See the Spanish note above.
+    linkNote:
+      "We will ask for your order number and email to identify you — the same email address this message was sent to.",
     trackingWhy:
       "Without the tracking number we cannot tell the warehouse your parcel is on its way, and your refund may be delayed.",
     customs:
@@ -461,6 +472,7 @@ function selfReturnShell(
         <p ${p}>
           <a href="${selfReturnLink(orderId, portalUrl)}" style="color: #0073e6;">${c.trackingCta}</a>
         </p>
+        <p ${p}>${c.linkNote}</p>
         <p ${p}>${c.trackingWhy}</p>
         <p ${p}>${c.customs}</p>
         <p ${p}>${c.contact}

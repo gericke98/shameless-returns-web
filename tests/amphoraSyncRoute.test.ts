@@ -213,6 +213,9 @@ beforeEach(() => {
   state.returns = [OURS, RECREATED, THEIRS, UNKNOWN];
   state.listThrows = false;
   ORDERS["13150000000000"].products = [{ id: "p5", confirmed: false }];
+  // The lane is per-test; anything but SELF behaves as it did before
+  // self-booking existed.
+  delete ORDERS["13192219558214"].returnMethod;
   process.env.CRON_SECRET = "s3cret";
 });
 
@@ -346,6 +349,40 @@ describe("amphora-sync cron — scope and resilience", () => {
 
     expect(body.stranded).toBe(1);
     expect(body.skippedNoReturn).toBe(1);
+  });
+
+  it("does not call a pending self-booked return stranded", async () => {
+    // A SELF international ticket sits at PENDING with no carrier for up to ten
+    // days BY DESIGN: there is no collection to book, and the carrier is not
+    // known until the customer has been to the post office and told us. Without
+    // the exclusion it matches on every pass, so the warning the team added to
+    // catch genuinely stranded collections fires every 15 minutes about a
+    // return that is behaving exactly as intended — and an alarm that is always
+    // on is an alarm nobody reads.
+    ORDERS["13192219558214"].returnMethod = "SELF";
+    state.returns = [
+      { ...OURS, internal_status: "PENDING", carrier: null, carrier_number: null },
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    // Still acted on — the status is synced as usual. Only the alarm is silent.
+    expect(body.scanned).toBe(1);
+    expect(body.stranded).toBe(0);
+  });
+
+  it("still reports a carrier-less collection we DID book as stranded", async () => {
+    // The control half: same fixture, same missing carrier, only the lane
+    // differs — so the two together prove the exclusion is scoped to SELF
+    // rather than switching the alarm off for everyone.
+    ORDERS["13192219558214"].returnMethod = "AMPHORA";
+    state.returns = [
+      { ...OURS, internal_status: "PENDING", carrier: null, carrier_number: null },
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.stranded).toBe(1);
   });
 
   it("names the stranded orders in the log, so Vercel shows who is waiting", async () => {

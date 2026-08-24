@@ -60,7 +60,15 @@ export const ClientOrder = ({
               strip above the logo. Server-rendered in page.tsx and passed
               down, so eligibility is never decided on the client. */}
           {statusPanel}
-          {order.returnMethod === "SELF" && !order.locator && (
+          {/* Gated on the two facts that actually describe "a self-booked
+              return is waiting for its tracking number", not on the lane alone.
+              `returnMethod` is written BEFORE the Stripe redirect and is not
+              evidence a return exists: a customer who abandoned checkout would
+              otherwise be shown this panel forever, and `submitReturnTracking`
+              would accept the submission (it only checks the lane), writing
+              tracking onto an order with no return and firing an
+              `approveAmphoraReturn` 404 into a false ops alert. */}
+          {order.returnSubmittedAt != null && order.trackingSubmittedAt == null && (
             <TrackingCapture id={order.id} />
           )}
           <OrderWindow

@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getOrderByIdFresh, getVariantSkusByIds } from "@/db/queries";
@@ -45,10 +45,27 @@ export async function createSelfBookedReturn(id: string): Promise<number> {
     return 200;
   }
 
-  await db
+  // ...and the check above is only a fast-path rejection. It is check-then-act,
+  // so two near-simultaneous submits (a double-click that beats the disabled
+  // state, a retried POST, two open tabs) can both read a null
+  // `returnSubmittedAt` before either write lands — and then both open an
+  // Amphora ticket and both email the customer. The database has to arbitrate,
+  // exactly as `submitReturnTracking` makes it arbitrate the tracking slot:
+  // `isNull(orders.returnSubmittedAt)` in the WHERE means only a row that is
+  // STILL unsubmitted gets written, and `.returning()` says whether ours was
+  // the write that landed.
+  const claimed = await db
     .update(orders)
     .set({ returnMethod: "SELF", returnSubmittedAt: new Date() })
-    .where(eq(orders.id, id));
+    .where(and(eq(orders.id, id), isNull(orders.returnSubmittedAt)))
+    .returning({ id: orders.id });
+
+  if (claimed.length === 0) {
+    console.warn(
+      `Order ${id}: lost the self-booked submit race — another submit already claimed it.`
+    );
+    return 200;
+  }
 
   // Everything past this point is best-effort and must not fail the return:
   // the customer's return exists the moment the row above is written, and

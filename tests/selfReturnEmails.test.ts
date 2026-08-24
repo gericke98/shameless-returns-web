@@ -59,6 +59,39 @@ describe("self-booked return instructions", () => {
     expect(mail.HtmlBody.toLowerCase()).not.toContain("etiqueta adjunta");
   });
 
+  it.each(["es", "en"] as const)(
+    "warns, in %s, that the link will ask them to identify themselves",
+    (locale) => {
+      // ORDER_SESSION_TTL_MS is 2 hours and `/[id]` redirects to the lookup
+      // form without a live session. The two-phase design means the customer
+      // comes back AFTER the post office, and the day-3 reminder is by
+      // construction ~72h after the session was issued — so this link asks for
+      // a login essentially every time. Unannounced, on the very email whose
+      // job is to rescue an abandoned return, that reads as a broken link.
+      const instructions = buildSelfReturnInstructionsEmail(
+        "Ferran",
+        locale,
+        "132210",
+        PORTAL_URL
+      );
+      const reminder = buildSelfReturnReminderEmail(
+        "Ferran",
+        locale,
+        "132210",
+        PORTAL_URL
+      );
+
+      const expected =
+        locale === "es"
+          ? "Te pediremos tu número de pedido y tu email"
+          : "We will ask for your order number and email";
+
+      // Both emails carry the same link, so both need the same warning.
+      expect(instructions.HtmlBody).toContain(expected);
+      expect(reminder.HtmlBody).toContain(expected);
+    }
+  );
+
   it("ships in both languages", () => {
     const es = buildSelfReturnInstructionsEmail(
       "Ferran",

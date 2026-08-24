@@ -59,6 +59,10 @@ vi.mock("@/actions/opsAlert", () => ({
   },
 }));
 
+// Simulates a competitor submit winning the conditional UPDATE between our
+// read and our write — the race the atomic guard exists to stop.
+let raceLoser = false;
+
 vi.mock("@/db/drizzle", () => {
   const chain: any = {
     update: () => chain,
@@ -66,7 +70,11 @@ vi.mock("@/db/drizzle", () => {
       written.push(values);
       return chain;
     },
-    where: () => Promise.resolve(),
+    where: () => chain,
+    // The real code awaits `.returning(...)`, not `.where(...)`: whether OUR
+    // write actually landed, or a competitor already claimed the row, is
+    // decided by the database, so it has to be decided here.
+    returning: async () => (raceLoser ? [] : [{ id: ORDER.id }]),
   };
   return { default: chain };
 });
@@ -94,6 +102,7 @@ beforeEach(() => {
   emails.length = 0;
   alerts.length = 0;
   written.length = 0;
+  raceLoser = false;
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
 });
 
@@ -149,6 +158,25 @@ describe("createSelfBookedReturn", () => {
 
     await expect(run()).resolves.toBe(200);
     expect(alerts).toHaveLength(1);
+  });
+
+  it("opens no second ticket when a concurrent submit wins the race", async () => {
+    // The sequential check above is check-then-act: two near-simultaneous
+    // submits (a double-click that beats the disabled state, a retried POST,
+    // two open tabs) can both read a null `returnSubmittedAt` before either
+    // write lands. The conditional UPDATE's WHERE matches only a row that is
+    // STILL unsubmitted, so the loser's update affects zero rows — and it must
+    // stop there, before Amphora and before the email. Two tickets for one
+    // parcel is what the warehouse then has to untangle; two instructions
+    // emails is what the customer sees.
+    //
+    // This is the same shape Task 6 already fixed in `selfBookedTracking.ts`.
+    raceLoser = true;
+
+    await expect(run()).resolves.toBe(200);
+
+    expect(created).toHaveLength(0);
+    expect(emails).toHaveLength(0);
   });
 
   it("does not open a second ticket on a duplicate submit", async () => {

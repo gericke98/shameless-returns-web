@@ -149,6 +149,40 @@ describe("the method thread from the summary screen to submit", () => {
     );
   });
 
+  it("shows one total, not two, when the customer chooses to ship it themselves", async () => {
+    // LastWindow computes its own total in a useMemo and renders
+    // <SummaryComponent> two lines below the choice control. Until
+    // SummaryComponent was given `method` it computed the fee its own way, so
+    // the "Total refund" box and the refund paragraph beneath it disagreed by
+    // exactly the return leg — and the box itemised a return-shipping charge
+    // the customer is not paying.
+    //
+    // One 50.00 item, a 5.00 return leg, pure return: our lane refunds 45.00,
+    // SELF refunds the full 50.00.
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    // The control half first, before anything is clicked: the total box and the
+    // refund paragraph both say 45.00, and the return leg is itemised.
+    expect(screen.getAllByText("€45.00")).toHaveLength(2);
+    expect(screen.getAllByText("-€5.00")).toHaveLength(1);
+
+    const selfLabel = screen.getByText(en.method.selfLabel);
+    const selfRadio = selfLabel
+      .closest("label")
+      ?.querySelector('input[type="radio"]');
+    await user.click(selfRadio as Element);
+
+    // The box and the paragraph, both now stating the same, undocked number.
+    // (The third 50.00 is the "Items to return" subtotal, which never moved.)
+    expect(screen.queryByText("€45.00")).toBeNull();
+    expect(screen.getAllByText("€50.00")).toHaveLength(3);
+    // And the return-shipping line is gone rather than shown at zero: the
+    // customer is paying their own courier for that leg.
+    expect(screen.queryByText("-€5.00")).toBeNull();
+    expect(screen.queryByText("-€0.00")).toBeNull();
+  });
+
   it("still sends the default lane when the customer changes nothing", async () => {
     const user = userEvent.setup();
     render(<Harness />);

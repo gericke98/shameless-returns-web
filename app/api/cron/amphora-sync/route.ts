@@ -73,7 +73,11 @@ export async function GET(req: Request) {
   const matches = matchReturnsToOrderIds(returns);
 
   const changed: Array<Record<string, unknown>> = [];
-  const acted: typeof matches = [];
+  // Carries the order's lane alongside the return, because the stranded check
+  // below has to exclude self-booked tickets — see there.
+  const acted: Array<
+    (typeof matches)[number] & { returnMethod?: string | null }
+  > = [];
   let scanned = 0;
   let skipped = 0;
   let skippedUnknownCountry = 0;
@@ -106,13 +110,13 @@ export async function GET(req: Request) {
       // carrier that happened to deliver it. Spain is Correos on our side, so
       // a return against a domestic order is never ours to apply.
       //
-      // This is checked for EVERY match, `external_id` ones included. We create
-      // Amphora returns for international orders only — `actions/return.ts` and
-      // the Stripe webhook both gate on `isInternationalOrder` — so it is
-      // already true by construction for anything we created, and applying it
-      // unconditionally costs nothing while removing our dependence on Amphora
-      // never populating `external_id` themselves. The Correos tracking a
-      // Spanish customer is actively watching is what this protects.
+      // This is checked for EVERY match, `external_id` ones included — and it
+      // is now the only thing keeping domestic rows out, because the SELF lane
+      // creates Amphora tickets for DOMESTIC orders too (`createSelfBookedReturn`
+      // opens one with an `external_id` whatever the country, so the warehouse
+      // is expecting the parcel). It was already applied unconditionally, which
+      // is why that lane needed no change here. The Correos tracking a Spanish
+      // customer is actively watching is what this protects.
       if (!isInternationalOrder(order.shippingCountry)) {
         skipped += 1;
 
@@ -152,7 +156,7 @@ export async function GET(req: Request) {
       }
 
       scanned += 1;
-      acted.push(match);
+      acted.push({ ...match, returnMethod: (order as any).returnMethod });
 
       const outcome = await applyReturnStatus(order as any, {
         id: ret.id,
@@ -187,8 +191,17 @@ export async function GET(req: Request) {
 
   // Visibility on the live defect: ours reach APROVED and then sit with no
   // carrier, so no collection is ever scheduled.
+  // SELF is excluded: a self-booked international ticket sits at PENDING with
+  // no carrier for up to 10 days BY DESIGN — there is no collection to book,
+  // and the carrier is not known until the customer has been to the post office
+  // and told us. Without this it matches on every run, so the warning the team
+  // added to catch genuinely stranded collections fires every 15 minutes for a
+  // return that is behaving exactly as intended.
   const strandedMatches = acted.filter(
-    (m) => !m.ret.carrier && !["CANCELLED", "FINISHED"].includes(String(m.ret.internal_status))
+    (m) =>
+      m.returnMethod !== "SELF" &&
+      !m.ret.carrier &&
+      !["CANCELLED", "FINISHED"].includes(String(m.ret.internal_status))
   );
   const stranded = strandedMatches.length;
   if (stranded) {

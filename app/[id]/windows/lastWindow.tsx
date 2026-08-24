@@ -116,6 +116,9 @@ const LastWindowBase = ({
             final={true}
             credito={credito || false}
             allProducts={allProducts}
+            // Rendered two lines below the choice control. Without this the box
+            // and the paragraph beneath it disagree by exactly the return leg.
+            method={method}
           />
         )}
         {finalTotal < 0 ? (

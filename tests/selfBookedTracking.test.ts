@@ -170,6 +170,48 @@ describe("submitReturnTracking", () => {
     expect(written).toHaveLength(0);
   });
 
+  it("rejects a non-string tracking number rather than coercing it", async () => {
+    // A server action is an addressable endpoint: the form protects the button,
+    // not this function. `String(x)` would turn an object into
+    // "[object Object]" and an array into its joined elements, and pin THAT at
+    // Amphora write-once — where it cannot be corrected.
+    // Called directly, not through `submit`: that helper has a default
+    // argument, so passing `undefined` through it would silently substitute a
+    // valid tracking number and the case would pass for the wrong reason.
+    const { submitReturnTracking } = await import("@/actions/selfBookedTracking");
+    for (const junk of [{ toString: () => "1Z999" }, ["1Z999"], 1234, null, undefined]) {
+      const result = await submitReturnTracking(
+        order.id,
+        "DHL",
+        junk as unknown as string
+      );
+
+      expect(result).toEqual({ ok: false, reason: "empty-tracking" });
+    }
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+  });
+
+  it("rejects an absurdly long tracking number", async () => {
+    // The column is unbounded `text` and Amphora pins the value write-once, so
+    // there is no correcting it afterwards. The longest real carrier reference
+    // is around 35 characters.
+    const result = await submit("DHL", "1Z".repeat(200));
+
+    expect(result.ok).toBe(false);
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+  });
+
+  it("still accepts a tracking number at the long end of what carriers issue", async () => {
+    // The control half: the bound must not reject a real reference. Correos
+    // certificate numbers are 23 characters.
+    const result = await submit("CORREOS", "PQAZXT9800004100128221Y");
+
+    expect(result).toEqual({ ok: true });
+    expect(order.locator).toBe("PQAZXT9800004100128221Y");
+  });
+
   it("refuses an order that is not a self-booked return", async () => {
     order.returnMethod = "CORREOS";
 

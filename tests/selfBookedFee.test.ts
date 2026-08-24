@@ -107,10 +107,33 @@ describe("SELF drops the return leg", () => {
 
   it("itemises the charge as delivery, never as return shipping", async () => {
     // The customer is paying their own courier for the return leg; billing
-    // them a line that says otherwise is the complaint.
+    // them a line that says otherwise is the complaint. Counting the lines is
+    // not enough — a single line LABELLED "Return shipping" is exactly the
+    // thing this claims to prevent, and the count stays 1 either way.
+    //
+    // The order is Spanish-locale ("es"), so `dictionaries.es` is what
+    // `createStripeUrl` labels with.
+    const { es } = await import("@/lib/i18n/es");
     await priceIt("SELF");
 
     const names = sessions[0].line_items.map((li: any) => li.price_data.product_data.name);
     expect(names).toHaveLength(1);
+    expect(names).not.toContain(es.summary.returnShipping);
+    // A pure return charges nothing at all, so this line exists only on an
+    // exchange — and the single leg left is the replacement going out, which
+    // is what it has to say.
+    expect(names[0]).toBe(es.summary.deliveryShipping);
+  });
+
+  it("still names the return leg on a lane we book ourselves", async () => {
+    // The control half: the label is only dropped because the customer is not
+    // paying for that journey, not because the itemisation went away.
+    const { es } = await import("@/lib/i18n/es");
+
+    await priceIt("AMPHORA");
+
+    const names = sessions[0].line_items.map((li: any) => li.price_data.product_data.name);
+    expect(names).toContain(es.summary.returnShipping);
+    expect(names).toContain(es.summary.deliveryShipping);
   });
 });

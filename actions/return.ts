@@ -10,6 +10,7 @@ import { createShippingLabel } from "./shipping";
 import { updateFinalOrder } from "./updateOrder";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";
+import { defaultMethodFor } from "@/lib/returnMethods";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "./opsAlert";
 import { createInternationalReturn, isInternationalOrder } from "./amphoraReturn";
@@ -144,7 +145,20 @@ export async function returnFunction(
 
   // Whether the customer owes anything is decided server-side, inside
   // createStripeUrl. A null URL means nothing to pay.
-  const url = (await createStripeUrl(id, email, isCredit)).data;
+  //
+  // The method passed here is always the address-derived default — this call
+  // site does not yet let the customer choose SELF, so behaviour for every
+  // existing customer is unchanged. Task 7 replaces this with their real
+  // choice. `getOrderById` is React-`cache()`d, so this extra call is free.
+  const order = await getOrderById(id);
+  const url = (
+    await createStripeUrl(
+      id,
+      email,
+      isCredit,
+      defaultMethodFor(order?.shippingCountry, process.env.AMPHORA_INTL_RETURNS_ENABLED === "true")
+    )
+  ).data;
   if (url) {
     redirect(url);
   }

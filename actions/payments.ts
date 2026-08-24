@@ -14,6 +14,7 @@ import {
   type CheckoutLine,
 } from "@/lib/fees";
 import { dictionaries, readLocale } from "@/lib/i18n";
+import type { ReturnMethod } from "@/lib/returnMethods";
 
 function absoluteUrl(path: string) {
   return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
@@ -34,7 +35,8 @@ const returnUrl = absoluteUrl("/");
 export const createStripeUrl = async (
   id: string,
   email: string,
-  isCredit: boolean
+  isCredit: boolean,
+  method: ReturnMethod
 ) => {
   // Its only caller, `returnFunction`, already verified this id — so this is
   // defence in depth rather than the primary gate. It is here so the guarantee
@@ -55,9 +57,19 @@ export const createStripeUrl = async (
   );
   const { feeCents, returnLegCents, outboundLegCents } = resolveFee(fees, basket);
 
+  // A self-booked return pays its own courier, so we bill the outbound leg
+  // alone — the replacement garment still travels on our account. This is the
+  // whole of the SELF pricing rule: a subtraction, not a second fee table.
+  //
+  // `method` has already been through resolveReturnMethod on the server, so it
+  // cannot be a client claiming SELF where SELF is not offered.
+  const selfBooked = method === "SELF";
+  const chargeReturnLegCents = selfBooked ? 0 : returnLegCents;
+  const chargeCents = selfBooked ? outboundLegCents : feeCents;
+
   // netAmount is what the customer is owed; the fee reduces it. A negative
   // total means the customer owes us that much.
-  const totalEuros = basket.netAmount - centsToEuros(feeCents);
+  const totalEuros = basket.netAmount - centsToEuros(chargeCents);
   if (totalEuros >= 0) return { data: null };
 
   const amountCents = Math.round(-totalEuros * 100);
@@ -83,7 +95,11 @@ export const createStripeUrl = async (
     deliveryShipping: t.summary.deliveryShipping,
   };
 
-  const lines = checkoutLines(basket, { returnLegCents, outboundLegCents }, amountCents);
+  const lines = checkoutLines(
+    basket,
+    { returnLegCents: chargeReturnLegCents, outboundLegCents },
+    amountCents
+  );
   const stripeLines = lines.length
     ? lines.map((line) => ({ name: LINE_LABEL[line.kind], amountCents: line.amountCents }))
     : [{ name: "Returns & Exchanges Fee", amountCents }];

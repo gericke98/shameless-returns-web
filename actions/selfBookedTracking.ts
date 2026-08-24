@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getOrderByIdFresh } from "@/db/queries";
@@ -62,7 +62,21 @@ export async function submitReturnTracking(
   // that has a locator, or `tracksWithCorreos` reads the null as "our own
   // Correos label" and sends a foreign tracking number to localizador.correos.es.
   // The check constraint enforces the same thing at the database.
-  await db
+  //
+  // The `if (order.locator)` check above is only a fast-path rejection — it is
+  // check-then-act, and two near-simultaneous submits (a double-click that
+  // beats the disabled state, a retried POST, two open tabs) can both read
+  // `locator` as null before either write lands. If both then reached
+  // Amphora, the second call's carrier_number would be rejected as write-once
+  // — but if both reached this UPDATE unconditionally, the second write would
+  // still overwrite the row, leaving our DB and the dashboard pointing at a
+  // carrier Amphora never pinned. That is the exact desync this task exists
+  // to prevent, so the database, not this function, must decide who wins:
+  // `isNull(orders.locator)` in the WHERE clause means only a row that STILL
+  // has no locator gets written, and `.returning()` tells us whether ours was
+  // the write that landed. Only the winner may go on to call Amphora, because
+  // Amphora's pin cannot be undone.
+  const writtenRows = await db
     .update(orders)
     .set({
       locator: number,
@@ -70,7 +84,15 @@ export async function submitReturnTracking(
       carrierUrl,
       trackingSubmittedAt: new Date(),
     })
-    .where(eq(orders.id, id));
+    .where(and(eq(orders.id, id), isNull(orders.locator)))
+    .returning({ id: orders.id });
+
+  if (writtenRows.length === 0) {
+    console.warn(
+      `Order ${id}: lost the write-once race — another submit already claimed the tracking slot.`
+    );
+    return { ok: false, reason: "already-submitted" };
+  }
 
   // Best-effort, and swallowed: the customer has done everything asked of them
   // and the parcel is already moving. Never silent, though.

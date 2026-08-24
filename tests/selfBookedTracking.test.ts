@@ -26,6 +26,9 @@ const order: Record<string, any> = {
 const approved: any[] = [];
 const written: any[] = [];
 let access = true;
+// Simulates a competitor submit winning the conditional UPDATE between our
+// read and our write — the write-once race the atomic guard exists to stop.
+let raceLoser = false;
 
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => access }));
 
@@ -50,10 +53,18 @@ vi.mock("@/db/drizzle", () => {
     update: () => chain,
     set: (values: Record<string, any>) => {
       written.push(values);
-      Object.assign(order, values);
+      chain._pending = values;
       return chain;
     },
-    where: () => Promise.resolve(),
+    where: () => chain,
+    // The real code awaits `.returning(...)`, not `.where(...)`, so the
+    // conditional UPDATE's outcome — did our write actually land, or did a
+    // competitor already claim the row — has to be decided here.
+    returning: async () => {
+      if (raceLoser) return [];
+      Object.assign(order, chain._pending);
+      return [{ id: order.id }];
+    },
   };
   return { default: chain };
 });
@@ -67,6 +78,7 @@ beforeEach(() => {
   approved.length = 0;
   written.length = 0;
   access = true;
+  raceLoser = false;
   order.locator = null;
   order.carrier = null;
   order.returnMethod = "SELF";
@@ -116,6 +128,23 @@ describe("submitReturnTracking", () => {
     expect(second.ok).toBe(false);
     expect(approved).toHaveLength(0);
     expect(order.locator).toBe("JD0123456789");
+  });
+
+  it("refuses tracking when a concurrent submit wins the write-once race", async () => {
+    // The sequential check above (`order.locator`) is only a fast-path
+    // rejection — it is check-then-act, so two near-simultaneous submits (a
+    // double-click that beats the disabled button, a retried POST, two open
+    // tabs) can both pass it before either write lands. The database is what
+    // actually arbitrates: the conditional UPDATE's WHERE clause matches only
+    // a row that STILL has no locator, so the loser's UPDATE affects zero
+    // rows. That loser must stop here, before Amphora — its carrier_number
+    // pin cannot be undone, so only the write's real winner may call approve.
+    raceLoser = true;
+
+    const result = await submit();
+
+    expect(result).toEqual({ ok: false, reason: "already-submitted" });
+    expect(approved).toHaveLength(0);
   });
 
   it("rejects a caller with no portal session", async () => {

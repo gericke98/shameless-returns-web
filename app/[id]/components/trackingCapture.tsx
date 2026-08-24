@@ -33,7 +33,10 @@ export function TrackingCapture({ id }: { id: string }) {
         <select
           className="border rounded-lg p-2"
           value={carrier}
-          onChange={(e) => setCarrier(e.target.value)}
+          onChange={(e) => {
+            setCarrier(e.target.value);
+            setConfirming(false);
+          }}
         >
           {CARRIERS.map((c) => (
             <option key={c.code} value={c.code}>
@@ -48,7 +51,10 @@ export function TrackingCapture({ id }: { id: string }) {
         <input
           className="border rounded-lg p-2"
           value={number}
-          onChange={(e) => setNumber(e.target.value)}
+          onChange={(e) => {
+            setNumber(e.target.value);
+            setConfirming(false);
+          }}
         />
       </label>
 

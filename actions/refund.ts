@@ -6,6 +6,7 @@ import {
   createOrder,
   createRefund,
   createStoreCreditRefund,
+  noteStoreCreditOnOrder,
   getOrderById,
   getOrderTotal,
   processGiftCardReturn,
@@ -126,6 +127,18 @@ export async function validateReturn(product: any, status: string, order: any) {
           product.return_id,
           String(trustedLine.return_line_item_id ?? "")
         );
+        // Say so on the order too. The refund above is invisible on the order
+        // page — it carries no money, so the header still reads PAID — and a
+        // human looking at a paid order with a return against it has nothing
+        // telling them the customer was already paid in credit.
+        //
+        // Best effort: the customer has their card either way, and a missing
+        // sentence is not worth failing a settlement over.
+        await noteStoreCreditOnOrder(
+          String(order?.id ?? ""),
+          giftCardValue,
+          String(resultGiftCard.data?.id ?? "")
+        );
         if (!refundRecord.success) {
           // Carry on rather than bail, and the asymmetry is the reason.
           //
@@ -136,7 +149,7 @@ export async function validateReturn(product: any, status: string, order: any) {
           // A revenue figure a human can correct in the admin beats paying
           // twice, so the alert carries the ids needed to fix it by hand.
           await alertOps(
-            `Store-credit refund not recorded on Shopify — order ${order?.id}`,
+            `[returns] STORE-CREDIT REFUND NOT RECORDED — order ${order?.id}`,
             [
               `Gift card ${resultGiftCard.data?.id ?? "(id unknown)"} was issued to the customer, so they HAVE been paid.`,
               `What failed is the Shopify refund record, so order ${order?.id} still reads PAID with 0.00 refunded and the garment still counts as revenue.`,

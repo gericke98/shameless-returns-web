@@ -34,6 +34,7 @@ const giftCards: Array<{ value: number; orderId: string; variantId: string }> = 
 const moneyRefunds: number[] = [];
 const creditRefunds: Array<{ returnId: string; returnLineItemId: string }> = [];
 const closed: string[] = [];
+const orderNotes: Array<{ orderId: string; value: number; giftCardId: string }> = [];
 
 const creditRefundResult = { value: { success: true } as { success: boolean } };
 
@@ -48,7 +49,7 @@ vi.mock("@/db/queries", () => ({
     orderId: string
   ) => {
     giftCards.push({ value, orderId, variantId });
-    return { success: true };
+    return { success: true, data: { id: "gid://shopify/GiftCard/1310634049862" } };
   },
   createRefund: async (_r: string, _l: string, _t: string, amount: number) => {
     moneyRefunds.push(amount);
@@ -57,6 +58,14 @@ vi.mock("@/db/queries", () => ({
   createStoreCreditRefund: async (returnId: string, returnLineItemId: string) => {
     creditRefunds.push({ returnId, returnLineItemId });
     return creditRefundResult.value;
+  },
+  noteStoreCreditOnOrder: async (
+    orderId: string,
+    value: number,
+    giftCardId: string
+  ) => {
+    orderNotes.push({ orderId, value, giftCardId });
+    return { success: true };
   },
   createOrder: async () => ({ success: true }),
   closeReturn: async (id: string) => {
@@ -123,6 +132,7 @@ beforeEach(() => {
   moneyRefunds.length = 0;
   creditRefunds.length = 0;
   closed.length = 0;
+  orderNotes.length = 0;
   opsAlerts.length = 0;
   creditRefundResult.value = { success: true };
   session.value = { user: { role: "admin" } };
@@ -228,5 +238,30 @@ describe("when Shopify refuses the refund record", () => {
     await settleLine(LINE);
 
     expect(moneyRefunds).toEqual([]);
+  });
+});
+
+describe("explaining the store credit on the order itself", () => {
+  // The refund record carries no money, so the order header still says PAID.
+  // Someone opening it sees a fully paid order with a return against it and
+  // nothing saying the customer was already paid in credit. This is that.
+  it("notes the gift card against the order", async () => {
+    await settleLine(LINE);
+
+    expect(orderNotes).toEqual([
+      {
+        orderId: "13253700485446",
+        value: expect.closeTo(37.41, 2),
+        giftCardId: "gid://shopify/GiftCard/1310634049862",
+      },
+    ]);
+  });
+
+  it("still notes it when the refund record failed — that is when it matters most", async () => {
+    creditRefundResult.value = { success: false };
+
+    await settleLine(LINE);
+
+    expect(orderNotes).toHaveLength(1);
   });
 });

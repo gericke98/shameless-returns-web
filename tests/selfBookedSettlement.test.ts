@@ -97,6 +97,7 @@ vi.mock("@/db/queries", () => ({
   // not what this file is about — see creditLaneSettlement.test.ts — but the
   // gift-card cases below go through it.
   createStoreCreditRefund: async () => ({ success: true }),
+  noteStoreCreditOnOrder: async () => ({ success: true }),
   createOrder: async () => ({ success: true }),
   closeReturn: async () => ({ success: true }),
 }));

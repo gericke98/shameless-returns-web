@@ -389,6 +389,95 @@ export async function createStoreCreditRefund(
 }
 
 /**
+ * Say on the order itself that the customer was paid in store credit.
+ *
+ * `createStoreCreditRefund` books the goods back, but it cannot make the order
+ * stop reading `PAID` at `0.00` refunded — those two fields sum refund
+ * TRANSACTIONS, and a store-credit return moves no money by design. Anyone
+ * opening the order in the admin therefore sees a fully paid order with a
+ * return against it and no explanation. This is the explanation.
+ *
+ * Appends, never replaces. `orderUpdate` takes `note` as a whole string, and
+ * the customer's own checkout note lands in that same field — overwriting it
+ * would destroy something only the customer could have written. (`tags` on
+ * `OrderInput` replace wholesale for the same reason; Amphora owns the tags on
+ * these orders, so anything tag-shaped has to go through `tagsAdd` instead.)
+ *
+ * Idempotent on the gift card id, so re-running settlement cannot stack the
+ * same sentence twice.
+ */
+export async function noteStoreCreditOnOrder(
+  orderId: string,
+  giftCardValue: number,
+  giftCardId: string
+) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const gid = `gid://shopify/Order/${orderId}`;
+
+  const post = async (query: string, variables: Record<string, unknown>) => {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables }),
+    });
+    return response.json();
+  };
+
+  try {
+    const read = await post(
+      `query orderNote($id: ID!) { order(id: $id) { note } }`,
+      { id: gid }
+    );
+    if (read.errors) {
+      console.error("Error reading order note:", read.errors);
+      return { success: false, errors: read.errors };
+    }
+
+    const existing: string = read.data?.order?.note ?? "";
+    if (existing.includes(giftCardId)) {
+      return { success: true, alreadyNoted: true };
+    }
+
+    const line = `Return paid in store credit: gift card ${giftCardValue.toFixed(
+      2
+    )} EUR (${giftCardId}). No money was refunded to the customer's card, so this order stays PAID.`;
+    const note = existing ? `${existing}\n${line}` : line;
+
+    const written = await post(
+      `mutation orderUpdate($input: OrderInput!) {
+        orderUpdate(input: $input) {
+          order {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }`,
+      { input: { id: gid, note } }
+    );
+
+    if (written.errors || written.data.orderUpdate.userErrors.length > 0) {
+      console.error(
+        "Error writing order note:",
+        written.errors || written.data.orderUpdate.userErrors
+      );
+      return {
+        success: false,
+        errors: written.errors || written.data.orderUpdate.userErrors,
+      };
+    }
+
+    return { success: true, data: written.data.orderUpdate.order };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
+/**
  * Create the replacement order for an exchange.
  *
  * Takes the LINE ITEMS, plural. It used to take a single product and was called

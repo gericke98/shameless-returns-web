@@ -50,6 +50,7 @@ vi.mock("@/db/queries", () => ({
     return { success: true };
   },
   createStoreCreditRefund: async () => ({ success: true }),
+  noteStoreCreditOnOrder: async () => ({ success: true }),
   createOrder: async () => {
     calls.order++;
     return { success: true };

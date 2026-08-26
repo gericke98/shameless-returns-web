@@ -6,6 +6,8 @@ import { and, desc, eq, isNotNull, isNull, lt } from "drizzle-orm";
 import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
+import { normalizeCountry } from "@/lib/countries";
+import { alertOps } from "@/actions/opsAlert";
 
 const createSession = (): RequestInit => {
   if (
@@ -503,10 +505,48 @@ export async function createOrder(order: any, products: any[]) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
-  // Get province code from the province field if available, otherwise try to derive it from city
-  const provinceCode = order.shippingProvince
-    ? getProvinceCode(order.shippingProvince)
-    : getProvinceCode(order.shippingCity);
+  // The customer's OWN country, not the shop's.
+  //
+  // This was hardcoded to "ES" in both addresses below. We store the country as
+  // a display NAME ("Belgium", "Portugal") and Shopify wants an ISO-2 code, so
+  // whoever wrote it had a name, needed a code, and typed the shop's own.
+  // Measured 2026-08-26: 4 of 195 exchange orders shipped under the wrong
+  // country — #311370, #311687, #311688, #311689 — three of them in one day.
+  //
+  // The zips were never wrong. A four-digit Belgian zip filed under Spain just
+  // READS as a broken Spanish postcode, which is why this looked like a zip bug.
+  const countryCode = normalizeCountry(order.shippingCountry);
+  if (!countryCode) {
+    // Refuse rather than guess. Defaulting to the shop's own country is exactly
+    // what shipped those four parcels to Spain, and a parcel sent to the wrong
+    // nation is worse than an exchange that visibly did not happen: returning
+    // failure leaves the line unsettled and still visible in the dashboard.
+    console.error(
+      `createOrder: cannot resolve country ${JSON.stringify(order.shippingCountry)} for order ${order.orderNumber} — refusing to create the exchange`
+    );
+    await alertOps(
+      `[returns] EXCHANGE NOT CREATED — unresolvable country on ${order.orderNumber}`,
+      [
+        `The exchange order for ${order.orderNumber} was not created because we could not resolve its country to an ISO-2 code.`,
+        `Stored country: ${JSON.stringify(order.shippingCountry)}`,
+        `Nothing was charged and no parcel was booked. The return line is still unsettled in the dashboard.`,
+        `Fix by correcting the country on the order, or by adding it to lib/countries.ts, then settling the return again.`,
+      ].join("\n")
+    );
+    return { success: false, error: "Unresolvable shipping country" };
+  }
+
+  // Province codes are Spanish-only: SPANISH_PROVINCE_CODES is the whole table,
+  // and getProvinceCode returns its INPUT UNCHANGED when nothing matches. With
+  // the province field blank the city was passed in instead, so order #311687
+  // sent "Woluwe-Saint-Pierre" — a Belgian city — as a province code. Omit the
+  // field abroad rather than send a value we cannot map.
+  const provinceCode =
+    countryCode === "ES"
+      ? order.shippingProvince
+        ? getProvinceCode(order.shippingProvince)
+        : getProvinceCode(order.shippingCity)
+      : undefined;
 
   const query = `
     mutation OrderCreate(
@@ -550,7 +590,7 @@ export async function createOrder(order: any, products: any[]) {
         address1: order.shippingAddress1,
         address2: order.shippingAddress2 || "",
         city: order.shippingCity,
-        countryCode: "ES",
+        countryCode,
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
@@ -571,7 +611,7 @@ export async function createOrder(order: any, products: any[]) {
         address1: order.shippingAddress1,
         address2: order.shippingAddress2 || "",
         city: order.shippingCity,
-        countryCode: "ES",
+        countryCode,
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",

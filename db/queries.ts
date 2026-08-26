@@ -184,6 +184,20 @@ export async function getSelfReturnsAwaitingTracking() {
   });
 }
 
+/**
+ * Orders with at least one confirmed line still awaiting settlement.
+ *
+ * Deliberately NOT cached, for the same reason as `getOrderByIdFresh`: the
+ * auto-approve cron acts on what it reads and settles in a loop, so a cached
+ * read would let it decide twice from one snapshot.
+ */
+export async function getOrdersWithUnsettledReturns() {
+  const rows = await db.query.orders.findMany({
+    with: { products: { where: eq(productsOrder.confirmed, true) } },
+  });
+  return rows.filter((order) => order.products.some((p) => !p.refunded));
+}
+
 export const getReturns = cache(async () => {
   const returns = await db.query.orders.findMany({
     with: {

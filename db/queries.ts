@@ -1419,3 +1419,52 @@ export async function getLatestReturnLabel(orderId: string) {
     .limit(1);
   return label ?? null;
 }
+
+/**
+ * Shopify's own view of whether a return is finished.
+ *
+ * `productsorder.refunded` is written in exactly ONE place — the dashboard
+ * button — so any return settled in the Shopify admin instead leaves our flag
+ * false forever. Measured 2026-08-25: 52 of 168 unsettled lines were already
+ * CLOSED or CANCELED in Shopify. Anything settling automatically must ask
+ * Shopify, or it pays those customers twice.
+ *
+ * A return that cannot be read is ABSENT from the result, never defaulted —
+ * `decideAutoApprove` treats absence as ineligible.
+ */
+export async function getReturnStatusesByIds(
+  returnIds: string[]
+): Promise<Record<string, string>> {
+  const ids = Array.from(new Set(returnIds.filter(Boolean)));
+  if (ids.length === 0) return {};
+
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+    query getReturnStatuses($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Return { id status }
+      }
+    }
+  `;
+
+  const statuses: Record<string, string> = {};
+  // `nodes` is capped by Shopify's cost limits; 40 keeps us well inside it.
+  for (let i = 0; i < ids.length; i += 40) {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: (session as any).headers,
+      body: JSON.stringify({ query, variables: { ids: ids.slice(i, i + 40) } }),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const { data, errors } = await response.json();
+    if (errors) {
+      console.error("GraphQL Errors:", errors);
+      throw new Error("GraphQL query failed");
+    }
+    for (const node of data?.nodes ?? []) {
+      if (node?.id && node?.status) statuses[node.id] = node.status;
+    }
+  }
+  return statuses;
+}

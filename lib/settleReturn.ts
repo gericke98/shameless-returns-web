@@ -131,7 +131,7 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       // object is untrusted everywhere else in this function for exactly
       // the reason it is untrusted here — it names what Shopify refunds.
       const refundRecord = await createStoreCreditRefund(
-        product.return_id,
+        String(trustedLine.return_id ?? ""),
         String(trustedLine.return_line_item_id ?? "")
       );
       // Say so on the order too. The refund above is invisible on the order
@@ -168,7 +168,7 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
         );
       }
       // Cierro el return
-      result2 = await closeReturn(product.return_id);
+      result2 = await closeReturn(String(trustedLine.return_id ?? ""));
       // By ROW ID, not by variant. `productsorder` is keyed per line item, so
       // an order carrying two rows for the same variant would otherwise have
       // BOTH flipped by the one gift card issued above — the second garment
@@ -265,7 +265,7 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
     }
     if (result?.success) {
       // Cierro el return
-      result2 = await closeReturn(product.return_id);
+      result2 = await closeReturn(String(trustedLine.return_id ?? ""));
       // By ROW ID — see the credit lane above. One refund was issued, so
       // exactly one row may be marked paid.
       await db

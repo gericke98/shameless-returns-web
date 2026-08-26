@@ -33,6 +33,8 @@ const refundCalls: Array<{
   amount: number;
 }> = [];
 const giftCards: number[] = [];
+const closedReturns: string[] = [];
+const storeCreditRefundCalls: Array<{ returnId: string; returnLineItemId: string }> = [];
 
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => ORDER,
@@ -51,10 +53,16 @@ vi.mock("@/db/queries", () => ({
     refundCalls.push({ returnId, returnLineItemId, transactionId, amount });
     return { success: true };
   },
-  createStoreCreditRefund: async () => ({ success: true }),
+  createStoreCreditRefund: async (returnId: string, returnLineItemId: string) => {
+    storeCreditRefundCalls.push({ returnId, returnLineItemId });
+    return { success: true };
+  },
   noteStoreCreditOnOrder: async () => ({ success: true }),
   createOrder: async () => ({ success: true }),
-  closeReturn: async () => ({ success: true }),
+  closeReturn: async (returnId: string) => {
+    closedReturns.push(returnId);
+    return { success: true };
+  },
 }));
 
 const BANDS = [{ maxGrams: 2147483647, returnFeeCents: 500, exchangeFeeCents: 850 }];
@@ -121,6 +129,8 @@ const CALLER_LINE = {
 beforeEach(() => {
   refundCalls.length = 0;
   giftCards.length = 0;
+  closedReturns.length = 0;
+  storeCreditRefundCalls.length = 0;
   whereClauses.length = 0;
   for (const key of Object.keys(ORDER)) delete ORDER[key];
   Object.assign(ORDER, {
@@ -208,5 +218,43 @@ describe("settleReturnLine's refund lane takes its money from the row", () => {
     await settle(CALLER_LINE);
 
     expect(refundCalls[0].amount).toBe(40);
+  });
+});
+
+describe("settleReturnLine closes the return it actually settled", () => {
+  // The refund is booked against the ROW's return, so closing the CALLER's is
+  // not merely untidy: if the two ever disagree, the return we just refunded
+  // stays OPEN forever while some other return is closed — and the auto-approve
+  // gate reads that other one as `shopify-not-open` and silently withholds a
+  // different customer's refund. Nothing double-pays; someone simply never
+  // gets paid.
+
+  it("closes the row's return in the refund lane, not the caller's", async () => {
+    await settle(CALLER_LINE);
+
+    expect(refundCalls[0].returnId).toBe("row-return");
+    expect(closedReturns).toEqual(["row-return"]);
+  });
+
+  it("closes the row's return in the credit lane, not the caller's", async () => {
+    dbLine.value = { ...dbLine.value!, credit: true };
+
+    await settle({ ...CALLER_LINE, credit: true });
+
+    expect(giftCards).toHaveLength(1);
+    expect(closedReturns).toEqual(["row-return"]);
+  });
+
+  it("books the store-credit refund against the row's return and line item", async () => {
+    // The comment above this call already said to read the line item from the
+    // row "for exactly the reason it is untrusted here — it names what Shopify
+    // refunds". The line item obeyed it; the return id did not.
+    dbLine.value = { ...dbLine.value!, credit: true };
+
+    await settle({ ...CALLER_LINE, credit: true });
+
+    expect(storeCreditRefundCalls).toEqual([
+      { returnId: "row-return", returnLineItemId: "row-rli" },
+    ]);
   });
 });

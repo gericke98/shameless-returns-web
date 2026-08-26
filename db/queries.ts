@@ -196,15 +196,15 @@ export async function getSelfReturnsAwaitingTracking() {
 export async function getOrdersWithUnsettledReturns() {
   const rows = await db.query.orders.findMany({
     // Oldest first, so a capped run pays the customers who have waited longest
-    // rather than whatever order Postgres happened to hand back. NULLS FIRST is
-    // deliberate: `return_submitted_at` was added late, so a null stamp means a
-    // row that predates the column — the oldest waiters of all, not the newest.
-    // `orders.id` is the raw Shopify order id (sequential) and breaks ties, so
-    // the sweep is deterministic across runs.
-    orderBy: (o, { sql }) => [
-      sql`${o.returnSubmittedAt} asc nulls first`,
-      sql`${o.id} asc`,
-    ],
+    // rather than whatever order Postgres happened to hand back.
+    //
+    // By `id`, NOT by `return_submitted_at`. That column is written in exactly
+    // one place — `actions/selfBookedReturn.ts` — so a null stamp does not mean
+    // "a row that predates the column", it means "not a self-booked return",
+    // which is every Correos and Amphora one. Sorting on it put every customer
+    // who paid their own postage permanently last. `orders.id` is the raw
+    // Shopify order id, sequential across all lanes, and uniform.
+    orderBy: (o, { sql }) => [sql`${o.id} asc`],
     with: { products: { where: eq(productsOrder.confirmed, true) } },
   });
   return rows.filter((order) => order.products.some((p) => !p.refunded));

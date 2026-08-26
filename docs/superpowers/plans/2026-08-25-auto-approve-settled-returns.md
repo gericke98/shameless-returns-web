@@ -396,7 +396,7 @@ export function decideAutoApprove(input: GateInput): GateVerdict {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/autoApproveGate.test.ts`
-Expected: PASS, 18 tests.
+Expected: PASS, 20 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1159,7 +1159,7 @@ export async function GET(req: Request) {
 Run: `npx vitest run tests/autoApproveRoute.test.ts`
 Expected: PASS, 12 tests.
 
-Then the whole suite: `npm test` → 727 + 36 new = 763 passing.
+Then the whole suite: `npm test` → 727 + 38 new = 765 passing.
 Then: `npx tsc --noEmit` → clean.
 
 - [ ] **Step 5: Commit**

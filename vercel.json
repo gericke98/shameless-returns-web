@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/amphora-sync",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/auto-approve",
+      "schedule": "0 7 * * *"
     }
   ]
 }

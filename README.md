@@ -38,6 +38,14 @@ A Next.js application for managing product returns and exchanges in an e-commerc
    DATABASE_URL=your_database_url
    ```
 
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AUTO_APPROVE_ENABLED` | Set to `true` to let the daily auto-approve cron actually pay. Anything else (including unset) makes it a dry run that logs what it would have settled. |
+| `AUTO_APPROVE_GRACE_DAYS` | Days after Amphora's `time_received` before a return may settle. Default `2`. |
+| `AUTO_APPROVE_MAX_PER_RUN` | Lines settled per daily run. Default `25`. |
+
 ## Getting Started
 
 1. Run the development server:

@@ -104,8 +104,9 @@ in one function. Split it:
 - the cron — auth → core.
 
 The money logic must exist exactly once. The return-fee rule already lives in
-[four places](../../../docs) across the codebase; the 1.15 credit multiplier and
-the €5 deduction must not gain a fifth by being copied into a cron.
+four places (`createStripeUrl` charges it up front, `validateReturn` deducts it
+again at settlement, and two UI totals recompute it). The 1.15 credit multiplier
+and the €5 deduction must not gain a fifth home by being copied into a cron.
 
 ### 2. The gate — `lib/autoApproveGate.ts`
 

@@ -22,8 +22,22 @@ import { alertOps } from "@/actions/opsAlert";
  * euro moves, so deploying this route does nothing until someone deliberately
  * arms it.
  */
-export const maxDuration = 60;
+// 300, not the 60 copied from `amphora-sync`. A settled line costs roughly six
+// Shopify round trips plus five database ones, so a full run of the cap does
+// not fit in a minute — and a run killed mid-flight is not merely slow. If the
+// process dies between the payout and the `refunded` flag a few lines later,
+// nothing records that we paid: `refunded` is still false, the Shopify return
+// still reads OPEN, Amphora still reads RECEIVED, and the next run mints a
+// SECOND gift card for the same garment. The wall-clock budget below is the
+// real guard; this only widens the window it works inside.
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
+
+/** Stop STARTING new settlements this long into the run. Well inside
+ *  `maxDuration` so the settlement already in flight can finish writing its
+ *  `refunded` flag rather than being cut in half, and so the response still
+ *  gets sent. Bound the window rather than gambling on it. */
+const BUDGET_MS = 40_000;
 
 /** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
  *  closed, never open — this route pays customers. */
@@ -33,8 +47,19 @@ function authorized(req: Request): boolean {
   return req.headers.get("authorization") === `Bearer ${secret}`;
 }
 
+/**
+ * Read a non-negative integer from the environment.
+ *
+ * The empty string is checked BEFORE `Number()`, because `Number("")` is 0 and
+ * `0 >= 0` passes — so a variable added in the Vercel dashboard and left blank
+ * would silently mean "grace period: none", and a return marked RECEIVED sixty
+ * seconds ago would settle. Blank is not a number; it is an absent value, and
+ * an absent value takes the default.
+ */
 function intEnv(name: string, fallback: number): number {
-  const raw = Number(process.env[name]);
+  const value = (process.env[name] ?? "").trim();
+  if (value === "") return fallback;
+  const raw = Number(value);
   return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
 }
 
@@ -78,24 +103,46 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Shopify unreachable" }, { status: 502 });
   }
 
+  // Likewise ONE read for every pending line in the sweep. This used to sit
+  // inside the loop — one Shopify round trip per scanned order, which on the
+  // current backlog is on its own most of a minute before a single euro moves.
+  const allPendingVariantIds = orders.flatMap((o: any) =>
+    o.products.filter((p: any) => !p.refunded).map((p: any) => String(p.variant_id))
+  );
+  let skusById: Record<string, string>;
+  try {
+    skusById = await getVariantSkusByIds(allPendingVariantIds);
+  } catch (error: any) {
+    // An unresolved SKU is never eligible, so a failure here would hold every
+    // order for a reason that says nothing. Refuse the run instead.
+    console.error("[auto-approve] could not read variant SKUs:", error?.message || error);
+    return NextResponse.json({ error: "Shopify unreachable" }, { status: 502 });
+  }
+
   const held: Array<{ order: string; reason: string }> = [];
   let scanned = 0;
   let settledCount = 0;
   let capped = false;
+  let budgetExhausted = false;
+  const startedAt = Date.now();
 
   for (const order of orders as any[]) {
     if (settledCount >= cap) {
       capped = true;
       break;
     }
+    if (Date.now() - startedAt >= BUDGET_MS) {
+      budgetExhausted = true;
+      break;
+    }
     scanned += 1;
 
-    try {
-      const pendingRows = order.products.filter((p: any) => !p.refunded);
-      const skusById = await getVariantSkusByIds(
-        pendingRows.map((p: any) => String(p.variant_id))
-      );
+    // Named for the alert below: only a throw AFTER this flips may claim money
+    // might have moved.
+    let enteredSettle = false;
+    const label = order.orderNumber ?? String(order.id);
 
+    try {
       const lines: GateLine[] = order.products.map((p: any) => ({
         id: String(p.id),
         variant_id: String(p.variant_id),
@@ -115,18 +162,29 @@ export async function GET(req: Request) {
       });
 
       if (!verdict.settle) {
-        held.push({ order: order.orderNumber, reason: verdict.reason });
+        held.push({ order: label, reason: verdict.reason });
         continue;
       }
 
+      // The exchange lane settles EVERY pending exchange line of an order in
+      // one call. Without this, the siblings it just paid come back around the
+      // loop, get refused as already-refunded, and land in `held` as if they
+      // had failed — which would make the one report this job produces lie.
+      const alreadySettled = new Set<string>();
+
       for (const line of verdict.lines) {
+        if (alreadySettled.has(line.id)) continue;
         if (settledCount >= cap) {
           capped = true;
           break;
         }
+        if (Date.now() - startedAt >= BUDGET_MS) {
+          budgetExhausted = true;
+          break;
+        }
         if (dry) {
           settledCount += 1;
-          console.log(`[auto-approve] WOULD settle ${order.orderNumber} / ${line.variant_id}`);
+          console.log(`[auto-approve] WOULD settle ${label} / ${line.variant_id}`);
           continue;
         }
         // The core re-reads the line from the database and refuses one already
@@ -135,29 +193,44 @@ export async function GET(req: Request) {
         // Count only confirmed settlements. If this call throws, the outer
         // catch below reports the order as held without this line ever having
         // been counted — there is nothing to undo.
+        enteredSettle = true;
         const outcome = await settleReturnLine(
           order.products.find((p: any) => String(p.id) === line.id),
           order
         );
         if (outcome.settled) {
-          settledCount += 1;
-          console.log(`[auto-approve] settled ${order.orderNumber} / ${line.variant_id} (${outcome.lane})`);
+          // Count what was actually flipped, not the one line we asked about.
+          settledCount += outcome.lineIds.length;
+          for (const id of outcome.lineIds) alreadySettled.add(id);
+          console.log(`[auto-approve] settled ${label} / ${line.variant_id} (${outcome.lane}, ${outcome.lineIds.length} line(s))`);
         } else {
-          held.push({ order: order.orderNumber, reason: `settle-refused:${outcome.reason}` });
+          held.push({ order: label, reason: `settle-refused:${outcome.reason}` });
         }
       }
     } catch (error: any) {
       // One bad order must not stop the sweep — the rest are still owed their
-      // money. Alert, because by here money may have half-moved.
-      console.error(`[auto-approve] ${order.orderNumber} failed:`, error?.message || error);
-      held.push({ order: order.orderNumber, reason: "threw" });
+      // money.
+      console.error(`[auto-approve] ${label} failed:`, error?.message || error);
+      held.push({ order: label, reason: "threw" });
+      // Say only what is true. A throw BEFORE the first `settleReturnLine`
+      // cannot have moved a cent, and an alert that says otherwise sends
+      // whoever is on call hunting a refund that never happened — this repo
+      // has already done that once.
       await alertOps(
-        `[returns] AUTO-APPROVE FAILED — order ${order.orderNumber}`,
-        [
-          `The daily auto-approve run threw while settling ${order.orderNumber}.`,
-          `Money may have moved partially. Check the order in Shopify before re-running.`,
-          `Error: ${error?.message || error}`,
-        ].join("\n")
+        enteredSettle
+          ? `[returns] AUTO-APPROVE FAILED — order ${label}`
+          : `[returns] AUTO-APPROVE HELD — order ${label}`,
+        enteredSettle
+          ? [
+              `The daily auto-approve run threw while settling ${label}.`,
+              `Money may have moved partially. Check the order in Shopify before re-running.`,
+              `Error: ${error?.message || error}`,
+            ].join("\n")
+          : [
+              `The daily auto-approve run threw while EVALUATING ${label}, before any payout was attempted.`,
+              `NO MONEY MOVED and nothing was written. The order is simply held for the next run.`,
+              `Error: ${error?.message || error}`,
+            ].join("\n")
       );
     }
   }
@@ -171,5 +244,18 @@ export async function GET(req: Request) {
     );
   }
 
-  return NextResponse.json({ scanned, settled: settledCount, held, capped, dry });
+  if (budgetExhausted) {
+    console.warn(
+      `[auto-approve] stopped at the ${BUDGET_MS}ms budget after ${scanned} orders; the rest wait for the next run.`
+    );
+  }
+
+  return NextResponse.json({
+    scanned,
+    settled: settledCount,
+    held,
+    capped,
+    budgetExhausted,
+    dry,
+  });
 }

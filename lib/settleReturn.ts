@@ -32,7 +32,16 @@ import { releaseExchangeReservation } from "@/actions/exchangeReservation";
 import { alertOps } from "@/actions/opsAlert";
 
 export type SettleOutcome =
-  | { settled: true; lane: "credit" | "exchange" | "refund" }
+  | {
+      settled: true;
+      lane: "credit" | "exchange" | "refund";
+      /** The `productsorder` row ids this call actually flipped to refunded.
+       *  Usually the one line asked for — but the exchange lane settles EVERY
+       *  pending exchange line of the order in one shot, and a caller looping
+       *  over lines has to know that or it will report the siblings it just
+       *  paid as refusals. */
+      lineIds: string[];
+    }
   | { settled: false; reason: string };
 
 /**
@@ -62,14 +71,14 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
   });
   if (!trustedLine) {
     console.error(
-      `validateReturn: no line for order=${order?.id} variant=${product?.variant_id}`
+      `settleReturnLine: no line for order=${order?.id} variant=${product?.variant_id}`
     );
     return { settled: false, reason: "no-such-line" };
   }
   if (trustedLine.refunded) {
     // Already settled. Without this, replaying the same call mints a second
     // gift card for the same return.
-    console.error(`validateReturn: line ${trustedLine.id} is already refunded`);
+    console.error(`settleReturnLine: line ${trustedLine.id} is already refunded`);
     return { settled: false, reason: "already-refunded" };
   }
 
@@ -160,18 +169,17 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       }
       // Cierro el return
       result2 = await closeReturn(product.return_id);
+      // By ROW ID, not by variant. `productsorder` is keyed per line item, so
+      // an order carrying two rows for the same variant would otherwise have
+      // BOTH flipped by the one gift card issued above — the second garment
+      // silently paid for with nothing.
       await db
         .update(productsOrder)
         .set({
           refunded: true,
         })
-        .where(
-          and(
-            eq(productsOrder.variant_id, product.variant_id.toString()),
-            eq(productsOrder.orderId, totalOrder.id)
-          )
-        );
-      return { settled: true, lane: "credit" };
+        .where(eq(productsOrder.id, trustedLine.id));
+      return { settled: true, lane: "credit", lineIds: [String(trustedLine.id)] };
     }
     return { settled: false, reason: "gift-card-failed" };
   } else if (product.action === "CAMBIO") {
@@ -195,7 +203,7 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
     );
     if (pending.length === 0) {
       console.error(
-        `validateReturn: no pending exchange lines for order ${order?.id}`
+        `settleReturnLine: no pending exchange lines for order ${order?.id}`
       );
       return { settled: false, reason: "no-pending-exchange-lines" };
     }
@@ -229,7 +237,11 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       for (const returnId of returnIds) {
         result2 = await closeReturn(returnId as string);
       }
-      return { settled: true, lane: "exchange" };
+      return {
+        settled: true,
+        lane: "exchange",
+        lineIds: pending.map((line) => String(line.id)),
+      };
     }
     return { settled: false, reason: "exchange-order-failed" };
   } else {
@@ -237,30 +249,32 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       // Same rule as the gift-card branch above: a self-booked return's
       // return leg is zero at settlement, because it was zero at checkout.
       const settlementOrder = await getOrderById(String(order?.id ?? ""));
+      // Every value below comes from the reloaded row, not from `product`.
+      // The caller's object is untrusted for money everywhere else in this
+      // function — `price` sets the amount and the three ids name WHAT and
+      // WHICH TRANSACTION Shopify refunds, which is the same authority.
+      // Same €5 rule, same self-booked zeroing; only the source changed.
       let amountToRefund =
-        Number(product.price) - (isSelfBooked(settlementOrder) ? 0 : 5);
+        Number(trustedLine.price) - (isSelfBooked(settlementOrder) ? 0 : 5);
       result = await createRefund(
-        product.return_id,
-        product.return_line_item_id,
-        product.transaction_id,
+        String(trustedLine.return_id ?? ""),
+        String(trustedLine.return_line_item_id ?? ""),
+        String(trustedLine.transaction_id ?? ""),
         amountToRefund
       );
     }
     if (result?.success) {
       // Cierro el return
       result2 = await closeReturn(product.return_id);
+      // By ROW ID — see the credit lane above. One refund was issued, so
+      // exactly one row may be marked paid.
       await db
         .update(productsOrder)
         .set({
           refunded: true,
         })
-        .where(
-          and(
-            eq(productsOrder.variant_id, product.variant_id.toString()),
-            eq(productsOrder.orderId, order.id)
-          )
-        );
-      return { settled: true, lane: "refund" };
+        .where(eq(productsOrder.id, trustedLine.id));
+      return { settled: true, lane: "refund", lineIds: [String(trustedLine.id)] };
     }
     return { settled: false, reason: "refund-failed" };
   }

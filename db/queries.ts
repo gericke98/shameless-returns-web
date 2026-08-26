@@ -195,6 +195,16 @@ export async function getSelfReturnsAwaitingTracking() {
  */
 export async function getOrdersWithUnsettledReturns() {
   const rows = await db.query.orders.findMany({
+    // Oldest first, so a capped run pays the customers who have waited longest
+    // rather than whatever order Postgres happened to hand back. NULLS FIRST is
+    // deliberate: `return_submitted_at` was added late, so a null stamp means a
+    // row that predates the column — the oldest waiters of all, not the newest.
+    // `orders.id` is the raw Shopify order id (sequential) and breaks ties, so
+    // the sweep is deterministic across runs.
+    orderBy: (o, { sql }) => [
+      sql`${o.returnSubmittedAt} asc nulls first`,
+      sql`${o.id} asc`,
+    ],
     with: { products: { where: eq(productsOrder.confirmed, true) } },
   });
   return rows.filter((order) => order.products.some((p) => !p.refunded));
@@ -1158,22 +1168,27 @@ export async function getVariantSkusByIds(
   `;
 
   try {
-    const response = await fetch(shopifyGraphQLUrl, {
-      method: "POST",
-      headers: session.headers,
-      body: JSON.stringify({ query, variables: { ids: gids } }),
-    });
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    const { data, errors } = await response.json();
-    if (errors) {
-      console.error("GraphQL Errors:", errors);
-      throw new Error("GraphQL query failed");
-    }
     const skusById: Record<string, string> = {};
-    for (const node of data?.nodes ?? []) {
-      if (!node?.id || !node?.sku) continue;
-      const numeric = String(node.id).replace(/^gid:\/\/shopify\/ProductVariant\//, "");
-      skusById[numeric] = node.sku;
+    // `nodes` is capped by Shopify's cost limits; 40 keeps us well inside it.
+    // The auto-approve cron resolves every pending line of a whole sweep in one
+    // call, so this list is a backlog, not a handful.
+    for (let i = 0; i < gids.length; i += 40) {
+      const response = await fetch(shopifyGraphQLUrl, {
+        method: "POST",
+        headers: session.headers,
+        body: JSON.stringify({ query, variables: { ids: gids.slice(i, i + 40) } }),
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const { data, errors } = await response.json();
+      if (errors) {
+        console.error("GraphQL Errors:", errors);
+        throw new Error("GraphQL query failed");
+      }
+      for (const node of data?.nodes ?? []) {
+        if (!node?.id || !node?.sku) continue;
+        const numeric = String(node.id).replace(/^gid:\/\/shopify\/ProductVariant\//, "");
+        skusById[numeric] = node.sku;
+      }
     }
     return skusById;
   } catch (error) {
@@ -1507,7 +1522,7 @@ export async function getReturnStatusesByIds(
   for (let i = 0; i < ids.length; i += 40) {
     const response = await fetch(shopifyGraphQLUrl, {
       method: "POST",
-      headers: (session as any).headers,
+      headers: session.headers,
       body: JSON.stringify({ query, variables: { ids: ids.slice(i, i + 40) } }),
     });
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);

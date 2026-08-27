@@ -311,12 +311,30 @@ describe("tracking-sync cron — reporting a run honestly", () => {
   it("alerts ops when more than half the lookups come back empty", async () => {
     // `obtainLastStatus` swallows its own network errors and answers
     // "unknown", so a Correos outage is invisible unless it is counted.
-    state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
-    state.status = { PQ3: { label: "Admitido", phase: "admitido" } };
+    state.orders = Array.from({ length: 12 }, (_, i) =>
+      order(String(1001 + i), `PQ${i}`)
+    );
+    state.status = { PQ11: { label: "Admitido", phase: "admitido" } };
 
     await call({ authorization: "Bearer s3cret" });
 
     expect(alerts.join(" ")).toContain("TRACKING LOOKUPS FAILING");
+  });
+
+  it("does not call a quiet hour an outage", async () => {
+    // A ratio needs a sample. Two parcels registered this morning and not yet
+    // scanned by Correos are BOTH legitimately `sin_informacion` — 2 of 2, an
+    // infinitely worse ratio than the ~20% baseline that made this alert's
+    // threshold half — and would have paged ops hourly about a working system.
+    // The threshold is the shape of an outage; the floor is what makes it
+    // evidence.
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2")];
+    state.status = {};
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.lookupFailures).toBe(2);
+    expect(alerts.join(" ")).not.toContain("TRACKING LOOKUPS FAILING");
   });
 
   it("stays quiet about lookups while the job is still dry", async () => {

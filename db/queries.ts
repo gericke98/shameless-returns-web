@@ -210,6 +210,30 @@ export async function getOrdersWithUnsettledReturns() {
   return rows.filter((order) => order.products.some((p) => !p.refunded));
 }
 
+/**
+ * Parcels whose journey is still worth watching.
+ *
+ * A locator to look up, and at least one confirmed line not yet settled — once
+ * a return is paid there is nothing left to tell the customer about it.
+ *
+ * Deliberately NOT cached, for the same reason as `getOrderByIdFresh`: the
+ * tracking sweep acts on what it reads and writes back in the same pass.
+ *
+ * Ordered by `orders.id` — the raw Shopify order id, sequential across every
+ * lane — so a capped run reaches the customers who have waited longest and
+ * behaves the same on every run.
+ */
+export async function getParcelsAwaitingTracking() {
+  const rows = await db.query.orders.findMany({
+    where: isNotNull(orders.locator),
+    orderBy: (o, { sql }) => [sql`${o.id} asc`],
+    with: { products: { where: eq(productsOrder.confirmed, true) } },
+  });
+  return rows.filter(
+    (order) => order.products.length > 0 && order.products.some((p) => !p.refunded)
+  );
+}
+
 export const getReturns = cache(async () => {
   const returns = await db.query.orders.findMany({
     with: {

@@ -186,6 +186,30 @@ export async function getSelfReturnsAwaitingTracking() {
   });
 }
 
+/**
+ * Orders with at least one confirmed line still awaiting settlement.
+ *
+ * Deliberately NOT cached, for the same reason as `getOrderByIdFresh`: the
+ * auto-approve cron acts on what it reads and settles in a loop, so a cached
+ * read would let it decide twice from one snapshot.
+ */
+export async function getOrdersWithUnsettledReturns() {
+  const rows = await db.query.orders.findMany({
+    // Oldest first, so a capped run pays the customers who have waited longest
+    // rather than whatever order Postgres happened to hand back.
+    //
+    // By `id`, NOT by `return_submitted_at`. That column is written in exactly
+    // one place — `actions/selfBookedReturn.ts` — so a null stamp does not mean
+    // "a row that predates the column", it means "not a self-booked return",
+    // which is every Correos and Amphora one. Sorting on it put every customer
+    // who paid their own postage permanently last. `orders.id` is the raw
+    // Shopify order id, sequential across all lanes, and uniform.
+    orderBy: (o, { sql }) => [sql`${o.id} asc`],
+    with: { products: { where: eq(productsOrder.confirmed, true) } },
+  });
+  return rows.filter((order) => order.products.some((p) => !p.refunded));
+}
+
 export const getReturns = cache(async () => {
   const returns = await db.query.orders.findMany({
     with: {
@@ -305,6 +329,174 @@ export async function createRefund(
     }
 
     return { success: true, data: data.data.returnRefund.refund };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
+/**
+ * Record a store-credit return as refunded on Shopify, moving no money.
+ *
+ * The credit lane pays the customer with `giftCardCreate` and used to stop
+ * there, which left Shopify believing nothing had come back: the order kept
+ * reading `PAID` with `totalRefunded 0.00` and an empty `refunds` list forever,
+ * so every returned garment still counted as revenue. #311449 (Borja Bueno) is
+ * the row that showed it — gift card EUR 37.41 issued, refund record absent.
+ *
+ * `orderTransactions` is deliberately OMITTED rather than sent as zero. It is
+ * optional on `ReturnRefundInput`, and it is the field that decides whether
+ * money leaves the gateway. The customer has already been paid, in credit;
+ * naming a transaction here would refund them to their card as well and pay
+ * them twice for one garment. What is left is the accounting half — the goods
+ * come back, the revenue is reversed, the gift card stands as the liability.
+ */
+export async function createStoreCreditRefund(
+  returnId: string,
+  returnLineItemId: string
+) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+      mutation returnRefund($input: ReturnRefundInput!) {
+        returnRefund(returnRefundInput: $input) {
+          refund {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+
+  const variables = {
+    input: {
+      // The customer already has their money as credit, and the gift card
+      // email told them so. A second notification here announces a refund to
+      // a card that is never coming.
+      notifyCustomer: false,
+      returnId,
+      returnRefundLineItems: [
+        {
+          quantity: 1,
+          returnLineItemId,
+        },
+      ],
+    },
+  };
+
+  try {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const data = await response.json();
+
+    if (data.errors || data.data.returnRefund.userErrors.length > 0) {
+      console.error(
+        "Error recording store-credit refund:",
+        data.errors || data.data.returnRefund.userErrors
+      );
+      return {
+        success: false,
+        errors: data.errors || data.data.returnRefund.userErrors,
+      };
+    }
+
+    return { success: true, data: data.data.returnRefund.refund };
+  } catch (error) {
+    console.error("Fetch error:", error);
+    return { success: false, error: error };
+  }
+}
+
+/**
+ * Say on the order itself that the customer was paid in store credit.
+ *
+ * `createStoreCreditRefund` books the goods back, but it cannot make the order
+ * stop reading `PAID` at `0.00` refunded — those two fields sum refund
+ * TRANSACTIONS, and a store-credit return moves no money by design. Anyone
+ * opening the order in the admin therefore sees a fully paid order with a
+ * return against it and no explanation. This is the explanation.
+ *
+ * Appends, never replaces. `orderUpdate` takes `note` as a whole string, and
+ * the customer's own checkout note lands in that same field — overwriting it
+ * would destroy something only the customer could have written. (`tags` on
+ * `OrderInput` replace wholesale for the same reason; Amphora owns the tags on
+ * these orders, so anything tag-shaped has to go through `tagsAdd` instead.)
+ *
+ * Idempotent on the gift card id, so re-running settlement cannot stack the
+ * same sentence twice.
+ */
+export async function noteStoreCreditOnOrder(
+  orderId: string,
+  giftCardValue: number,
+  giftCardId: string
+) {
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const gid = `gid://shopify/Order/${orderId}`;
+
+  const post = async (query: string, variables: Record<string, unknown>) => {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables }),
+    });
+    return response.json();
+  };
+
+  try {
+    const read = await post(
+      `query orderNote($id: ID!) { order(id: $id) { note } }`,
+      { id: gid }
+    );
+    if (read.errors) {
+      console.error("Error reading order note:", read.errors);
+      return { success: false, errors: read.errors };
+    }
+
+    const existing: string = read.data?.order?.note ?? "";
+    if (existing.includes(giftCardId)) {
+      return { success: true, alreadyNoted: true };
+    }
+
+    const line = `Return paid in store credit: gift card ${giftCardValue.toFixed(
+      2
+    )} EUR (${giftCardId}). No money was refunded to the customer's card, so this order stays PAID.`;
+    const note = existing ? `${existing}\n${line}` : line;
+
+    const written = await post(
+      `mutation orderUpdate($input: OrderInput!) {
+        orderUpdate(input: $input) {
+          order {
+            id
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }`,
+      { input: { id: gid, note } }
+    );
+
+    if (written.errors || written.data.orderUpdate.userErrors.length > 0) {
+      console.error(
+        "Error writing order note:",
+        written.errors || written.data.orderUpdate.userErrors
+      );
+      return {
+        success: false,
+        errors: written.errors || written.data.orderUpdate.userErrors,
+      };
+    }
+
+    return { success: true, data: written.data.orderUpdate.order };
   } catch (error) {
     console.error("Fetch error:", error);
     return { success: false, error: error };
@@ -645,10 +837,22 @@ export async function createReturn(input: ReturnCreateInput) {
   }
 }
 
+/**
+ * Mint the store-credit gift card and record it against the line that earned it.
+ *
+ * Takes the ORDER too, and not because it is convenient: the stamp used to be
+ * scoped by `variant_id` alone, which is not an identity. Every customer who
+ * ever returned the same garment shares that value, so minting one card wrote
+ * its id onto all of their rows — a different customer's settled money refund
+ * would start reporting a gift card it never received. Settling #311449 (Borja
+ * Bueno, 2026-08-24) overwrote #310927 (Marcos G. Merino) exactly that way, and
+ * 30 of the 150 stamped rows in production were already sharing an id.
+ */
 export async function processGiftCardReturn(
   customerId: string,
   price: number,
-  variantId: string
+  variantId: string,
+  orderId: string
 ) {
   const increasedPrice = price.toString();
 
@@ -664,7 +868,12 @@ export async function processGiftCardReturn(
       .set({
         gift_card_id: giftCardResult.data.id,
       })
-      .where(eq(productsOrder.variant_id, variantId.toString()));
+      .where(
+        and(
+          eq(productsOrder.orderId, orderId.toString()),
+          eq(productsOrder.variant_id, variantId.toString())
+        )
+      );
   }
 
   return giftCardResult;
@@ -959,22 +1168,27 @@ export async function getVariantSkusByIds(
   `;
 
   try {
-    const response = await fetch(shopifyGraphQLUrl, {
-      method: "POST",
-      headers: session.headers,
-      body: JSON.stringify({ query, variables: { ids: gids } }),
-    });
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    const { data, errors } = await response.json();
-    if (errors) {
-      console.error("GraphQL Errors:", errors);
-      throw new Error("GraphQL query failed");
-    }
     const skusById: Record<string, string> = {};
-    for (const node of data?.nodes ?? []) {
-      if (!node?.id || !node?.sku) continue;
-      const numeric = String(node.id).replace(/^gid:\/\/shopify\/ProductVariant\//, "");
-      skusById[numeric] = node.sku;
+    // `nodes` is capped by Shopify's cost limits; 40 keeps us well inside it.
+    // The auto-approve cron resolves every pending line of a whole sweep in one
+    // call, so this list is a backlog, not a handful.
+    for (let i = 0; i < gids.length; i += 40) {
+      const response = await fetch(shopifyGraphQLUrl, {
+        method: "POST",
+        headers: session.headers,
+        body: JSON.stringify({ query, variables: { ids: gids.slice(i, i + 40) } }),
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const { data, errors } = await response.json();
+      if (errors) {
+        console.error("GraphQL Errors:", errors);
+        throw new Error("GraphQL query failed");
+      }
+      for (const node of data?.nodes ?? []) {
+        if (!node?.id || !node?.sku) continue;
+        const numeric = String(node.id).replace(/^gid:\/\/shopify\/ProductVariant\//, "");
+        skusById[numeric] = node.sku;
+      }
     }
     return skusById;
   } catch (error) {
@@ -1273,4 +1487,53 @@ export async function getLatestReturnLabel(orderId: string) {
     .orderBy(desc(returnLabels.createdAt), desc(returnLabels.id))
     .limit(1);
   return label ?? null;
+}
+
+/**
+ * Shopify's own view of whether a return is finished.
+ *
+ * `productsorder.refunded` is written in exactly ONE place — the dashboard
+ * button — so any return settled in the Shopify admin instead leaves our flag
+ * false forever. Measured 2026-08-25: 52 of 168 unsettled lines were already
+ * CLOSED or CANCELED in Shopify. Anything settling automatically must ask
+ * Shopify, or it pays those customers twice.
+ *
+ * A return that cannot be read is ABSENT from the result, never defaulted —
+ * `decideAutoApprove` treats absence as ineligible.
+ */
+export async function getReturnStatusesByIds(
+  returnIds: string[]
+): Promise<Record<string, string>> {
+  const ids = Array.from(new Set(returnIds.filter(Boolean)));
+  if (ids.length === 0) return {};
+
+  const session = createSession();
+  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+    query getReturnStatuses($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Return { id status }
+      }
+    }
+  `;
+
+  const statuses: Record<string, string> = {};
+  // `nodes` is capped by Shopify's cost limits; 40 keeps us well inside it.
+  for (let i = 0; i < ids.length; i += 40) {
+    const response = await fetch(shopifyGraphQLUrl, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables: { ids: ids.slice(i, i + 40) } }),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const { data, errors } = await response.json();
+    if (errors) {
+      console.error("GraphQL Errors:", errors);
+      throw new Error("GraphQL query failed");
+    }
+    for (const node of data?.nodes ?? []) {
+      if (node?.id && node?.status) statuses[node.id] = node.status;
+    }
+  }
+  return statuses;
 }

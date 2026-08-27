@@ -202,6 +202,44 @@ describe("tracksWithCorreos", () => {
   });
 });
 
+describe("the `incidencia` phase is international-only today", () => {
+  it("is not reachable from any Correos wording we have ever seen", () => {
+    // This pins a GAP, on purpose, so it stays visible.
+    //
+    // `PHASE_PATTERNS` has no pattern yielding `incidencia`, so `trackingPhase`
+    // — and therefore `parseCorreosTracking` and `obtainLastStatus` — can never
+    // return it. The domestic `problem` email branch was therefore dead code
+    // that read as coverage, and has been removed from
+    // `app/api/cron/tracking-sync/route.ts`.
+    //
+    // We have never captured a real Correos incident payload, and guessing the
+    // wording would create a second path nothing can test. If this test ever
+    // FAILS, someone has added a real pattern — which is good, and means the
+    // domestic branch must be reconnected in that route. The decision function
+    // and `buildTrackingUpdateEmail("problem", ...)` already handle it.
+    const wordings = [
+      "Entregado",
+      "Entregado.",
+      "EN REPARTO",
+      "En tránsito",
+      "Clasificado",
+      "Admitido",
+      "Depositado",
+      "Prerregistrado",
+      // The wordings a guess would reach for. None of them map today.
+      "Incidencia en la entrega",
+      "Devuelto al remitente",
+      "Dirección incorrecta",
+    ];
+
+    expect(wordings.map(trackingPhase)).not.toContain("incidencia");
+  });
+
+  it("is still reachable from Amphora, which names its exceptions", () => {
+    expect(amphoraTrackingStatus("EXCEPTION_HOLD").phase).toBe("incidencia");
+  });
+});
+
 describe("amphoraTrackingStatus", () => {
   it("maps the lifecycle onto the shared phases", () => {
     expect(amphoraTrackingStatus("TRAVELLING").phase).toBe("en_transito");

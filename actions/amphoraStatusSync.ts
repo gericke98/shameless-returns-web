@@ -17,6 +17,7 @@ import { orders } from "@/db/schema";
 import {
   buildCollectionScheduledEmail,
   buildReturnReceivedEmail,
+  buildTrackingUpdateEmail,
 } from "@/lib/emails";
 import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale } from "@/lib/i18n";
@@ -24,6 +25,7 @@ import {
   decideWebhookActions,
   type AmphoraWebhookReturn,
 } from "@/lib/amphoraWebhook";
+import { alertOps } from "@/actions/opsAlert";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
@@ -37,6 +39,12 @@ export type SyncableOrder = {
   locale?: string | null;
   returnStatus?: string | null;
   locator?: string | null;
+  /** The milestone rank already communicated for this parcel, and which parcel
+   *  it refers to. Read by `decideWebhookActions` so a status that oscillates
+   *  (TRAVELLING -> EXCEPTION_HOLD -> TRAVELLING is an ordinary customs hold)
+   *  cannot email the same milestone again on every 15-minute poll. */
+  lastTrackingKey?: string | null;
+  lastTrackingLocator?: string | null;
   products?: unknown;
 };
 
@@ -100,7 +108,11 @@ export async function applyReturnStatus(
             { number: payload.carrier_number, url: payload.carrier_url },
             exchange
           )
-        : buildReturnReceivedEmail(order.shippingName, locale, exchange);
+        : email === "trackingInTransit"
+          ? buildTrackingUpdateEmail("in_transit", order.shippingName, locale)
+          : email === "trackingProblem"
+            ? buildTrackingUpdateEmail("problem", order.shippingName, locale)
+            : buildReturnReceivedEmail(order.shippingName, locale, exchange);
 
     const status = await sendEmail({
       ...built,
@@ -117,12 +129,27 @@ export async function applyReturnStatus(
     }
   }
 
-  if (
-    payload.internal_status === "EXCEPTION" ||
-    payload.internal_status === "EXCEPTION_WAREHOUSE"
-  ) {
-    console.error(
-      `[amphora-sync] order ${order.id} (${order.orderNumber}) entered ${payload.internal_status} — needs manual attention.`
+  // A problem is the one state where a human has to act, and the customer has
+  // just been told there is one — so somebody here has to know too.
+  //
+  // This used to be a `console.error` covering only two of the four exception
+  // statuses. Vercel keeps runtime logs for about an hour, so that was not a
+  // record anyone would find tomorrow: #310664 sat stranded for three weeks
+  // while exactly that line repeated every 15 minutes, unread.
+  //
+  // Keyed off the EMAIL rather than the status, so ops is alerted once per
+  // incident — on the same event that told the customer, and never again while
+  // the parcel flaps in and out of the hold.
+  if (actions.emails.includes("trackingProblem")) {
+    await alertOps(
+      `[returns] TRACKING INCIDENT — order ${order.orderNumber}`,
+      [
+        `Amphora reports ${payload.internal_status} for ${order.orderNumber}.`,
+        `Parcel: ${payload.carrier_number ?? order.locator ?? "(none on file)"}`,
+        `Carrier: ${payload.carrier ?? "(unknown)"}`,
+        `Customer: ${order.email}`,
+        `The customer has been emailed. Someone needs to find out what happened to the parcel.`,
+      ].join("\n")
     );
   }
 

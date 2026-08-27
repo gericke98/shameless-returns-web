@@ -7,6 +7,7 @@
 // (written when the return is created) via `readLocale`, so the fallback is
 // always "es".
 import type { Locale } from "@/lib/i18n";
+import type { TrackingKey } from "@/lib/trackingUpdate";
 
 const FROM = "hello@shamelesscollective.com";
 const MAILTO = `<a href="mailto:${FROM}">${FROM}</a>`;
@@ -359,6 +360,98 @@ export function buildReturnReceivedEmail(
           ${outcome}
           <p ${p}>${c.contact}</p>
           <p ${p}>${c.signoff}</p>
+        </div>
+      </div>`,
+  };
+}
+
+/**
+ * Where the customer's return has got to.
+ *
+ * One builder for all four milestones rather than four near-identical ones —
+ * the wrapper markup is the same in every case and only the sentences differ.
+ *
+ * The `received` copy deliberately promises no refund TIMELINE. Settlement is a
+ * separate job with its own grace period, and a date this email cannot keep is
+ * worse than no date.
+ */
+const TRACKING_COPY = {
+  es: {
+    accepted: {
+      subject: "Tu devolución está en camino",
+      intro: "Correos ya tiene tu paquete. A partir de aquí nos encargamos nosotros.",
+    },
+    in_transit: {
+      subject: "Tu devolución va de camino a nuestro almacén",
+      intro: "Tu paquete está en tránsito hacia nuestro almacén.",
+    },
+    received: {
+      subject: "Hemos recibido tu devolución",
+      intro:
+        "Tu devolución ya ha llegado a nuestro almacén y la estamos revisando. Te avisaremos en cuanto esté procesada.",
+    },
+    problem: {
+      subject: "Incidencia con tu devolución",
+      intro:
+        "Ha habido una incidencia con el envío de tu devolución y necesitamos revisarlo contigo.",
+    },
+  },
+  en: {
+    accepted: {
+      subject: "Your return is on its way",
+      intro: "The carrier has your parcel. We'll take it from here.",
+    },
+    in_transit: {
+      subject: "Your return is heading to our warehouse",
+      intro: "Your parcel is in transit to our warehouse.",
+    },
+    received: {
+      subject: "We've received your return",
+      intro:
+        "Your return has arrived at our warehouse and we're checking it now. We'll let you know once it's processed.",
+    },
+    problem: {
+      subject: "There's a problem with your return",
+      intro:
+        "Something went wrong with your return shipment and we need to look into it with you.",
+    },
+  },
+} as const;
+
+const TRACKING_TAIL = {
+  es: {
+    greeting: (name: string) => `Hola <strong>${name}</strong>,`,
+    contact: `Si tienes alguna pregunta, escríbenos a ${MAILTO}.`,
+    signoff: "Saludos,<br/><strong>El equipo de Shameless Collective</strong>",
+  },
+  en: {
+    greeting: (name: string) => `Hello <strong>${name}</strong>,`,
+    contact: `If you have any questions, contact us at ${MAILTO}.`,
+    signoff: "Best regards,<br/><strong>The Shameless Collective Team</strong>",
+  },
+} as const;
+
+export function buildTrackingUpdateEmail(
+  key: TrackingKey,
+  name: string,
+  locale: Locale
+): EmailPayload {
+  const c = TRACKING_COPY[locale][key];
+  const t = TRACKING_TAIL[locale];
+  const p = 'style="font-size:16px;color:#555;"';
+
+  return {
+    From: FROM,
+    To: "",
+    Subject: c.subject,
+    TextBody: c.intro,
+    HtmlBody: `
+      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
+        <div>
+          <p ${p}>${t.greeting(name)}</p>
+          <p ${p}>${c.intro}</p>
+          <p ${p}>${t.contact}</p>
+          <p ${p}>${t.signoff}</p>
         </div>
       </div>`,
   };

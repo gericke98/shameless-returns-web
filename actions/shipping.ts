@@ -505,6 +505,12 @@ export async function obtainLastStatus(
         Authorization: `Basic ${authToken}`,
         "Content-Type": "application/json",
       },
+      // Axios has NO default timeout. The hourly tracking sweep calls this
+      // sequentially inside a 300-second function, so one socket the
+      // localizador never closes stalls every parcel behind it and the run
+      // dies mid-list. A timeout reads as "unknown", which is already the
+      // honest answer for a lookup that told us nothing.
+      timeout: 10_000,
     });
     return parseCorreosTracking(response.data);
   } catch (error) {

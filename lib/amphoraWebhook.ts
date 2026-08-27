@@ -3,6 +3,8 @@
 // without constructing an HTTP request.
 //
 // Amphora spells approved `APROVED`, with one P. That is the wire value.
+import { amphoraTrackingStatus } from "@/lib/trackingStatus";
+import { decideTrackingUpdate, type TrackingKey } from "@/lib/trackingUpdate";
 
 /**
  * Recorded when Amphora hands us a tracking number without naming the carrier.
@@ -22,7 +24,11 @@ export type AmphoraWebhookReturn = {
   carrier_url?: string | null;
 };
 
-export type WebhookEmail = "collectionScheduled" | "returnReceived";
+export type WebhookEmail =
+  | "collectionScheduled"
+  | "returnReceived"
+  | "trackingInTransit"
+  | "trackingProblem";
 
 export type WebhookActions = {
   noop: boolean;
@@ -31,6 +37,10 @@ export type WebhookActions = {
     carrier?: string;
     carrierUrl?: string;
     returnStatus: string;
+    /** Written by the same rank table the domestic sweep uses, so a status
+     *  that flaps cannot re-announce a milestone. See below. */
+    lastTrackingKey?: TrackingKey;
+    lastTrackingLocator?: string;
   } | null;
   emails: WebhookEmail[];
 };
@@ -60,7 +70,14 @@ export function orderIdFromWebhook(
  * in a customer's inbox.
  */
 export function decideWebhookActions(
-  order: { returnStatus?: string | null; locator?: string | null },
+  order: {
+    returnStatus?: string | null;
+    locator?: string | null;
+    /** Optional so the callers that predate the tracking columns keep
+     *  compiling; absent simply means "no milestone recorded yet". */
+    lastTrackingKey?: string | null;
+    lastTrackingLocator?: string | null;
+  },
   payload: AmphoraWebhookReturn
 ): WebhookActions {
   const status = payload.internal_status?.trim();
@@ -101,6 +118,48 @@ export function decideWebhookActions(
     emails.push("collectionScheduled");
   }
   if (status === "RECEIVED") emails.push("returnReceived");
+
+  // The two milestones the international lane never had, decided by the SAME
+  // rank table the domestic sweep uses rather than by "the status changed".
+  //
+  // Status-change alone is a safe dedupe for a monotonic lifecycle, and the
+  // Amphora lifecycle is not one where it matters most: TRAVELLING ->
+  // EXCEPTION_HOLD -> TRAVELLING is an ordinary customs hold, `amphora-sync`
+  // polls every 15 minutes, and each leg of that oscillation is a status
+  // change. Nothing bounded it, so one held parcel could email its customer
+  // "on its way" and "there is a problem" alternately, all day.
+  //
+  // `decideTrackingUpdate` is the fix: it remembers HOW FAR the parcel got, not
+  // just where it was last seen, and refuses to walk a customer backwards.
+  const phase = amphoraTrackingStatus(status).phase;
+  const tracking = decideTrackingUpdate({
+    lastKey: order.lastTrackingKey ?? null,
+    lastLocator: order.lastTrackingLocator ?? null,
+    // `carrier_number` first: on the event that introduces tracking it is the
+    // parcel's identity, and `order.locator` has not been written yet.
+    currentLocator: payload.carrier_number ?? order.locator ?? null,
+    phase,
+  });
+
+  // `accepted` and `received` are deliberately dropped: `collectionScheduled`
+  // and `returnReceived` above already own those two moments, and a parallel
+  // email would send two messages for one milestone. The KEY is still
+  // persisted for them, which is what keeps the rank monotonic.
+  //
+  // The `collectionScheduled` guard survives unchanged: that email carries the
+  // tracking number and URL and already says the parcel is moving, and the
+  // carrier can first appear on TRAVELLING — without this, one customer gets
+  // two emails in the same second describing one milestone.
+  if (tracking.notify === "in_transit" && !emails.includes("collectionScheduled")) {
+    emails.push("trackingInTransit");
+  }
+  if (tracking.notify === "problem") {
+    emails.push("trackingProblem");
+  }
+  if (tracking.persist) {
+    persist.lastTrackingKey = tracking.persist.lastTrackingKey;
+    persist.lastTrackingLocator = tracking.persist.lastTrackingLocator;
+  }
 
   return { noop: false, persist, emails };
 }

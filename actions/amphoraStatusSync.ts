@@ -129,18 +129,29 @@ export async function applyReturnStatus(
     }
   }
 
-  // A problem is the one state where a human has to act, and the customer has
-  // just been told there is one — so somebody here has to know too.
+  // A problem is the one state where a human has to act.
   //
   // This used to be a `console.error` covering only two of the four exception
   // statuses. Vercel keeps runtime logs for about an hour, so that was not a
   // record anyone would find tomorrow: #310664 sat stranded for three weeks
   // while exactly that line repeated every 15 minutes, unread.
   //
-  // Keyed off the EMAIL rather than the status, so ops is alerted once per
-  // incident — on the same event that told the customer, and never again while
-  // the parcel flaps in and out of the hold.
-  if (actions.emails.includes("trackingProblem")) {
+  // `opsIncident` — not `emails.includes("trackingProblem")`. The two agree on
+  // a tracked parcel, and disagree on the case that matters most: an incident
+  // with no tracking number sends the customer nothing, because there is
+  // nothing to tell them, and used to therefore alert nobody either.
+  if (actions.opsIncident) {
+    // Three outcomes, not two. An incident notice that Postmark rejected is
+    // not the same as one we never had a parcel to send — the first needs a
+    // human to send the notice, the second needs a human to find the parcel —
+    // and telling ops "no tracking number" about a 500 would send them looking
+    // for the wrong thing.
+    const attempted = actions.emails.includes("trackingProblem");
+    const customerLine = !attempted
+      ? `The customer has NOT been emailed — there is no tracking number to tell them about, so this ticket has no parcel behind it. Chase Amphora, then tell the customer yourself.`
+      : emailsSent.includes("trackingProblem")
+        ? `The customer has been emailed. Someone needs to find out what happened to the parcel.`
+        : `The customer has NOT been emailed — the incident notice FAILED to send. Send it by hand, then find out what happened to the parcel.`;
     await alertOps(
       `[returns] TRACKING INCIDENT — order ${order.orderNumber}`,
       [
@@ -148,7 +159,7 @@ export async function applyReturnStatus(
         `Parcel: ${payload.carrier_number ?? order.locator ?? "(none on file)"}`,
         `Carrier: ${payload.carrier ?? "(unknown)"}`,
         `Customer: ${order.email}`,
-        `The customer has been emailed. Someone needs to find out what happened to the parcel.`,
+        customerLine,
       ].join("\n")
     );
   }

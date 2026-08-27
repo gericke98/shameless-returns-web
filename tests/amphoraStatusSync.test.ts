@@ -256,6 +256,76 @@ describe("applyReturnStatus — the poll must not re-notify", () => {
     expect(emails).toHaveLength(0);
   });
 
+  it("alerts ops when the stranded parcel never got a tracking number at all", async () => {
+    // The gap this closes, and the exact shape of #310664: Amphora approved the
+    // ticket on 2026-08-04, never assigned a carrier, and the parcel was never
+    // seen again. There is no locator, so `decideTrackingUpdate` correctly
+    // declines to email the customer — a "there is a problem with your parcel"
+    // message naming no parcel is not something we can send.
+    //
+    // But the ops alert was keyed off that same email. No locator meant no
+    // email, no email meant no alert, and the fix wave had already deleted the
+    // console.error that used to half-cover it. The one case where a human is
+    // GUARANTEED to be needed — a ticket with no parcel behind it — was the one
+    // case nobody was told about.
+    Object.assign(order, { locator: null, returnStatus: "APROVED" });
+
+    await apply({
+      id: "SHP 13192219558214",
+      name: "#310957",
+      internal_status: "EXCEPTION",
+    });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].subject).toContain("#310957");
+    expect(alerts[0].body).toContain("EXCEPTION");
+    // Nothing to send, and nothing sent.
+    expect(emails).toHaveLength(0);
+  });
+
+  it("does not tell ops the customer was emailed when no email was sent", async () => {
+    // The alert body is the whole handover. Reading "The customer has been
+    // emailed" on a parcel whose customer heard nothing is worse than no alert:
+    // it tells whoever picks this up that the customer-facing half is done.
+    Object.assign(order, { locator: null, returnStatus: "APROVED" });
+
+    await apply({
+      id: "SHP 13192219558214",
+      name: "#310957",
+      internal_status: "EXCEPTION",
+    });
+
+    expect(alerts[0].body).not.toContain("The customer has been emailed");
+    expect(alerts[0].body).toContain("NOT been emailed");
+  });
+
+  it("still says the customer was emailed when they were", async () => {
+    // The control for the two above: the ordinary tracked incident must keep
+    // reporting exactly what it always did.
+    await apply(CARRIER_ASSIGNED);
+    alerts.length = 0;
+
+    await apply({ ...CARRIER_ASSIGNED, internal_status: "EXCEPTION" });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].body).toContain("The customer has been emailed");
+  });
+
+  it("distinguishes a failed incident notice from one it never tried to send", async () => {
+    // Two different jobs for whoever reads the alert: a rejected email needs
+    // sending by hand, a missing parcel needs chasing at Amphora. Collapsing
+    // them sends ops after the wrong thing.
+    await apply(CARRIER_ASSIGNED);
+    alerts.length = 0;
+    postFails = true;
+
+    await apply({ ...CARRIER_ASSIGNED, internal_status: "EXCEPTION" });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].body).toContain("FAILED to send");
+    expect(alerts[0].body).not.toContain("no tracking number");
+  });
+
   it("records the status but sends nothing when we already hold the tracking", async () => {
     // The seven international orders backfilled by hand on 2026-08-05: Amphora
     // already emailed the customer the label directly, so when the cron sees

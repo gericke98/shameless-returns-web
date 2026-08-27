@@ -43,9 +43,22 @@ export type WebhookActions = {
     lastTrackingLocator?: string;
   } | null;
   emails: WebhookEmail[];
+  /** Whether a human has to be told about this event.
+   *
+   *  Separate from the emails on purpose. The customer-facing incident notice
+   *  needs a parcel to talk about, and declines when there is none; ops needs
+   *  to hear about that case MOST, because a ticket with no parcel behind it
+   *  cannot resolve itself. Keying the alert off the email collapsed those two
+   *  into one and lost the second. */
+  opsIncident: boolean;
 };
 
-const NOOP: WebhookActions = { noop: true, persist: null, emails: [] };
+const NOOP: WebhookActions = {
+  noop: true,
+  persist: null,
+  emails: [],
+  opsIncident: false,
+};
 
 /**
  * Our order id, recovered from Amphora's return id.
@@ -161,5 +174,29 @@ export function decideWebhookActions(
     persist.lastTrackingLocator = tracking.persist.lastTrackingLocator;
   }
 
-  return { noop: false, persist, emails };
+  // Ops hears about an incident in two cases, and the second is the one that
+  // was missing:
+  //
+  //   1. The customer was just told (`notify === "problem"`). Unchanged — one
+  //      alert per incident, and the flap guard above still suppresses the
+  //      repeats, because a parcel that keeps entering and leaving a customs
+  //      hold is one incident, not twelve.
+  //
+  //   2. There is no parcel to tell them about. `decideTrackingUpdate` returns
+  //      nothing without a locator, correctly — we cannot email "there is a
+  //      problem with your return" and name nothing. But that is #310664's
+  //      exact shape: approved 2026-08-04, no carrier ever assigned, three
+  //      weeks of silence. Guaranteed to need a human, and the one case
+  //      nobody was told about.
+  //
+  // Case 2 is bounded by the `order.returnStatus === status` no-op at the top
+  // of this function: an unchanged status never reaches here, so a stuck
+  // ticket alerts once per genuinely new exception status, not once per poll.
+  // It cannot flap the way a tracked parcel can — oscillation comes from
+  // carrier scans, and this branch is defined by having no carrier.
+  const trackedLocator = (payload.carrier_number ?? order.locator ?? "").trim();
+  const opsIncident =
+    phase === "incidencia" && (tracking.notify === "problem" || !trackedLocator);
+
+  return { noop: false, persist, emails, opsIncident };
 }

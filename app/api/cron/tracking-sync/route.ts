@@ -71,10 +71,20 @@ export async function GET(req: Request) {
   }
 
   const url = new URL(req.url);
+  const dryParam = url.searchParams.get("dry");
   const dry =
-    url.searchParams.get("dry") === "1" ||
+    (dryParam !== null && dryParam !== "0" && dryParam !== "false") ||
     process.env.TRACKING_EMAILS_ENABLED !== "true";
   const cap = intEnv("TRACKING_MAX_EMAILS_PER_RUN", 20);
+
+  // Bail before the loop, not inside it. `sendEmail` returns 500 without
+  // attempting anything when the token is absent — so without this check a
+  // single run would persist every parcel's milestone, mail nobody, and report
+  // `notified: N` as though it had. Those milestones can never be re-sent.
+  if (!dry && !process.env.POSTMARK_SERVER_TOKEN) {
+    console.error("[tracking-sync] POSTMARK_SERVER_TOKEN is not set — refusing to run");
+    return NextResponse.json({ error: "Email not configured" }, { status: 503 });
+  }
 
   const parcels = await getParcelsAwaitingTracking();
 
@@ -138,6 +148,19 @@ export async function GET(req: Request) {
       if (status_ !== 200) {
         console.error(
           `[tracking-sync] ${order.orderNumber}: state saved as ${decision.notify} but the email FAILED (${status_}). Customer needs a manual notice.`
+        );
+        // The state is already written, so this milestone will never be
+        // retried — the next run finds the key unchanged and does nothing.
+        // A log line is not a record anyone will find tomorrow.
+        await alertOps(
+          `[returns] TRACKING EMAIL NOT SENT — order ${order.orderNumber}`,
+          [
+            `The "${decision.notify}" notice for ${order.orderNumber} was recorded but the email FAILED (HTTP ${status_}).`,
+            `Because the state is saved first, this milestone will NOT be retried automatically.`,
+            `Customer: ${order.email}`,
+            `Parcel: ${order.locator}`,
+            `Send them a manual notice, or clear last_tracking_key on the order to let the next run resend.`,
+          ].join("\n")
         );
       }
 

@@ -20,7 +20,7 @@ vi.mock("@/db/drizzle", () => {
   const chain: any = {
     update: () => chain,
     set: (values: any) => { pendingSet = values; return chain; },
-    where: () => { persisted.push({ ...pendingSet }); return Promise.resolve(); },
+    where: () => { persisted.push({ ...pendingSet }); events.push("persist"); return Promise.resolve(); },
   };
   return { default: chain };
 });
@@ -33,6 +33,7 @@ const state = {
 const sent: Array<{ to: string; subject: string }> = [];
 const persisted: Array<Record<string, any>> = [];
 const alerts: string[] = [];
+const events: string[] = [];
 
 vi.mock("@/db/queries", () => ({
   getParcelsAwaitingTracking: async () => state.orders,
@@ -62,6 +63,7 @@ vi.mock("axios", () => ({
   default: {
     post: async (_url: string, payload: any) => {
       sent.push({ to: payload.To, subject: payload.Subject });
+      events.push("send");
       return { status: 200 };
     },
   },
@@ -83,7 +85,7 @@ async function call(headers: Record<string, string> = {}, query = "") {
 }
 
 beforeEach(() => {
-  sent.length = 0; persisted.length = 0; alerts.length = 0;
+  sent.length = 0; persisted.length = 0; alerts.length = 0; events.length = 0;
   state.orders = [order("1001", "PQ1")];
   state.status = { PQ1: { label: "Admitido", phase: "admitido" } };
   state.lookupThrowsOn = null;
@@ -125,6 +127,9 @@ describe("tracking-sync cron — notifying", () => {
     expect(persisted).toEqual([
       { lastTrackingKey: "accepted", lastTrackingLocator: "PQ1" },
     ]);
+    // The ordering itself, not just the values: an implementation that sent
+    // first and persisted second would pass the assertion above unchanged.
+    expect(events).toEqual(["persist", "send"]);
   });
 
   it("says nothing about a parcel Correos cannot trace", async () => {
@@ -168,6 +173,25 @@ describe("tracking-sync cron — throttles", () => {
     const body = await (await call({ authorization: "Bearer s3cret" }, "?dry=1")).json();
     expect(sent).toHaveLength(0);
     expect(body.dry).toBe(true);
+  });
+
+  it("treats any ?dry= value as a preview, not just \"1\"", async () => {
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?dry=true")).json();
+
+    expect(body.dry).toBe(true);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("refuses to run rather than burn milestones with no Postmark token", async () => {
+    // sendEmail returns 500 without trying when the token is absent, so a run
+    // would persist every milestone and mail nobody.
+    delete process.env.POSTMARK_SERVER_TOKEN;
+
+    const res = await call({ authorization: "Bearer s3cret" });
+
+    expect(res.status).toBe(503);
+    expect(persisted).toHaveLength(0);
+    expect(sent).toHaveLength(0);
   });
 
   it("stops at the per-run email cap", async () => {

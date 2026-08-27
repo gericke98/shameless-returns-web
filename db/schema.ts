@@ -35,6 +35,15 @@ export const orders = pgTable("orders", {
   // RECEIVED / FINISHED / EXCEPTION ...). Written only by the Amphora status
   // webhook. Null means no webhook has been seen for this order yet.
   returnStatus: text("return_status"),
+  /** The tracking notification we have already sent for this parcel:
+   *  "accepted" | "in_transit" | "received" | "problem". Null means we have
+   *  told the customer nothing yet. */
+  lastTrackingKey: text("last_tracking_key"),
+  /** WHICH parcel `lastTrackingKey` refers to. A re-registration produces a new
+   *  Correos code whose journey legitimately starts over — without this, the
+   *  new parcel's "accepted" notice would be suppressed because the old one had
+   *  already passed that milestone. */
+  lastTrackingLocator: text("last_tracking_locator"),
   // Draft order holding the replacement stock from the moment the customer
   // paid for their exchange until an admin validates it. NEVER completed — it
   // is deleted at validation and the real exchange order created as before.

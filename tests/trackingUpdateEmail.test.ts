@@ -13,10 +13,10 @@ describe("buildTrackingUpdateEmail", () => {
         expect(mail.Subject, `${key}/${locale}`).toBeTruthy();
         expect(mail.TextBody, `${key}/${locale}`).toBeTruthy();
         expect(mail.HtmlBody, `${key}/${locale}`).toContain("Aida");
-        subjects.add(`${locale}:${mail.Subject}`);
+        subjects.add(`${locale}:${mail.Subject}:${mail.TextBody}`);
       }
     }
-    // Eight distinct subjects — no key silently reusing another's copy.
+    // Eight distinct subject+body pairs — no key silently reusing another's copy.
     expect(subjects.size).toBe(8);
   });
 

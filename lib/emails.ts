@@ -7,6 +7,7 @@
 // (written when the return is created) via `readLocale`, so the fallback is
 // always "es".
 import type { Locale } from "@/lib/i18n";
+import type { TrackingKey } from "@/lib/trackingUpdate";
 
 const FROM = "hello@shamelesscollective.com";
 const MAILTO = `<a href="mailto:${FROM}">${FROM}</a>`;
@@ -431,7 +432,7 @@ const TRACKING_TAIL = {
 } as const;
 
 export function buildTrackingUpdateEmail(
-  key: "accepted" | "in_transit" | "received" | "problem",
+  key: TrackingKey,
   name: string,
   locale: Locale
 ): EmailPayload {

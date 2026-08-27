@@ -419,7 +419,7 @@ export function decideTrackingUpdate(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/trackingUpdate.test.ts`
-Expected: PASS, 17 tests.
+Expected: PASS, 18 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -661,7 +661,7 @@ export async function getParcelsAwaitingTracking() {
 - [ ] **Step 2: Verify**
 
 Run: `npx tsc --noEmit && npm test`
-Expected: clean; 818 tests passing (796 baseline + 17 from Task 2 + 5 from Task 3 — this task adds none).
+Expected: clean; 819 tests passing (796 baseline + 18 from Task 2 + 5 from Task 3 — this task adds none).
 
 - [ ] **Step 3: Commit**
 
@@ -702,7 +702,19 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+// A bare `{}` here would make `db.update(...)` throw on every non-dry path,
+// and the per-parcel catch would swallow it — every "it emailed" test would
+// pass vacuously by never reaching the send. The chain records what was
+// written so the tests can assert the state actually persisted.
+let pendingSet: any = null;
+vi.mock("@/db/drizzle", () => {
+  const chain: any = {
+    update: () => chain,
+    set: (values: any) => { pendingSet = values; return chain; },
+    where: () => { persisted.push({ ...pendingSet }); return Promise.resolve(); },
+  };
+  return { default: chain };
+});
 
 const state = {
   orders: [] as any[],
@@ -710,7 +722,7 @@ const state = {
   lookupThrowsOn: null as string | null,
 };
 const sent: Array<{ to: string; subject: string }> = [];
-const persisted: Array<{ id: string; key: string; locator: string }> = [];
+const persisted: Array<Record<string, any>> = [];
 const alerts: string[] = [];
 
 vi.mock("@/db/queries", () => ({
@@ -796,6 +808,14 @@ describe("tracking-sync cron — notifying", () => {
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
     expect(sent).toEqual([{ to: "c1001@example.com", subject: "SUBJ:accepted" }]);
     expect(body.notified).toBe(1);
+  });
+
+  it("records the milestone BEFORE sending, so a retry cannot double-send", async () => {
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(persisted).toEqual([
+      { lastTrackingKey: "accepted", lastTrackingLocator: "PQ1" },
+    ]);
   });
 
   it("says nothing about a parcel Correos cannot trace", async () => {
@@ -1048,9 +1068,9 @@ export async function GET(req: Request) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npx vitest run tests/trackingSyncRoute.test.ts`
-Expected: PASS, 12 tests.
+Expected: PASS, 13 tests.
 
-Then: `npm test` → 830 passing. Then `npx tsc --noEmit` → clean.
+Then: `npm test` → 832 passing. Then `npx tsc --noEmit` → clean.
 
 - [ ] **Step 5: Commit**
 
@@ -1166,7 +1186,7 @@ Add `buildTrackingUpdateEmail` to that file's import from `@/lib/emails`.
 Run: `npx vitest run tests/amphoraWebhook.test.ts tests/amphoraStatusSync.test.ts tests/amphoraSyncRoute.test.ts`
 Expected: PASS. These three exercise the status-sync path end to end; if any pre-existing case fails, the change altered behaviour it should not have — stop and report rather than editing the test.
 
-Then: `npm test` → 834 passing. Then `npx tsc --noEmit` → clean.
+Then: `npm test` → 836 passing. Then `npx tsc --noEmit` → clean.
 
 - [ ] **Step 5: Commit**
 
@@ -1283,7 +1303,7 @@ Add to the environment-variable table in `README.md`, matching its existing form
 - [ ] **Step 5: Verify and commit**
 
 Run: `npm test && npx tsc --noEmit && npm run build`
-Expected: all green, 834 passing.
+Expected: all green, 836 passing.
 
 ```bash
 git add scripts/seed-tracking-state.ts package.json vercel.json README.md

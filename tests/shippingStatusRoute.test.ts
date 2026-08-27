@@ -62,6 +62,18 @@ describe("obtainLastStatus", () => {
     expect(status.label).not.toBe("Prerregistrado");
   });
 
+  it("bounds the request, so one hung socket cannot stall the whole sweep", async () => {
+    // Axios has NO default timeout. The hourly tracking sweep calls this
+    // sequentially inside a 300-second function, so a socket the localizador
+    // never closes takes every parcel behind it down with it.
+    axiosGet.mockResolvedValue({ data: DELIVERED });
+    const { obtainLastStatus } = await import("@/actions/shipping");
+
+    await obtainLastStatus("PQAZXT9800004250128221N");
+
+    expect(axiosGet.mock.calls[0][1]).toMatchObject({ timeout: 10_000 });
+  });
+
   it("treats a network failure as unknown, never as a status", async () => {
     // A timeout is not evidence about the parcel.
     axiosGet.mockRejectedValue(new Error("ETIMEDOUT"));

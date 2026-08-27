@@ -65,6 +65,18 @@ Order matters and is not negotiable:
    Run this against the **production** host. Preview deployments share the
    production database, so seeding from a preview URL writes the same rows.
 
+   **Seeding records `accepted` and `in_transit` only.** Parcels already
+   delivered are left unseeded on purpose: they are unsettled, their customers
+   were never told the parcel arrived, and telling them is the point of the
+   feature. Those get their `received` email on the first live run — expect a
+   burst of roughly that size, and size `TRACKING_MAX_EMAILS_PER_RUN`
+   accordingly. Nothing earlier can fire for them, since `received` outranks
+   every other milestone.
+
+   The response reports `mode` (`seed` / `dry` / `live`), plus `total`,
+   `remaining` and `lookupFailures` — a truncated run or a Correos outage is
+   distinguishable from a quiet hour only by those.
+
 5. Only then set `TRACKING_EMAILS_ENABLED=true` and redeploy.
 
 Skipping step 4 is what the per-run cap (`TRACKING_MAX_EMAILS_PER_RUN`) exists to survive.

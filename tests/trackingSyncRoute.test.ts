@@ -152,12 +152,54 @@ describe("tracking-sync cron — notifying", () => {
     expect(body.skipped).toBeGreaterThan(0);
   });
 
-  it("alerts ops as well as the customer on a problem", async () => {
-    state.status = { PQ1: { label: "Incidencia", phase: "incidencia" } };
-    await call({ authorization: "Bearer s3cret" });
-    expect(sent[0].subject).toBe("SUBJ:problem");
-    expect(alerts.join(" ")).toContain("#1001");
+  it("never asks Correos about a parcel that is not travelling with Correos", async () => {
+    // `orders.locator` is overloaded: a SELF return stores the customer's own
+    // SEUR/MRW/GLS reference there. The localizador answers "no traceability"
+    // for one of those — indistinguishable from a parcel Correos has lost.
+    state.orders = [
+      order("1001", "PQ1", { carrier: "SEUR" }),
+      order("1002", "PQ2", { carrier: "GLS" }),
+      order("1003", "PQ3", { carrier: "CORREOS EXPRESS" }),
+    ];
+    state.status = {
+      PQ1: { label: "Admitido", phase: "admitido" },
+      PQ2: { label: "Admitido", phase: "admitido" },
+      PQ3: { label: "Admitido", phase: "admitido" },
+    };
+    // A lookup for any of them is the failure: the mock throws so a regression
+    // cannot pass quietly by simply deciding not to notify.
+    state.lookupThrowsOn = "PQ1";
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(sent).toHaveLength(0);
+    expect(body.skipped).toBe(3);
+    expect(body.scanned).toBe(0);
   });
+
+  it("still sweeps a parcel Amphora subcontracted to Correos", async () => {
+    // The control. Amphora sets carrier "correos" for some destinations, and a
+    // null carrier is our own domestic label — both must still be looked up.
+    state.orders = [order("1001", "PQ1", { carrier: "Correos" }), order("1002", "PQ2")];
+    state.status = {
+      PQ1: { label: "Admitido", phase: "admitido" },
+      PQ2: { label: "Admitido", phase: "admitido" },
+    };
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.scanned).toBe(2);
+    expect(sent).toHaveLength(2);
+  });
+
+  // REMOVED 2026-08-27: "alerts ops as well as the customer on a problem".
+  //
+  // It hand-fed `phase: "incidencia"` through the mocked Correos lookup, and
+  // no Correos wording produces that phase — `lib/trackingStatus.ts` has no
+  // pattern for it, so `parseCorreosTracking` can never return it. The test was
+  // green and proved nothing except that the mock did what the test told it to.
+  // The branch it "covered" is gone with it; `problem` is international-only
+  // today (see the route's header comment and tests/trackingStatus.test.ts).
 });
 
 describe("tracking-sync cron — throttles", () => {
@@ -194,6 +236,26 @@ describe("tracking-sync cron — throttles", () => {
     expect(sent).toHaveLength(0);
   });
 
+  it("does not apply the cap to a dry run, but still reports it", async () => {
+    // A preview that stops at the cap cannot show the operator the full blast
+    // radius, which is the only thing the preview is for. `capped` still
+    // reports true, because the live run WOULD have stopped there.
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
+    state.status = {
+      PQ1: { label: "Admitido", phase: "admitido" },
+      PQ2: { label: "Admitido", phase: "admitido" },
+      PQ3: { label: "Admitido", phase: "admitido" },
+    };
+    process.env.TRACKING_MAX_EMAILS_PER_RUN = "2";
+
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?dry=1")).json();
+
+    expect(body.notified).toBe(3);
+    expect(body.remaining).toBe(0);
+    expect(body.capped).toBe(true);
+    expect(sent).toHaveLength(0);
+  });
+
   it("stops at the per-run email cap", async () => {
     state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
     state.status = {
@@ -205,6 +267,70 @@ describe("tracking-sync cron — throttles", () => {
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
     expect(sent).toHaveLength(2);
     expect(body.capped).toBe(true);
+  });
+});
+
+describe("tracking-sync cron — reporting a run honestly", () => {
+  it("distinguishes a truncated run from a quiet one", async () => {
+    // `scanned: 82, notified: 0` used to mean both "nothing happened this hour"
+    // and "we never got past parcel 40" — and the sweep is oldest-first, so the
+    // parcels it drops are the same ones every hour, forever.
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
+    state.status = {
+      PQ1: { label: "Admitido", phase: "admitido" },
+      PQ2: { label: "Admitido", phase: "admitido" },
+      PQ3: { label: "Admitido", phase: "admitido" },
+    };
+    process.env.TRACKING_MAX_EMAILS_PER_RUN = "2";
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.total).toBe(3);
+    expect(body.remaining).toBe(1);
+    expect(body.capped).toBe(true);
+    expect(alerts.join(" ")).toContain("TRACKING SWEEP TRUNCATED");
+  });
+
+  it("does not cry truncation on a run that finished", async () => {
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.total).toBe(1);
+    expect(body.remaining).toBe(0);
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("counts a parcel Correos cannot trace as a failed lookup", async () => {
+    state.status = { PQ1: { label: "Sin información", phase: "sin_informacion" } };
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.lookupFailures).toBe(1);
+    expect(body.notified).toBe(0);
+  });
+
+  it("alerts ops when more than half the lookups come back empty", async () => {
+    // `obtainLastStatus` swallows its own network errors and answers
+    // "unknown", so a Correos outage is invisible unless it is counted.
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
+    state.status = { PQ3: { label: "Admitido", phase: "admitido" } };
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(alerts.join(" ")).toContain("TRACKING LOOKUPS FAILING");
+  });
+
+  it("stays quiet about lookups while the job is still dry", async () => {
+    // The route spends most of its life dry by design and runs hourly, so an
+    // alert from a dry run is an hourly ops email about a job deliberately
+    // doing nothing. The counters in the body report the same facts.
+    delete process.env.TRACKING_EMAILS_ENABLED;
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
+    state.status = { PQ3: { label: "Admitido", phase: "admitido" } };
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(alerts).toHaveLength(0);
+    expect(body.lookupFailures).toBe(2);
   });
 });
 
@@ -244,6 +370,69 @@ describe("tracking-sync cron — seeding", () => {
 
     expect(res.status).toBe(401);
     expect(persisted).toHaveLength(0);
+  });
+
+  it("treats any ?seed= value as a seed, not just \"1\"", async () => {
+    // `?seed=true` used to perform a NORMAL run — a live email burst once the
+    // job is enabled. A dangerous flag must not fail open into the dangerous
+    // direction; `?dry=` has always parsed this way.
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=true")).json();
+
+    expect(body.seeded).toBe(1);
+    expect(body.notified).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("still runs normally on ?seed=0 and ?seed=false", async () => {
+    for (const value of ["0", "false"]) {
+      sent.length = 0;
+      const body = await (
+        await call({ authorization: "Bearer s3cret" }, `?seed=${value}`)
+      ).json();
+      expect(body.seeded, value).toBe(0);
+      expect(body.notified, value).toBe(1);
+    }
+  });
+
+  it("reports the mode honestly rather than claiming to be dry", async () => {
+    // Seeding WRITES. An operator reading `dry: true` on a run that persisted
+    // 40 rows would conclude the opposite of what happened.
+    delete process.env.TRACKING_EMAILS_ENABLED;
+
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=1")).json();
+
+    expect(body.mode).toBe("seed");
+    expect(body.dry).toBe(false);
+    expect(persisted).toHaveLength(1);
+  });
+
+  it("leaves an already-delivered parcel unseeded, so it still gets told", async () => {
+    // The backlog this whole feature exists for: ~36 parcels sitting delivered
+    // whose customers were never told. Seeding `received` for them is how the
+    // runbook would silently suppress the exact people it was built to reach.
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2")];
+    state.status = {
+      PQ1: { label: "Entregado", phase: "entregado" },
+      PQ2: { label: "Admitido", phase: "admitido" },
+    };
+
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=1")).json();
+
+    expect(body.seeded).toBe(1);
+    expect(persisted).toEqual([
+      { lastTrackingKey: "accepted", lastTrackingLocator: "PQ2" },
+    ]);
+  });
+
+  it("seeds an in-transit parcel — that one is not owed a notice yet", async () => {
+    state.status = { PQ1: { label: "En tránsito", phase: "en_transito" } };
+
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=1")).json();
+
+    expect(body.seeded).toBe(1);
+    expect(persisted).toEqual([
+      { lastTrackingKey: "in_transit", lastTrackingLocator: "PQ1" },
+    ]);
   });
 
   it("seeds every parcel even when the cap is smaller than the backlog", async () => {

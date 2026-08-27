@@ -2,7 +2,7 @@
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
 import db from "./drizzle";
-import { and, desc, eq, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
@@ -221,11 +221,28 @@ export async function getOrdersWithUnsettledReturns() {
  *
  * Ordered by `orders.id` — the raw Shopify order id, sequential across every
  * lane — so a capped run reaches the customers who have waited longest and
- * behaves the same on every run.
+ * behaves the same on every run. That ordering is oldest-first, so a run
+ * truncated by `maxDuration` or by the per-run cap drops the SAME newest
+ * parcels every hour. Two things keep that from becoming permanent: the
+ * `received` exclusion below bounds the list to parcels that can still produce
+ * news, and the route alerts ops when a run truncates.
  */
 export async function getParcelsAwaitingTracking() {
   const rows = await db.query.orders.findMany({
-    where: isNotNull(orders.locator),
+    where: and(
+      isNotNull(orders.locator),
+      // `isNotNull` is not enough: an empty locator is a row with no parcel to
+      // ask about, and asking Correos about "" spends a lookup to learn nothing.
+      ne(orders.locator, ""),
+      // Parcels already at their FINAL milestone can never produce news again,
+      // and they are the largest cohort by far — the delivered ones accumulate
+      // forever while the live ones are a handful. Leaving them in means the
+      // sweep spends its 300-second budget re-reading history.
+      or(
+        isNull(orders.lastTrackingKey),
+        ne(orders.lastTrackingKey, "received")
+      )
+    ),
     orderBy: (o, { sql }) => [sql`${o.id} asc`],
     with: { products: { where: eq(productsOrder.confirmed, true) } },
   });

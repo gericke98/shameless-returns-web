@@ -8,6 +8,7 @@ import { obtainLastStatus } from "@/actions/shipping";
 import { decideTrackingUpdate } from "@/lib/trackingUpdate";
 import { buildTrackingUpdateEmail } from "@/lib/emails";
 import { isInternationalOrder } from "@/lib/countries";
+import { tracksWithCorreos } from "@/lib/trackingStatus";
 import { readLocale } from "@/lib/i18n";
 import { alertOps } from "@/actions/opsAlert";
 
@@ -24,6 +25,18 @@ import { alertOps } from "@/actions/opsAlert";
  *
  * DRY BY DEFAULT: `TRACKING_EMAILS_ENABLED` must be exactly "true" before a
  * single message goes out, so deploying this route mails nobody.
+ *
+ * NO `problem` MILESTONE HERE, deliberately. `problem` is international-only
+ * today: `lib/trackingStatus.ts` has no pattern that yields the `incidencia`
+ * phase, because we have never captured a real Correos incident payload, and
+ * `parseCorreosTracking` refuses to guess at a wording it does not recognise.
+ * A branch fed by a phase that cannot occur is dead code that reads as
+ * coverage, so it is not here. Amphora names its exception states explicitly,
+ * which is why `lib/amphoraWebhook.ts` can and does send that email. To close
+ * the gap, capture the localizador response for a real incident first, add the
+ * pattern in `trackingStatus.ts`, and the milestone lights up here on its own —
+ * `decideTrackingUpdate` and `buildTrackingUpdateEmail("problem", ...)` already
+ * handle it.
  */
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
@@ -88,7 +101,18 @@ export async function GET(req: Request) {
   // It lives here rather than in a script because `db/queries.ts` and
   // `actions/shipping.ts` both import React's `cache()`, so neither the parcel
   // list nor the Correos lookup is reachable from a plain node process.
-  const seed = url.searchParams.get("seed") === "1";
+  //
+  // SEEDS `accepted` AND `in_transit` ONLY. The ~36 parcels already sitting
+  // delivered are left unseeded on purpose: they are the exact people this
+  // feature exists for — unsettled, delivered, and never told — so `received`
+  // is allowed to fire for them on the first live run.
+  //
+  // Parsed like `dry`, not as `=== "1"`. `?seed=true` used to perform a normal
+  // run, which once enabled is a live email burst — a dangerous flag must not
+  // fail open into the dangerous direction.
+  const seedParam = url.searchParams.get("seed");
+  const seed =
+    seedParam !== null && seedParam !== "0" && seedParam !== "false";
 
   // Bail before the loop, not inside it. `sendEmail` returns 500 without
   // attempting anything when the token is absent — so without this check a
@@ -100,19 +124,31 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Email not configured" }, { status: 503 });
   }
 
-  const parcels = await getParcelsAwaitingTracking();
+  const parcels = (await getParcelsAwaitingTracking()) as any[];
+  const total = parcels.length;
 
+  let considered = 0;
   let scanned = 0;
   let notified = 0;
   let seeded = 0;
   let skipped = 0;
+  // No readable status came back: the lookup threw, or Correos answered with
+  // no traceability. Reported because `scanned: 82, notified: 0` otherwise
+  // means both "a quiet hour" and "Correos was down for the whole run".
+  let lookupFailures = 0;
   let capped = false;
 
-  for (const order of parcels as any[]) {
+  for (const order of parcels) {
     if (notified >= cap) {
       capped = true;
-      break;
+      // A dry run is an operator's pre-flight; truncating it hides the rest of
+      // the blast radius, which is the one thing the preview is for. Seeding is
+      // exempt too, but reaches this at all only because it never increments
+      // `notified` — a HALF-seeded database is worse than an unseeded one.
+      if (!dry) break;
     }
+
+    considered += 1;
 
     // International parcels belong to amphora-sync. Notifying here as well
     // would send two emails for one milestone.
@@ -121,10 +157,25 @@ export async function GET(req: Request) {
       continue;
     }
 
+    // `orders.locator` is overloaded: a SELF return stores the customer's own
+    // SEUR/MRW/GLS/FEDEX reference there. Handing one of those to the Correos
+    // localizador returns "no traceability" — indistinguishable from a parcel
+    // Correos has genuinely lost — so every other Correos caller in this repo
+    // guards on the carrier NAME. This one filtered on country alone, which
+    // also let a row with a blank `shippingCountry` through.
+    if (!tracksWithCorreos(order.carrier)) {
+      skipped += 1;
+      continue;
+    }
+
     scanned += 1;
 
     try {
       const status = await obtainLastStatus(order.locator);
+      // `obtainLastStatus` swallows its own network errors and answers
+      // "unknown", so this — not the catch below — is what a Correos outage
+      // actually looks like from here.
+      if (status.phase === "sin_informacion") lookupFailures += 1;
       const decision = decideTrackingUpdate({
         lastKey: order.lastTrackingKey ?? null,
         lastLocator: order.lastTrackingLocator ?? null,
@@ -135,6 +186,15 @@ export async function GET(req: Request) {
       if (!decision.notify || !decision.persist) continue;
 
       if (seed) {
+        // Everything EXCEPT `received`. Recording `received` here is what would
+        // silently suppress the backlog this feature was built for: ~36 parcels
+        // are already delivered and their customers were never told, and a seed
+        // that writes their final milestone means they never will be. Leaving
+        // the row unseeded lets the first live run say the one thing they are
+        // owed. Nothing earlier can then fire for them — `received` outranks
+        // every other key — so this costs no stale news.
+        if (decision.persist.lastTrackingKey === "received") continue;
+
         // Persist, never notify. The cap does not apply: a partial seed is
         // worse than none, because the parcels it missed would still be told
         // stale news on the first live run.
@@ -191,19 +251,8 @@ export async function GET(req: Request) {
         );
       }
 
-      // A problem is the one state where a human has to act. #310664 sat
-      // stranded for three weeks while a log line repeated every 15 minutes.
-      if (decision.notify === "problem") {
-        await alertOps(
-          `[returns] TRACKING INCIDENT — order ${order.orderNumber}`,
-          [
-            `Correos reports an incident for ${order.orderNumber} (${order.locator}).`,
-            `Status: ${status.label}`,
-            `The customer has been emailed. Someone needs to find out what happened to the parcel.`,
-          ].join("\n")
-        );
-      }
     } catch (error: any) {
+      lookupFailures += 1;
       // One parcel must not stop the sweep — the rest are still owed their news.
       console.error(
         `[tracking-sync] ${order.orderNumber} failed:`,
@@ -212,5 +261,54 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ scanned, notified, seeded, skipped, capped, dry });
+  const remaining = total - considered;
+
+  // Report the mode, not the flag. Seeding WRITES; an operator reading
+  // `dry: true` on a run that persisted 40 rows would conclude the opposite.
+  const mode = seed ? "seed" : dry ? "dry" : "live";
+
+  // Both alerts are live-only. This route runs hourly and spends most of its
+  // life dry by design, so alerting from a dry run would mean an hourly ops
+  // email about a job that is deliberately doing nothing. The counters in the
+  // response body are how a dry run reports the same facts.
+  if (!dry && !seed) {
+    if (capped) {
+      await alertOps(
+        `[returns] TRACKING SWEEP TRUNCATED — ${remaining} parcels not reached`,
+        [
+          `The hourly tracking sweep stopped at the per-run cap of ${cap} emails.`,
+          `Reached ${considered} of ${total} parcels; ${remaining} were not looked at.`,
+          `The sweep is ordered oldest-first, so the SAME parcels are skipped every`,
+          `hour until the backlog clears — the newest ones are the live parcels.`,
+          `Raise TRACKING_MAX_EMAILS_PER_RUN, or check why so many milestones landed at once.`,
+        ].join("\n")
+      );
+    }
+    if (scanned > 0 && lookupFailures * 2 > scanned) {
+      await alertOps(
+        `[returns] TRACKING LOOKUPS FAILING — ${lookupFailures}/${scanned}`,
+        [
+          `${lookupFailures} of ${scanned} Correos lookups returned nothing readable this run.`,
+          `That is more than half, which looks like the localizador being down or`,
+          `rejecting our credentials rather than a quiet hour.`,
+          `Nobody was emailed for those parcels, and nothing was persisted, so the`,
+          `next run will retry them — but a persistent failure means customers are`,
+          `silently getting no tracking notices at all.`,
+        ].join("\n")
+      );
+    }
+  }
+
+  return NextResponse.json({
+    total,
+    remaining,
+    scanned,
+    notified,
+    seeded,
+    skipped,
+    lookupFailures,
+    capped,
+    mode,
+    dry: mode === "dry",
+  });
 }

@@ -28,7 +28,16 @@ const order: any = {
 };
 
 const emails: any[] = [];
+const alerts: { subject: string; body: string }[] = [];
 let postFails = false;
+
+// Mocked so an ops alert cannot be miscounted as a customer email — alertOps
+// posts to the same Postmark endpoint the axios mock below is capturing.
+vi.mock("@/actions/opsAlert", () => ({
+  alertOps: async (subject: string, body: string) => {
+    alerts.push({ subject, body });
+  },
+}));
 
 vi.mock("@/db/drizzle", () => {
   let pending: Record<string, unknown> = {};
@@ -76,8 +85,11 @@ beforeEach(() => {
     locator: null,
     carrier: null,
     returnStatus: null,
+    lastTrackingKey: null,
+    lastTrackingLocator: null,
   });
   emails.length = 0;
+  alerts.length = 0;
   postFails = false;
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
 });
@@ -167,6 +179,81 @@ describe("applyReturnStatus — the poll must not re-notify", () => {
     // eventually sending a burst once Postmark recovers.
     expect(order.returnStatus).toBe("APROVED");
     expect((await apply(CARRIER_ASSIGNED)).changed).toBe(false);
+  });
+
+  it("announces a customs hold once, and not again when it clears", async () => {
+    // TRAVELLING -> EXCEPTION_HOLD -> TRAVELLING is an ordinary customs hold,
+    // every leg of it is a status CHANGE, and this runs every 15 minutes. The
+    // old dedupe was "the status differs from the stored one", which bounded
+    // nothing: the parcel would email its customer "on its way" and "there is
+    // a problem" alternately for as long as the hold lasted.
+    //
+    // Driven through the real apply step, so the state each call reads is the
+    // state the previous one persisted.
+    await apply(CARRIER_ASSIGNED);
+    emails.length = 0;
+    alerts.length = 0;
+
+    const travelling = { ...CARRIER_ASSIGNED, internal_status: "TRAVELLING" };
+    const held = { ...CARRIER_ASSIGNED, internal_status: "EXCEPTION_HOLD" };
+
+    expect((await apply(travelling)).emailsSent).toEqual(["trackingInTransit"]);
+    expect((await apply(held)).emailsSent).toEqual(["trackingProblem"]);
+    expect((await apply(travelling)).emailsSent).toEqual([]);
+    expect((await apply(held)).emailsSent).toEqual([]);
+
+    expect(emails).toHaveLength(2);
+    // The status still tracks reality even when nobody is told about it.
+    expect(order.returnStatus).toBe("EXCEPTION_HOLD");
+  });
+
+  it("tells ops about an incident, not just the customer", async () => {
+    // Vercel keeps runtime logs for about an hour, and this used to be a
+    // `console.error` covering two of the four exception statuses. #310664 sat
+    // stranded for three weeks while exactly that line repeated unread.
+    await apply(CARRIER_ASSIGNED);
+    alerts.length = 0;
+
+    await apply({ ...CARRIER_ASSIGNED, internal_status: "EXCEPTION_WAREHOUSE" });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].subject).toContain("#310957");
+    expect(alerts[0].body).toContain("EXCEPTION_WAREHOUSE");
+    expect(alerts[0].body).toContain("JJD0002686502965399");
+  });
+
+  it("covers the exception shapes the old log line ignored", async () => {
+    // FINISHED_REJECTED and EXCEPTION_HOLD were never logged at all.
+    for (const status of ["EXCEPTION", "EXCEPTION_HOLD", "FINISHED_REJECTED"]) {
+      Object.assign(order, {
+        locator: "JJD0002686502965399",
+        returnStatus: "TRAVELLING",
+        lastTrackingKey: "in_transit",
+        lastTrackingLocator: "JJD0002686502965399",
+      });
+      alerts.length = 0;
+
+      await apply({ ...CARRIER_ASSIGNED, internal_status: status });
+
+      expect(alerts, status).toHaveLength(1);
+      expect(alerts[0].body, status).toContain(status);
+    }
+  });
+
+  it("does not alert ops for an incident it stayed quiet about", async () => {
+    // Ops hearing about a hold on every 15-minute poll is how the real alerts
+    // get buried. One incident, one alert.
+    Object.assign(order, {
+      locator: "JJD0002686502965399",
+      returnStatus: "EXCEPTION",
+      lastTrackingKey: "problem",
+      lastTrackingLocator: "JJD0002686502965399",
+    });
+
+    await apply({ ...CARRIER_ASSIGNED, internal_status: "EXCEPTION_HOLD" });
+
+    expect(alerts).toHaveLength(0);
+    expect(emails).toHaveLength(0);
   });
 
   it("records the status but sends nothing when we already hold the tracking", async () => {

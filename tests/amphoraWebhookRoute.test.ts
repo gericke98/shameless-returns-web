@@ -46,6 +46,15 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
+// Mocked so an ops alert is not counted as a customer email: `alertOps` posts
+// to the same Postmark endpoint the axios mock below captures.
+const alerts: string[] = [];
+vi.mock("@/actions/opsAlert", () => ({
+  alertOps: async (subject: string) => {
+    alerts.push(subject);
+  },
+}));
+
 vi.mock("axios", () => ({
   default: {
     post: async (_url: string, body: any) => {
@@ -80,6 +89,7 @@ const TRACKING = {
 beforeEach(() => {
   writes.length = 0;
   emails.length = 0;
+  alerts.length = 0;
   found.order = { ...ORDER };
   process.env.AMPHORA_WEBHOOK_SECRET = "s3cret";
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
@@ -171,6 +181,13 @@ describe("POST /api/webhooks/amphora", () => {
     // invariant in tests/amphoraWebhook.test.ts: an exception is the one
     // state where the customer may need to act, and staying quiet is how
     // #310664 sat stranded for three weeks while a log line repeated unread.
+    //
+    // The order carries a locator, because the milestone is now decided per
+    // PARCEL rather than per status change — without a carrier number there is
+    // nothing to record the milestone against and nothing to stop a flapping
+    // status re-emailing. See the sibling test in tests/amphoraWebhook.test.ts,
+    // which pins that gap explicitly.
+    found.order = { ...ORDER, returnStatus: "TRAVELLING", locator: "1Z999" };
     const res = await post(
       { fulfillment_return: { id: "SHP 13194624794950", internal_status: "EXCEPTION" } },
       "s3cret"
@@ -178,5 +195,8 @@ describe("POST /api/webhooks/amphora", () => {
     expect(res.status).toBe(200);
     expect(writes[0]).toMatchObject({ returnStatus: "EXCEPTION" });
     expect(emails).toHaveLength(1);
+    // And a human hears about it too — the customer being told there is a
+    // problem is no use if nobody who can act on it knows.
+    expect(alerts.join(" ")).toContain("TRACKING INCIDENT");
   });
 });

@@ -20,7 +20,8 @@
 - **International keeps `collectionScheduled` and `returnReceived` unchanged.** It gains only `in_transit` and `problem`. A Spanish and a French customer therefore read different wording at the same milestone — accepted knowingly.
 - **The cron is domestic-only.** International milestones ride on the existing `amphora-sync`.
 - Defaults: `TRACKING_EMAILS_ENABLED` unset means dry-run; `TRACKING_MAX_EMAILS_PER_RUN=20`.
-- Baseline before starting: `npm test` → **793 tests / 80 files** passing on `main`.
+- Baseline before starting: `npm test` → **796 tests / 80 files** passing on `main`.
+- ⚠️ Vitest's default timeout is 5s and it runs files in parallel. On a loaded machine unrelated tests time out and the suite looks broken. If you see scattered failures with 5000ms+ durations, check `uptime` before believing them, and re-run with `npx vitest run --no-file-parallelism --testTimeout=30000`.
 
 ---
 
@@ -84,7 +85,7 @@ Expected: two rows, both `text`, both `YES` for nullable. If you cannot reach th
 - [ ] **Step 4: Verify types and the suite still pass**
 
 Run: `npx tsc --noEmit && npm test`
-Expected: clean; 793 tests still passing (this task adds none).
+Expected: clean; 796 tests still passing (this task adds none).
 
 - [ ] **Step 5: Commit**
 
@@ -599,7 +600,7 @@ export function buildTrackingUpdateEmail(
 }
 ```
 
-If `MAILTO`, `FROM`, `Locale` or `EmailPayload` are not already in scope at that point in the file, they are defined earlier in `lib/emails.ts` — do not redefine them.
+`MAILTO`, `FROM` and `EmailPayload` are defined earlier in `lib/emails.ts`, and `Locale` is imported there from `@/lib/i18n` (`lib/emails.ts:9`). All four are already in scope — do not redefine or re-import them.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -660,7 +661,7 @@ export async function getParcelsAwaitingTracking() {
 - [ ] **Step 2: Verify**
 
 Run: `npx tsc --noEmit && npm test`
-Expected: clean; 810 tests passing (793 baseline + 17 from Task 2 + 5 from Task 3 — this task adds none).
+Expected: clean; 818 tests passing (796 baseline + 17 from Task 2 + 5 from Task 3 — this task adds none).
 
 - [ ] **Step 3: Commit**
 
@@ -1049,7 +1050,7 @@ export async function GET(req: Request) {
 Run: `npx vitest run tests/trackingSyncRoute.test.ts`
 Expected: PASS, 12 tests.
 
-Then: `npm test` → 822 passing. Then `npx tsc --noEmit` → clean.
+Then: `npm test` → 830 passing. Then `npx tsc --noEmit` → clean.
 
 - [ ] **Step 5: Commit**
 
@@ -1165,7 +1166,7 @@ Add `buildTrackingUpdateEmail` to that file's import from `@/lib/emails`.
 Run: `npx vitest run tests/amphoraWebhook.test.ts tests/amphoraStatusSync.test.ts tests/amphoraSyncRoute.test.ts`
 Expected: PASS. These three exercise the status-sync path end to end; if any pre-existing case fails, the change altered behaviour it should not have — stop and report rather than editing the test.
 
-Then: `npm test` → 826 passing. Then `npx tsc --noEmit` → clean.
+Then: `npm test` → 834 passing. Then `npx tsc --noEmit` → clean.
 
 - [ ] **Step 5: Commit**
 
@@ -1282,7 +1283,7 @@ Add to the environment-variable table in `README.md`, matching its existing form
 - [ ] **Step 5: Verify and commit**
 
 Run: `npm test && npx tsc --noEmit && npm run build`
-Expected: all green, 826 passing.
+Expected: all green, 834 passing.
 
 ```bash
 git add scripts/seed-tracking-state.ts package.json vercel.json README.md

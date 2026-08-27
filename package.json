@@ -12,7 +12,8 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "create-admin": "tsx scripts/create-admin.ts"
+    "create-admin": "tsx scripts/create-admin.ts",
+    "seed-tracking-state": "tsx scripts/seed-tracking-state.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.9.4",

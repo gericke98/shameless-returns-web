@@ -46,6 +46,8 @@ A Next.js application for managing product returns and exchanges in an e-commerc
 | `AUTO_APPROVE_ENABLED` | Set to `true` to let the daily auto-approve cron actually pay. Anything else (including unset) makes it a dry run that logs what it would have settled. |
 | `AUTO_APPROVE_GRACE_DAYS` | Days after Amphora's `time_received` before a return may settle. Default `2`. |
 | `AUTO_APPROVE_MAX_PER_RUN` | Lines settled per daily run. Default `25`. |
+| `TRACKING_EMAILS_ENABLED` | Set to `true` to let the hourly tracking cron actually email customers. Anything else (including unset) makes it a dry run that logs what it would have sent. |
+| `TRACKING_MAX_EMAILS_PER_RUN` | Emails sent per hourly run. Default `20`. A backstop in case the seeding script was never run. |
 
 ## Getting Started
 

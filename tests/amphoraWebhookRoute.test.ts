@@ -166,13 +166,17 @@ describe("POST /api/webhooks/amphora", () => {
     expect(emails[0].Subject).toBe("We've received your return");
   });
 
-  it("records an exception without emailing the customer", async () => {
+  it("records an exception and now DOES email the customer", async () => {
+    // Reversed deliberately on 2026-08-27, same decision as the identical
+    // invariant in tests/amphoraWebhook.test.ts: an exception is the one
+    // state where the customer may need to act, and staying quiet is how
+    // #310664 sat stranded for three weeks while a log line repeated unread.
     const res = await post(
       { fulfillment_return: { id: "SHP 13194624794950", internal_status: "EXCEPTION" } },
       "s3cret"
     );
     expect(res.status).toBe(200);
     expect(writes[0]).toMatchObject({ returnStatus: "EXCEPTION" });
-    expect(emails).toHaveLength(0);
+    expect(emails).toHaveLength(1);
   });
 });

@@ -54,13 +54,15 @@ export function keyForPhase(phase: TrackingPhase): TrackingKey | null {
   }
 }
 
-/** How far along the journey each key sits. `problem` is 0 so that a parcel
- *  which recovers can still announce that it arrived. */
+/** How far along the journey each key sits. `problem` ranks highest so that a
+ *  parcel which hits an incident cannot then re-announce an EARLIER milestone
+ *  when Correos reverts to its last clean checkpoint — the single persisted key
+ *  would otherwise have forgotten how far the parcel had actually got. */
 const RANK: Record<TrackingKey, number> = {
-  problem: 0,
   accepted: 1,
   in_transit: 2,
   received: 3,
+  problem: 4,
 };
 
 const NOTHING: TrackingUpdateDecision = { notify: null, persist: null };
@@ -82,7 +84,12 @@ export function decideTrackingUpdate(
   if (key === "problem") {
     // A problem may interrupt at any point, but is worth saying once.
     if (lastKey === "problem") return NOTHING;
-  } else if (lastKey && RANK[key] <= (RANK[lastKey] ?? -1)) {
+  } else if (lastKey === "problem") {
+    // After an incident, the only thing worth saying is that the parcel
+    // finally arrived. Re-announcing "accepted" or "in transit" would walk the
+    // customer backwards through a journey they have already been told about.
+    if (key !== "received") return NOTHING;
+  } else if (lastKey && RANK[key] <= (RANK[lastKey as TrackingKey] ?? -1)) {
     // Never notify backwards. Correos flapping must not tell a customer their
     // delivered parcel is travelling again.
     return NOTHING;

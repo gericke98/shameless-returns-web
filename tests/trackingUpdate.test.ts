@@ -152,6 +152,26 @@ describe("decideTrackingUpdate — problems", () => {
 
     expect(decision.notify).toBe("received");
   });
+
+  it("does not walk the customer backwards after a problem clears", () => {
+    // The parcel was already announced as in transit. If Correos reverts to
+    // its last clean checkpoint once the incident closes, re-sending
+    // "accepted" would describe a step the customer was told about two emails
+    // ago.
+    const decision = decideTrackingUpdate(
+      input({ lastKey: "problem", lastLocator: "PQ1", phase: "admitido" })
+    );
+
+    expect(decision).toEqual({ notify: null, persist: null });
+  });
+
+  it("does not re-announce transit after a problem either", () => {
+    const decision = decideTrackingUpdate(
+      input({ lastKey: "problem", lastLocator: "PQ1", phase: "en_transito" })
+    );
+
+    expect(decision).toEqual({ notify: null, persist: null });
+  });
 });
 
 describe("decideTrackingUpdate — a new locator is a new parcel", () => {

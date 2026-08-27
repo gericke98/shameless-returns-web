@@ -109,7 +109,15 @@ export function decideWebhookActions(
   // The two milestones the international lane never had. `collectionScheduled`
   // and `returnReceived` already cover the accepted and received moments, so
   // adding parallel emails there would send two messages for one milestone.
-  if (status === "TRAVELLING") emails.push("trackingInTransit");
+  //
+  // Not when `collectionScheduled` is already going out in this same event.
+  // That email carries the tracking number and URL and already says the parcel
+  // is moving; the carrier can first appear on TRAVELLING (see above), and
+  // without this guard that customer would get two emails in the same second
+  // describing one milestone.
+  if (status === "TRAVELLING" && !emails.includes("collectionScheduled")) {
+    emails.push("trackingInTransit");
+  }
   if (
     status === "EXCEPTION" ||
     status === "EXCEPTION_WAREHOUSE" ||

@@ -196,4 +196,31 @@ describe("decideWebhookActions — the two milestones international was missing"
     expect(actions.emails).toContain("returnReceived");
     expect(actions.emails).not.toContain("trackingInTransit");
   });
+
+  it("sends one email, not two, when the carrier first appears on TRAVELLING", () => {
+    // The carrier can first appear on APROVED or on TRAVELLING. When it lands
+    // on TRAVELLING both notices would otherwise fire for one event.
+    const actions = decideWebhookActions(
+      { returnStatus: "APROVED", locator: null },
+      {
+        internal_status: "TRAVELLING",
+        carrier: "DHL",
+        carrier_number: "JJD001",
+        carrier_url: "https://dhl.example/JJD001",
+      } as any
+    );
+
+    expect(actions.emails).toEqual(["collectionScheduled"]);
+  });
+
+  it("still announces transit when the tracking email is not firing", () => {
+    // The control: with a locator already stored, collectionScheduled is
+    // disarmed, so the in-transit notice is the only thing to say.
+    const actions = decideWebhookActions(
+      { returnStatus: "APROVED", locator: "JJD001" },
+      { internal_status: "TRAVELLING", carrier_number: "JJD001" } as any
+    );
+
+    expect(actions.emails).toEqual(["trackingInTransit"]);
+  });
 });

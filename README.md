@@ -47,7 +47,24 @@ A Next.js application for managing product returns and exchanges in an e-commerc
 | `AUTO_APPROVE_GRACE_DAYS` | Days after Amphora's `time_received` before a return may settle. Default `2`. |
 | `AUTO_APPROVE_MAX_PER_RUN` | Lines settled per daily run. Default `25`. |
 | `TRACKING_EMAILS_ENABLED` | Set to `true` to let the hourly tracking cron actually email customers. Anything else (including unset) makes it a dry run that logs what it would have sent. |
-| `TRACKING_MAX_EMAILS_PER_RUN` | Emails sent per hourly run. Default `20`. A backstop in case the seeding script was never run. |
+| `TRACKING_MAX_EMAILS_PER_RUN` | Emails sent per hourly run. Default `20`. A backstop in case the seeding step was never run. |
+
+### Enabling the tracking-sync cron
+
+Order matters and is not negotiable:
+
+1. Apply the tracking-state migration (`last_tracking_key` / `last_tracking_locator` on `orders`) to production. **DDL before deploy.**
+2. Deploy. `TRACKING_EMAILS_ENABLED` is unset, so the cron runs on schedule and mails nobody.
+3. Read one dry run's output.
+4. Seed the existing parcels, so the first live run doesn't treat every parcel's current position as fresh news:
+
+   ```bash
+   curl -H "Authorization: Bearer $CRON_SECRET" "https://<host>/api/cron/tracking-sync?seed=1"
+   ```
+
+5. Only then set `TRACKING_EMAILS_ENABLED=true` and redeploy.
+
+Skipping step 4 is what the per-run cap (`TRACKING_MAX_EMAILS_PER_RUN`) exists to survive.
 
 ## Getting Started
 

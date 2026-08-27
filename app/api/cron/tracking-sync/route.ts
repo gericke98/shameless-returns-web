@@ -77,11 +77,25 @@ export async function GET(req: Request) {
     process.env.TRACKING_EMAILS_ENABLED !== "true";
   const cap = intEnv("TRACKING_MAX_EMAILS_PER_RUN", 20);
 
+  // Record where every parcel already is, WITHOUT telling anyone.
+  //
+  // Run once before enabling the job. Without it the first live run sees every
+  // parcel with no recorded state and treats its CURRENT position as fresh
+  // news — telling customers their parcel was accepted by the carrier three
+  // weeks ago. The per-run cap turns that from ~40 wrong emails into 20; this
+  // makes it zero.
+  //
+  // It lives here rather than in a script because `db/queries.ts` and
+  // `actions/shipping.ts` both import React's `cache()`, so neither the parcel
+  // list nor the Correos lookup is reachable from a plain node process.
+  const seed = url.searchParams.get("seed") === "1";
+
   // Bail before the loop, not inside it. `sendEmail` returns 500 without
   // attempting anything when the token is absent — so without this check a
   // single run would persist every parcel's milestone, mail nobody, and report
   // `notified: N` as though it had. Those milestones can never be re-sent.
-  if (!dry && !process.env.POSTMARK_SERVER_TOKEN) {
+  // Seeding never sends, so it does not need a Postmark token to run.
+  if (!dry && !seed && !process.env.POSTMARK_SERVER_TOKEN) {
     console.error("[tracking-sync] POSTMARK_SERVER_TOKEN is not set — refusing to run");
     return NextResponse.json({ error: "Email not configured" }, { status: 503 });
   }
@@ -90,6 +104,7 @@ export async function GET(req: Request) {
 
   let scanned = 0;
   let notified = 0;
+  let seeded = 0;
   let skipped = 0;
   let capped = false;
 
@@ -118,6 +133,18 @@ export async function GET(req: Request) {
       });
 
       if (!decision.notify || !decision.persist) continue;
+
+      if (seed) {
+        // Persist, never notify. The cap does not apply: a partial seed is
+        // worse than none, because the parcels it missed would still be told
+        // stale news on the first live run.
+        await db
+          .update(ordersTable)
+          .set(decision.persist)
+          .where(eq(ordersTable.id, order.id));
+        seeded += 1;
+        continue;
+      }
 
       notified += 1;
       if (dry) {
@@ -185,5 +212,5 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ scanned, notified, skipped, capped, dry });
+  return NextResponse.json({ scanned, notified, seeded, skipped, capped, dry });
 }

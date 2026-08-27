@@ -208,6 +208,45 @@ describe("tracking-sync cron — throttles", () => {
   });
 });
 
+describe("tracking-sync cron — seeding", () => {
+  it("records the current milestone without emailing anyone", async () => {
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=1")).json();
+
+    expect(sent).toHaveLength(0);
+    expect(persisted).toEqual([
+      { lastTrackingKey: "accepted", lastTrackingLocator: "PQ1" },
+    ]);
+    expect(body.seeded).toBe(1);
+    expect(body.notified).toBe(0);
+  });
+
+  it("seeds even when the job is not enabled — that is the point", async () => {
+    delete process.env.TRACKING_EMAILS_ENABLED;
+
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=1")).json();
+
+    expect(persisted).toHaveLength(1);
+    expect(sent).toHaveLength(0);
+    expect(body.seeded).toBe(1);
+  });
+
+  it("seeds without a Postmark token, since it sends nothing", async () => {
+    delete process.env.POSTMARK_SERVER_TOKEN;
+
+    const res = await call({ authorization: "Bearer s3cret" }, "?seed=1");
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).seeded).toBe(1);
+  });
+
+  it("still requires the cron secret", async () => {
+    const res = await call({ authorization: "Bearer wrong" }, "?seed=1");
+
+    expect(res.status).toBe(401);
+    expect(persisted).toHaveLength(0);
+  });
+});
+
 describe("tracking-sync cron — resilience", () => {
   it("keeps going after one parcel's lookup throws", async () => {
     state.orders = [order("1001", "PQ1"), order("1002", "PQ2")];

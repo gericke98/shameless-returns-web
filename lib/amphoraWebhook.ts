@@ -22,7 +22,11 @@ export type AmphoraWebhookReturn = {
   carrier_url?: string | null;
 };
 
-export type WebhookEmail = "collectionScheduled" | "returnReceived";
+export type WebhookEmail =
+  | "collectionScheduled"
+  | "returnReceived"
+  | "trackingInTransit"
+  | "trackingProblem";
 
 export type WebhookActions = {
   noop: boolean;
@@ -101,6 +105,19 @@ export function decideWebhookActions(
     emails.push("collectionScheduled");
   }
   if (status === "RECEIVED") emails.push("returnReceived");
+
+  // The two milestones the international lane never had. `collectionScheduled`
+  // and `returnReceived` already cover the accepted and received moments, so
+  // adding parallel emails there would send two messages for one milestone.
+  if (status === "TRAVELLING") emails.push("trackingInTransit");
+  if (
+    status === "EXCEPTION" ||
+    status === "EXCEPTION_WAREHOUSE" ||
+    status === "EXCEPTION_HOLD" ||
+    status === "FINISHED_REJECTED"
+  ) {
+    emails.push("trackingProblem");
+  }
 
   return { noop: false, persist, emails };
 }

@@ -17,6 +17,7 @@ import { orders } from "@/db/schema";
 import {
   buildCollectionScheduledEmail,
   buildReturnReceivedEmail,
+  buildTrackingUpdateEmail,
 } from "@/lib/emails";
 import { exchangeFromProducts } from "@/lib/exchange";
 import { readLocale } from "@/lib/i18n";
@@ -100,7 +101,11 @@ export async function applyReturnStatus(
             { number: payload.carrier_number, url: payload.carrier_url },
             exchange
           )
-        : buildReturnReceivedEmail(order.shippingName, locale, exchange);
+        : email === "trackingInTransit"
+          ? buildTrackingUpdateEmail("in_transit", order.shippingName, locale)
+          : email === "trackingProblem"
+            ? buildTrackingUpdateEmail("problem", order.shippingName, locale)
+            : buildReturnReceivedEmail(order.shippingName, locale, exchange);
 
     const status = await sendEmail({
       ...built,

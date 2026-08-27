@@ -57,7 +57,10 @@ describe("decideWebhookActions", () => {
       { returnStatus: "APROVED", locator: "1Z999" },
       { internal_status: "TRAVELLING", carrier_number: "1Z999" }
     );
-    expect(actions.emails).toEqual([]);
+    // Narrower than `toEqual([])` on purpose: TRAVELLING now also emits an
+    // in-transit notice, and this test is about not sending the tracking
+    // email twice — not about the list being empty.
+    expect(actions.emails).not.toContain("collectionScheduled");
     expect(actions.persist?.returnStatus).toBe("TRAVELLING");
   });
 
@@ -76,10 +79,14 @@ describe("decideWebhookActions", () => {
     expect(actions.persist).toEqual({ returnStatus: "APROVED" });
   });
 
-  it("never emails the customer about an exception", () => {
+  it("now DOES tell the customer about an exception", () => {
+    // Reversed deliberately on 2026-08-27. This used to assert silence, which
+    // documented the old behaviour rather than a decision: an exception is the
+    // one state where the customer may need to act, and staying quiet is how
+    // #310664 sat stranded for three weeks while a log line repeated unread.
     for (const status of ["EXCEPTION", "EXCEPTION_WAREHOUSE"]) {
       const actions = decideWebhookActions(FRESH, { internal_status: status });
-      expect(actions.emails).toEqual([]);
+      expect(actions.emails, status).toContain("trackingProblem");
       expect(actions.persist?.returnStatus).toBe(status);
     }
   });
@@ -151,5 +158,42 @@ describe("decideWebhookActions", () => {
   it("uses a placeholder the Correos lookup will not match", () => {
     // The whole point of the placeholder is that it fails `tracksWithCorreos`.
     expect(tracksWithCorreos(UNKNOWN_CARRIER)).toBe(false);
+  });
+});
+
+describe("decideWebhookActions — the two milestones international was missing", () => {
+  it("announces TRAVELLING once", () => {
+    const actions = decideWebhookActions(
+      { returnStatus: "APROVED", locator: "1Z1" },
+      { id: "SHP 1", name: "#1", internal_status: "TRAVELLING" } as any
+    );
+    expect(actions.emails).toContain("trackingInTransit");
+  });
+
+  it("does not re-announce TRAVELLING on an unchanged status", () => {
+    const actions = decideWebhookActions(
+      { returnStatus: "TRAVELLING", locator: "1Z1" },
+      { id: "SHP 1", name: "#1", internal_status: "TRAVELLING" } as any
+    );
+    expect(actions.noop).toBe(true);
+  });
+
+  it("reports every exception shape as a problem", () => {
+    for (const status of ["EXCEPTION", "EXCEPTION_WAREHOUSE", "EXCEPTION_HOLD", "FINISHED_REJECTED"]) {
+      const actions = decideWebhookActions(
+        { returnStatus: "TRAVELLING", locator: "1Z1" },
+        { id: "SHP 1", name: "#1", internal_status: status } as any
+      );
+      expect(actions.emails, status).toContain("trackingProblem");
+    }
+  });
+
+  it("still sends returnReceived, and does NOT add a second arrival email", () => {
+    const actions = decideWebhookActions(
+      { returnStatus: "TRAVELLING", locator: "1Z1" },
+      { id: "SHP 1", name: "#1", internal_status: "RECEIVED" } as any
+    );
+    expect(actions.emails).toContain("returnReceived");
+    expect(actions.emails).not.toContain("trackingInTransit");
   });
 });

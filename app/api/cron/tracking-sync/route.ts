@@ -284,7 +284,15 @@ export async function GET(req: Request) {
         ].join("\n")
       );
     }
-    if (scanned > 0 && lookupFailures * 2 > scanned) {
+    // A ratio needs a sample. `sin_informacion` is the honest answer for a
+    // parcel Correos has not scanned yet, so on a quiet hour two fresh parcels
+    // are 2 of 2 — a worse ratio than any real outage produces — and this
+    // would page ops every hour about a working system. The threshold is the
+    // SHAPE of an outage; the floor is what makes it evidence. Measured
+    // baseline: 82 of 415 live locators untraceable, ~20%, so half remains the
+    // right threshold once the sample is large enough to mean anything.
+    const MIN_SAMPLE = 10;
+    if (scanned >= MIN_SAMPLE && lookupFailures * 2 > scanned) {
       await alertOps(
         `[returns] TRACKING LOOKUPS FAILING — ${lookupFailures}/${scanned}`,
         [

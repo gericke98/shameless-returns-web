@@ -245,6 +245,27 @@ describe("tracking-sync cron — seeding", () => {
     expect(res.status).toBe(401);
     expect(persisted).toHaveLength(0);
   });
+
+  it("seeds every parcel even when the cap is smaller than the backlog", async () => {
+    // A HALF-seeded database is worse than an unseeded one: the parcels it
+    // missed still get stale news on the first live run, and nothing records
+    // which ones they were. The cap counts emails, and seeding sends none —
+    // this pins that the two never became entangled.
+    state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];
+    state.status = {
+      PQ1: { label: "Admitido", phase: "admitido" },
+      PQ2: { label: "Admitido", phase: "admitido" },
+      PQ3: { label: "Admitido", phase: "admitido" },
+    };
+    process.env.TRACKING_MAX_EMAILS_PER_RUN = "1";
+
+    const body = await (await call({ authorization: "Bearer s3cret" }, "?seed=1")).json();
+
+    expect(body.seeded).toBe(3);
+    expect(persisted).toHaveLength(3);
+    expect(body.capped).toBe(false);
+    expect(sent).toHaveLength(0);
+  });
 });
 
 describe("tracking-sync cron — resilience", () => {

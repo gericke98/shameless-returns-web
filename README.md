@@ -62,6 +62,9 @@ Order matters and is not negotiable:
    curl -H "Authorization: Bearer $CRON_SECRET" "https://<host>/api/cron/tracking-sync?seed=1"
    ```
 
+   Run this against the **production** host. Preview deployments share the
+   production database, so seeding from a preview URL writes the same rows.
+
 5. Only then set `TRACKING_EMAILS_ENABLED=true` and redeploy.
 
 Skipping step 4 is what the per-run cap (`TRACKING_MAX_EMAILS_PER_RUN`) exists to survive.

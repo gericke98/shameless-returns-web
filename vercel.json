@@ -10,7 +10,7 @@
     },
     {
       "path": "/api/cron/tracking-sync",
-      "schedule": "0 * * * *"
+      "schedule": "0 8 * * *"
     }
   ]
 }

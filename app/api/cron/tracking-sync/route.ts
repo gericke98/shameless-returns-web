@@ -17,7 +17,7 @@ import { alertOps } from "@/actions/opsAlert";
  *
  * A customer books a return, gets a label, and then hears nothing — for a
  * domestic return that is literally one email at booking and silence after.
- * This closes that gap by reading Correos hourly and emailing on milestones.
+ * This closes that gap by reading Correos daily and emailing on milestones.
  *
  * DOMESTIC ONLY. International parcels are already polled every 15 minutes by
  * `amphora-sync`, which owns their notifications; doing it here too would
@@ -88,7 +88,19 @@ export async function GET(req: Request) {
   const dry =
     (dryParam !== null && dryParam !== "0" && dryParam !== "false") ||
     process.env.TRACKING_EMAILS_ENABLED !== "true";
-  const cap = intEnv("TRACKING_MAX_EMAILS_PER_RUN", 20);
+  // Sized for a DAILY sweep, not an hourly one. The cap is per RUN, so the
+  // cadence sets what it costs: at hourly it bounded a spike and the next run
+  // was an hour away, at daily a truncated run strands people for 24 hours.
+  // The sweep is ordered oldest-first, so an under-sized cap starves the
+  // NEWEST parcels — the live ones — every single day, while alerting ops
+  // about it every single day.
+  //
+  // 60 is set against measured demand, not guessed: the backlog at arming was
+  // 33 in one run, and `getParcelsAwaitingTracking` had 84 domestic parcels to
+  // offer, which is the most any single run can ever want. So 60 clears real
+  // demand with room, and still trips well before "every parcel got emailed",
+  // which is the anomaly the cap exists to catch.
+  const cap = intEnv("TRACKING_MAX_EMAILS_PER_RUN", 60);
 
   // Record where every parcel already is, WITHOUT telling anyone.
   //
@@ -214,7 +226,7 @@ export async function GET(req: Request) {
         continue;
       }
 
-      // Persist BEFORE emailing. The next hourly run then finds the key
+      // Persist BEFORE emailing. The next daily run then finds the key
       // unchanged and does nothing, so nobody can be told twice. The cost is
       // that a failed send is not retried — hence the loud log below.
       await db
@@ -267,19 +279,19 @@ export async function GET(req: Request) {
   // `dry: true` on a run that persisted 40 rows would conclude the opposite.
   const mode = seed ? "seed" : dry ? "dry" : "live";
 
-  // Both alerts are live-only. This route runs hourly and spends most of its
-  // life dry by design, so alerting from a dry run would mean an hourly ops
-  // email about a job that is deliberately doing nothing. The counters in the
+  // Both alerts are live-only. This route spends most of its life dry by
+  // design, so alerting from a dry run would mean a daily ops email about a
+  // job that is deliberately doing nothing. The counters in the
   // response body are how a dry run reports the same facts.
   if (!dry && !seed) {
     if (capped) {
       await alertOps(
         `[returns] TRACKING SWEEP TRUNCATED — ${remaining} parcels not reached`,
         [
-          `The hourly tracking sweep stopped at the per-run cap of ${cap} emails.`,
+          `The daily tracking sweep stopped at the per-run cap of ${cap} emails.`,
           `Reached ${considered} of ${total} parcels; ${remaining} were not looked at.`,
           `The sweep is ordered oldest-first, so the SAME parcels are skipped every`,
-          `hour until the backlog clears — the newest ones are the live parcels.`,
+          `day until the backlog clears — the newest ones are the live parcels.`,
           `Raise TRACKING_MAX_EMAILS_PER_RUN, or check why so many milestones landed at once.`,
         ].join("\n")
       );

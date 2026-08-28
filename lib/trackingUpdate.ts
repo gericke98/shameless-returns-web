@@ -2,7 +2,7 @@
  * Deciding whether a parcel's carrier status is worth an email.
  *
  * Pure — no db, no network, no clock, no env. Every input is passed in, because
- * this function is the only thing between an hourly poller and a customer's
+ * this function is the only thing between a daily poller and a customer's
  * inbox, and the difference between "useful" and "spam" is entirely in here.
  *
  * The rule the whole feature turns on: Correos answers HTTP 200 with

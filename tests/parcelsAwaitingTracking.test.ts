@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-// What the hourly sweep is allowed to spend its 300 seconds on.
+// What the daily sweep is allowed to spend its 300 seconds on.
 //
 // The work list used to be "every order with a locator", ordered oldest-first.
 // That is unbounded and it grows forever: the delivered rows accumulate while

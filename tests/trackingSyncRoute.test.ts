@@ -325,7 +325,7 @@ describe("tracking-sync cron — reporting a run honestly", () => {
     // A ratio needs a sample. Two parcels registered this morning and not yet
     // scanned by Correos are BOTH legitimately `sin_informacion` — 2 of 2, an
     // infinitely worse ratio than the ~20% baseline that made this alert's
-    // threshold half — and would have paged ops hourly about a working system.
+    // threshold half — and would have paged ops daily about a working system.
     // The threshold is the shape of an outage; the floor is what makes it
     // evidence.
     state.orders = [order("1001", "PQ1"), order("1002", "PQ2")];
@@ -338,8 +338,8 @@ describe("tracking-sync cron — reporting a run honestly", () => {
   });
 
   it("stays quiet about lookups while the job is still dry", async () => {
-    // The route spends most of its life dry by design and runs hourly, so an
-    // alert from a dry run is an hourly ops email about a job deliberately
+    // The route spends most of its life dry by design and runs daily, so an
+    // alert from a dry run is a daily ops email about a job deliberately
     // doing nothing. The counters in the body report the same facts.
     delete process.env.TRACKING_EMAILS_ENABLED;
     state.orders = [order("1001", "PQ1"), order("1002", "PQ2"), order("1003", "PQ3")];

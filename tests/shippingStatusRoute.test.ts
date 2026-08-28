@@ -63,7 +63,7 @@ describe("obtainLastStatus", () => {
   });
 
   it("bounds the request, so one hung socket cannot stall the whole sweep", async () => {
-    // Axios has NO default timeout. The hourly tracking sweep calls this
+    // Axios has NO default timeout. The daily tracking sweep calls this
     // sequentially inside a 300-second function, so a socket the localizador
     // never closes takes every parcel behind it down with it.
     axiosGet.mockResolvedValue({ data: DELIVERED });

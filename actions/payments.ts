@@ -52,22 +52,6 @@ export const createStripeUrl = async (
 
   const { order, basket } = loaded;
 
-  // A degraded basket means at least one replacement was priced from the
-  // order's median discount depth, or from list price, because its original
-  // variant is no longer in the catalogue. That has never happened in
-  // production (0 of 289 exchange lines) — so if it does, we want to hear
-  // about it before the customer is charged, not after. Placed ahead of
-  // every early return below: a degraded basket that ends up owing nothing,
-  // or owing less than Stripe's minimum, is still a mispriced basket someone
-  // should look at.
-  if (basket.degraded) {
-    await alertOps(
-      "EXCHANGE PRICED ON A FALLBACK",
-      `Order ${id}: a replacement could not be priced from its own line. ` +
-        `Charge derived from a fallback ratio. Check before refunding.`
-    );
-  }
-
   const feeTable = await getFeeTable();
   const fees = feesForCountry(
     feeTable,
@@ -88,9 +72,52 @@ export const createStripeUrl = async (
   // netAmount is what the customer is owed; the fee reduces it. A negative
   // total means the customer owes us that much.
   const totalEuros = basket.netAmount - centsToEuros(chargeCents);
-  if (totalEuros >= 0) return { data: null };
-
+  // Only meaningful once totalEuros < 0 (see below), but computed here so the
+  // alert block and the real early return share one number rather than two
+  // copies of the same arithmetic drifting apart.
   const amountCents = Math.round(-totalEuros * 100);
+
+  // A degraded basket means at least one replacement was priced from the
+  // order's median discount depth, or from list price, because its original
+  // variant is no longer in the catalogue. That has never happened in
+  // production (0 of 289 exchange lines) — so if it does, we want to hear
+  // about it before the customer is charged, not after.
+  //
+  // The body is written AFTER the amount is known and must say only what is
+  // true on THIS path — this repo has already sent someone hunting a refund
+  // that never happened (see app/api/cron/auto-approve/route.ts), so a body
+  // that claims a charge on a path that returns { data: null } is exactly
+  // that mistake again. Every basket-bearing path below still alerts before
+  // its own `return` — this only moves WHAT is said, not WHEN.
+  if (basket.degraded) {
+    if (totalEuros >= 0) {
+      await alertOps(
+        "EXCHANGE PRICED ON A FALLBACK — no charge",
+        `Order ${id}: a replacement was priced from a fallback, not its own ` +
+          `line. The customer was NOT charged — net amount computed as ` +
+          `€${totalEuros.toFixed(2)} (return €${basket.netAmount.toFixed(2)} ` +
+          `minus fee €${centsToEuros(chargeCents).toFixed(2)}). That total ` +
+          `itself may be wrong — check the pricing, not a refund.`
+      );
+    } else if (amountCents < 50) {
+      await alertOps(
+        "EXCHANGE PRICED ON A FALLBACK — no charge",
+        `Order ${id}: a replacement was priced from a fallback, not its own ` +
+          `line. The amount owed, €${centsToEuros(amountCents).toFixed(2)}, is ` +
+          `under Stripe's €0.50 minimum, so the customer was NOT charged. That ` +
+          `total itself may be wrong — check the pricing, not a refund.`
+      );
+    } else {
+      await alertOps(
+        "EXCHANGE PRICED ON A FALLBACK — charging",
+        `Order ${id}: a replacement was priced from a fallback, not its own ` +
+          `line. About to charge €${centsToEuros(amountCents).toFixed(2)}. Check ` +
+          `the price is right.`
+      );
+    }
+  }
+
+  if (totalEuros >= 0) return { data: null };
 
   // Stripe rejects a EUR charge below its €0.50 minimum, so a session created
   // for less would fail at the moment the customer tries to pay. That is now

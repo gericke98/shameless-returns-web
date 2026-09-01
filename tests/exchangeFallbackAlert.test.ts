@@ -8,6 +8,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //
 // This never happened in production (0 of 289 exchange lines), which is
 // exactly why the alert exists rather than a data fix.
+//
+// Fix round 1: the alert body must say only what is true on the path it
+// fires from. A single body written before the total was known could not be
+// true on all three basket-bearing outcomes — the two "no charge" paths
+// (nothing owed, or owed but under Stripe's €0.50 minimum) were claiming a
+// charge that never happened, which is exactly the mistake documented at
+// app/api/cron/auto-approve/route.ts:215-218 ("an alert that says otherwise
+// sends whoever is on call hunting a refund that never happened"). These
+// tests assert on the actual body text per path, not merely that alertOps
+// fired, so a regression back to a one-size-fits-all body is caught.
 
 const vgid = (n: string) => `gid://shopify/ProductVariant/${n}`;
 
@@ -134,7 +144,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     expect(alerts).toHaveLength(0);
   });
 
-  it("alerts before charging when a replacement was priced on a fallback", async () => {
+  it("alerts before charging, and truthfully says a charge is coming, when a replacement was priced on a fallback", async () => {
     fees = CHARGED_FEES;
     order.products = [degradedLine("10.00")];
     const { createStripeUrl } = await import("@/actions/payments");
@@ -142,18 +152,24 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 
     expect(alerts).toHaveLength(1);
-    expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK");
+    expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — charging");
     expect(alerts[0]?.body).toContain(order.id);
+    expect(alerts[0]?.body).toContain("About to charge");
+    expect(alerts[0]?.body).toContain("€64.00"); // 69.00 exchange + 5.00 fee - 10.00 return
+    // The regression this guards against: the charging body must not use the
+    // "no charge" wording either.
+    expect(alerts[0]?.body).not.toContain("NOT charged");
     // The charge itself is unaffected by the alert.
     expect(result.data).toBe("https://checkout.stripe.com/cs_1");
     expect(sessionsCreated).toHaveLength(1);
   });
 
-  it("still alerts even when the degraded basket ends up owing nothing", async () => {
+  it("alerts but truthfully says NOTHING was charged when the degraded basket owes nothing", async () => {
     // Zero fees and a return price that covers the (list-priced) exchange
     // price means totalEuros >= 0 — createStripeUrl bails out with
     // { data: null } and never reaches Stripe. A mispriced basket is still
-    // worth a human's attention even when nothing gets charged this time.
+    // worth a human's attention even when nothing gets charged this time —
+    // but the alert must say so, not claim a charge happened.
     fees = ZERO_FEES;
     order.products = [degradedLine("80.00")]; // 80.00 return vs 69.00 exchange
     const { createStripeUrl } = await import("@/actions/payments");
@@ -162,6 +178,35 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
 
     expect(result).toEqual({ data: null });
     expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — no charge");
+    expect(alerts[0]?.body).toContain(order.id);
+    expect(alerts[0]?.body).toContain("NOT charged");
+    // The regression this guards against: a no-charge body must never claim
+    // a charge is about to happen or already happened.
+    expect(alerts[0]?.body).not.toContain("About to charge");
+    expect(sessionsCreated).toHaveLength(0);
+  });
+
+  it("alerts but truthfully says NOTHING was charged when the degraded basket owes less than Stripe's minimum", async () => {
+    // 68.80 return against a 69.00 (list-priced, degraded) exchange leaves
+    // the customer owing EUR 0.20 with zero fees — below Stripe's EUR 0.50
+    // minimum, so createStripeUrl bails out with { data: null } without ever
+    // reaching Stripe, on the SECOND early return, not the first.
+    fees = ZERO_FEES;
+    order.products = [degradedLine("68.80")];
+    const { createStripeUrl } = await import("@/actions/payments");
+
+    const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
+
+    expect(result).toEqual({ data: null });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — no charge");
+    expect(alerts[0]?.body).toContain(order.id);
+    expect(alerts[0]?.body).toContain("NOT charged");
+    expect(alerts[0]?.body).toContain("Stripe's");
+    expect(alerts[0]?.body).toContain("€0.20");
+    // Same regression guard as the other no-charge path.
+    expect(alerts[0]?.body).not.toContain("About to charge");
     expect(sessionsCreated).toHaveLength(0);
   });
 });

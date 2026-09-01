@@ -366,6 +366,13 @@ export const FormProduct = ({
   // chosen (variantId) rather than the new product's first variant — this
   // used to show list price for a garment the customer would be charged the
   // sale-adjusted price for.
+  //
+  // Display-only: the price itself comes straight from
+  // replacementPriceForVariant, which tests/replacementPricing.test.ts
+  // exhaustively unit-tests (paid/ratio/median/none bases). Deliberately not
+  // covered by a render test here — FormProduct's stateful, stock-aware size
+  // selection makes a faithful harness for this specific call site
+  // disproportionate to the risk (R15).
   const previewPrice = useMemo(() => {
     if (!new_product_change) return null;
     const selectedVariantId =
@@ -515,6 +522,14 @@ export const FormProduct = ({
                         // price / discount depth), not the catalogue's raw
                         // list price — a raw price here showed €55 for a
                         // garment the customer would actually pay €42.75 for.
+                        //
+                        // Display-only: the price itself comes straight from
+                        // replacementPriceForVariant, which
+                        // tests/replacementPricing.test.ts exhaustively
+                        // unit-tests. Deliberately not covered by a render
+                        // test here — FormProduct's stateful, stock-aware
+                        // size selection makes a faithful harness for this
+                        // dropdown disproportionate to the risk (R15).
                         const price = firstVariant
                           ? String(
                               replacementPriceForVariant(

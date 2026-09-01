@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Dialog,
   DialogContent,
@@ -23,6 +23,11 @@ import { cn } from "@/lib/utils";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
 import { reasonLabel } from "@/lib/reasons";
+import {
+  indexCatalogue,
+  replacementPrice,
+  type PricedLine,
+} from "@/lib/replacementPricing";
 import { ACTIONS } from "@/placeholder";
 import { LiaExchangeAltSolid } from "react-icons/lia";
 import { IoIosReturnLeft } from "react-icons/io";
@@ -106,11 +111,16 @@ const ProductInfo = ({
   changed,
   newVariant,
   newProduct,
+  newPrice,
   isNewProduct,
   t,
   locale,
 }: ProductInfoProps & {
   newProduct?: Product | null;
+  /** Per-line replacement price from lib/replacementPricing, priced against
+   *  this line's own pairing rather than the new product's first-variant
+   *  list price. Null when there is no priced replacement to show. */
+  newPrice?: number | null;
   isNewProduct: boolean;
   t: Dictionary;
   locale: Locale;
@@ -155,7 +165,7 @@ const ProductInfo = ({
         <div className="flex flex-col">
           <span className="text-xs font-medium">{newProduct.title}</span>
           <span className="text-xs text-gray-500">
-            {newVariant} - {newProduct.variants.edges[0]?.node.price || ""} €
+            {newVariant} - {formatEuros(newPrice ?? 0, locale)}
           </span>
         </div>
       </div>
@@ -196,6 +206,20 @@ const ProductDialog = ({
   const isNewProduct =
     newProduct?.id !== `gid://shopify/Product/${orderProduct.productId}`;
 
+  // Hoisted so the index is not rebuilt on every render; the price this line
+  // charges the customer comes from lib/replacementPricing rather than the
+  // new product's raw catalogue price.
+  const catalogueIndex = useMemo(
+    () => indexCatalogue(allProducts),
+    [allProducts]
+  );
+  const newPrice = useMemo(
+    () =>
+      replacementPrice(orderProduct as unknown as PricedLine, catalogueIndex, null)
+        .price,
+    [orderProduct, catalogueIndex]
+  );
+
   return (
     <DialogContent className="my-10 w-full sm:max-w-lg max-h-screen overflow-y-auto mx-2 sm:mx-auto lg:pb-14">
       <DialogHeader>
@@ -224,6 +248,7 @@ const ProductDialog = ({
               changed={orderProduct.changed}
               newVariant={orderProduct.new_variant_title ?? undefined}
               newProduct={newProduct}
+              newPrice={newPrice}
               isNewProduct={isNewProduct}
               t={t}
               locale={locale}
@@ -293,6 +318,19 @@ export const ProductLineClient = ({
   const imageSrc = product?.image?.src || "/placeholder.jpg";
   const imageAlt = product.title || "Product image";
 
+  // Same reasoning as ProductDialog's copy above: hoisted, and priced
+  // against this line's own pairing rather than the catalogue's raw price.
+  const catalogueIndex = useMemo(
+    () => indexCatalogue(allProducts),
+    [allProducts]
+  );
+  const newPrice = useMemo(
+    () =>
+      replacementPrice(orderProduct as unknown as PricedLine, catalogueIndex, null)
+        .price,
+    [orderProduct, catalogueIndex]
+  );
+
   return (
     <div
       className={cn(
@@ -320,6 +358,7 @@ export const ProductLineClient = ({
             changed={orderProduct.changed ?? false}
             newVariant={orderProduct.new_variant_title ?? undefined}
             newProduct={newProduct}
+            newPrice={newPrice}
             isNewProduct={isNewProduct}
             t={t}
             locale={locale}

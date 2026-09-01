@@ -12,7 +12,7 @@ import RegaloBlack from "@/public/giftBlack.svg";
 import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
 import { useFees } from "../feesContext";
-import { parcelGrams } from "@/lib/basket";
+import { valueBasket } from "@/lib/basket";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
@@ -176,47 +176,23 @@ const ThirdWindowBase = ({
   const t = useT();
   const locale = useLocale();
 
-  // Compute the total price after subtracting the "CAMBIO" items and shipping
+  // Compute the total price after subtracting the "CAMBIO" items and shipping.
+  //
+  // This used to re-implement valueBasket inline, pricing a replacement off
+  // the first variant of the new product rather than the chosen one and
+  // never applying a line's own discount depth. That disagreed with the
+  // amount Stripe actually charges the moment an order carried lines at
+  // different sale depths. One shared valuation (lib/basket.ts) now backs
+  // both this screen and the charge, so the two cannot drift apart again.
   const totalPrice = useMemo(() => {
-    const totalPriceDevolver = items
-      .filter((item) => item.action && !item.confirmed)
-      .reduce((sum, item) => sum + parseFloat(item.price), 0);
-
-    const totalPriceCambio = items
-      .filter((item) => item.action === "CAMBIO" && !item.confirmed)
-      .reduce((sum, item) => {
-        // If there's a new variant ID, find the corresponding product and use its price
-        if (item.new_variant_id) {
-          const newProduct = allProducts.find((p) =>
-            p.variants.edges.some((v) => v.node.id === item.new_variant_id)
-          );
-          if (newProduct) {
-            // Find the specific variant that matches the new_variant_id
-            const newVariant = newProduct.variants.edges.find(
-              (v) => v.node.id === item.new_variant_id
-            );
-            if (newVariant) {
-              return sum + parseFloat(newVariant.node.price);
-            }
-          }
-        }
-        // Fallback to the original price if no new product is found
-        return sum + parseFloat(item.price);
-      }, 0);
-
-    let result = totalPriceDevolver - totalPriceCambio;
-    const active = items.filter((item) => item.action && !item.confirmed);
+    const basket = valueBasket(items, allProducts);
+    let result = basket.netAmount;
     const { feeCents } = resolveFee(fees, {
-      hasItems: active.length > 0,
+      hasItems: basket.hasItems,
       netAmount: result,
-      // Same function the server charges from, so the price shown here and
-      // the Stripe amount cannot disagree about how heavy the parcel is.
-      grams: parcelGrams(active, allProducts),
+      grams: basket.grams,
     });
-
-    if (shipping) {
-      result -= centsToEuros(feeCents);
-    }
+    if (shipping) result -= centsToEuros(feeCents);
     return result;
   }, [allProducts, items, shipping, fees]);
   useEffect(() => {

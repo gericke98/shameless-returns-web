@@ -14,6 +14,12 @@ import { Product } from "@/types";
 import { useFees } from "../../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
+import {
+  indexCatalogue,
+  orderRatio,
+  replacementPrice,
+  type PricedLine,
+} from "@/lib/replacementPricing";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 import type { ReturnMethod } from "@/lib/returnMethods";
@@ -46,29 +52,40 @@ export const SummaryComponent = ({
 }: Props) => {
   const t = useT();
   const locale = useLocale();
-  const { basket, itemsToDevolver, itemsToCambio, itemsToDev } = useMemo(() => {
-    // The money comes from the one shared valuation (lib/basket.ts) — the same
-    // one payments.ts charges from — so the figures below cannot drift from
-    // the amount Stripe bills.
-    const basket = valueBasket(items, allProducts);
+  const { basket, itemsToDevolver, itemsToCambio, itemsToDev, priceFor } =
+    useMemo(() => {
+      // The money comes from the one shared valuation (lib/basket.ts) — the
+      // same one payments.ts charges from — so the figures below cannot
+      // drift from the amount Stripe bills.
+      const basket = valueBasket(items, allProducts);
 
-    // valueBasket returns totals, not the underlying rows. The accordion
-    // bodies render the rows, so those filters stay local. They are the same
-    // predicates valueBasket applies internally.
-    const itemsToDevolver = items.filter(
-      (item) => Boolean(item.action) && !item.confirmed
-    );
+      // valueBasket returns totals, not the underlying rows. The accordion
+      // bodies render the rows, so those filters stay local. They are the
+      // same predicates valueBasket applies internally.
+      const itemsToDevolver = items.filter(
+        (item) => Boolean(item.action) && !item.confirmed
+      );
 
-    const itemsToCambio = items.filter(
-      (item) => item.action === "CAMBIO" && !item.confirmed
-    );
+      const itemsToCambio = items.filter(
+        (item) => item.action === "CAMBIO" && !item.confirmed
+      );
 
-    const itemsToDev = items.filter(
-      (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
-    );
+      const itemsToDev = items.filter(
+        (item) => item.action === "DEVOLUCIÓN" && !item.confirmed
+      );
 
-    return { basket, itemsToDevolver, itemsToCambio, itemsToDev };
-  }, [items, allProducts]);
+      // Per-line replacement price, priced the same way valueBasket prices
+      // it internally: this line's own discount depth first, falling back
+      // to the order's median. Rows previously rendered the new product's
+      // first-variant list price instead — wrong variant, wrong basis.
+      const index = indexCatalogue(allProducts);
+      const fallbackRatio = orderRatio(items as unknown as PricedLine[], index);
+      const priceFor = (item: (typeof items)[number]) =>
+        replacementPrice(item as unknown as PricedLine, index, fallbackRatio)
+          .price;
+
+      return { basket, itemsToDevolver, itemsToCambio, itemsToDev, priceFor };
+    }, [items, allProducts]);
 
   const totalPriceDevolver = basket.returnPrice;
   const totalPriceCambio = basket.exchangePrice;
@@ -190,6 +207,7 @@ export const SummaryComponent = ({
                 item={item}
                 newAction={true}
                 newProduct={findProductByVariantId(item.new_variant_id)}
+                newPrice={priceFor(item)}
               />
             ))}
             {showsShipping && (

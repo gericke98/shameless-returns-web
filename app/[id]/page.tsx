@@ -1,7 +1,6 @@
 import { getOrderById, getProduct, getProducts } from "@/db/queries";
 import { ClientOrder } from "./clientOrder";
 import { redirect } from "next/navigation";
-import { applyGlobalDiscount } from "@/lib/basket";
 import { getFeeTable } from "@/db/fees";
 import { feesForCountry } from "@/lib/fees";
 import { normalizeCountry } from "@/lib/countries";
@@ -75,10 +74,8 @@ export default async function OrderPage({ params }: OrderPageProps) {
     redirect("/");
   }
 
-  const discountedAllProducts = applyGlobalDiscount(
-    allProducts,
-    orderData.products[0]
-  );
+  // Raw catalogue. Replacement prices are per-line; see lib/replacementPricing.ts.
+  const discountedAllProducts = allProducts;
 
   const feeTable = await getFeeTable();
   const fees = feesForCountry(

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   BUNDLED_FEE_LABEL,
+  classifyResidual,
   classifySessionLines,
+  EXCHANGE_FEE_MODEL_CUTOVER_UNIX,
   isAllSameProductExchange,
+  isReconstructionSound,
+  ISRAEL_REPRICE_CUTOVER_UNIX,
+  reconstructBasketFromLines,
   type SwapLine,
 } from "@/lib/exchangeOverchargeAudit";
 
@@ -130,5 +135,145 @@ describe("classifySessionLines", () => {
       { description: "New items", amount_total: 0 },
     ]);
     expect(result.status).toBe("no-charge");
+  });
+});
+
+// --- R19: reconstructing the bundled pre-itemisation fee -------------------
+
+describe("reconstructBasketFromLines", () => {
+  it("nets to zero for a pure same-product CAMBIO (price cancels against itself)", () => {
+    const result = reconstructBasketFromLines(
+      [{ action: "CAMBIO", price: "39.90", quantity: 1 }],
+      500
+    );
+    expect(result).toEqual({ hasItems: true, netAmount: 0, grams: 500 });
+  });
+
+  it("sums grams by quantity, at the fallback weight per unit — never a real catalogue weight", () => {
+    const result = reconstructBasketFromLines(
+      [
+        { action: "CAMBIO", price: "39.90", quantity: 2 },
+        { action: "CAMBIO", price: "59.90", quantity: 1 },
+      ],
+      500
+    );
+    // 2 units + 1 unit = 3 units, all at the historical 500g fallback.
+    expect(result.grams).toBe(1500);
+    expect(result.netAmount).toBe(0);
+  });
+
+  it("a bundled plain-return (DEVOLUCIÓN) line makes netAmount positive, flipping Rule A to 'return'", () => {
+    const result = reconstructBasketFromLines(
+      [
+        { action: "CAMBIO", price: "39.90", quantity: 1 },
+        { action: "DEVOLUCIÓN", price: "25.00", quantity: 1 },
+      ],
+      500
+    );
+    // The CAMBIO line cancels (same product, paid price both sides); only
+    // the DEVOLUCIÓN line's price survives into netAmount.
+    expect(result.netAmount).toBeCloseTo(25, 9);
+    expect(result.hasItems).toBe(true);
+  });
+
+  it("ignores rows with no action at all (never selected for this return)", () => {
+    const result = reconstructBasketFromLines(
+      [
+        { action: "CAMBIO", price: "39.90", quantity: 1 },
+        { action: null, price: "59.90", quantity: 1 },
+      ],
+      500
+    );
+    expect(result.grams).toBe(500);
+    expect(result.hasItems).toBe(true);
+  });
+
+  it("reports hasItems: false and zero grams for an order with no active lines", () => {
+    const result = reconstructBasketFromLines(
+      [{ action: null, price: "39.90", quantity: 1 }],
+      500
+    );
+    expect(result).toEqual({ hasItems: false, netAmount: 0, grams: 0 });
+  });
+});
+
+describe("isReconstructionSound", () => {
+  const BEFORE_A = EXCHANGE_FEE_MODEL_CUTOVER_UNIX - 1;
+  const AFTER_A_BEFORE_B = EXCHANGE_FEE_MODEL_CUTOVER_UNIX + 1;
+  const AFTER_B = ISRAEL_REPRICE_CUTOVER_UNIX + 1;
+
+  it("is unsound before the exchange-fee-model cutover, for any zone", () => {
+    expect(
+      isReconstructionSound({
+        sessionCreatedUnix: BEFORE_A,
+        zone: "FR",
+        usedFallbackZone: false,
+      })
+    ).toBe(false);
+  });
+
+  it("is sound after the cutover for an ordinary, non-Israel, non-fallback zone", () => {
+    expect(
+      isReconstructionSound({
+        sessionCreatedUnix: AFTER_A_BEFORE_B,
+        zone: "FR",
+        usedFallbackZone: false,
+      })
+    ).toBe(true);
+  });
+
+  it("is unsound for Israel in the gap between the two cutovers", () => {
+    expect(
+      isReconstructionSound({
+        sessionCreatedUnix: AFTER_A_BEFORE_B,
+        zone: "IL",
+        usedFallbackZone: false,
+      })
+    ).toBe(false);
+  });
+
+  it("is unsound for a '*'-fallback zone in the gap (the fallback moved with Israel)", () => {
+    expect(
+      isReconstructionSound({
+        sessionCreatedUnix: AFTER_A_BEFORE_B,
+        zone: null,
+        usedFallbackZone: true,
+      })
+    ).toBe(false);
+  });
+
+  it("is sound for Israel once past the Israel-repricing cutover too", () => {
+    expect(
+      isReconstructionSound({
+        sessionCreatedUnix: AFTER_B,
+        zone: "IL",
+        usedFallbackZone: false,
+      })
+    ).toBe(true);
+  });
+});
+
+describe("classifyResidual", () => {
+  it("flags an overcharge when the bundled amount exceeds the expected fee by more than a cent", () => {
+    const result = classifyResidual(2500, 1100);
+    expect(result).toEqual({ status: "reconstructed", residualCents: 1400 });
+  });
+
+  it("calls an exact match reconstructed-clean", () => {
+    const result = classifyResidual(1100, 1100);
+    expect(result).toEqual({ status: "reconstructed-clean", residualCents: 0 });
+  });
+
+  it("tolerates a one-cent residual either way as reconstructed-clean (float/rounding slack)", () => {
+    expect(classifyResidual(1101, 1100).status).toBe("reconstructed-clean");
+    expect(classifyResidual(1099, 1100).status).toBe("reconstructed-clean");
+  });
+
+  it("reports an undercharge distinctly — never folded into 'clean' or 'reconstructed'", () => {
+    const result = classifyResidual(900, 1100);
+    expect(result).toEqual({
+      status: "reconstructed-undercharged",
+      residualCents: -200,
+    });
   });
 });

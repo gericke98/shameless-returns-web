@@ -30,6 +30,23 @@
  *      separated from its shipping fee — report it `indeterminate`, not
  *      dropped.
  *
+ * R19 (fix round 1): a bundled line is not always a dead end. For an
+ * all-same-product exchange the correct charge is the SHIPPING FEE ALONE
+ * (the difference is zero by construction), and that fee is reconstructible
+ * from the seeded `shipping_fees` table by destination zone and parcel
+ * weight — PROVIDED the order was priced under the same rules that table
+ * encodes today. Historical parcel weight is deterministic (every parcel in
+ * this window was weighed at the pre-fix 500g/item fallback — see
+ * lib/basket.ts's `FALLBACK_ITEM_GRAMS` and commit bc374a7). Where the fee
+ * MODEL itself differed (before commit 7919d72 merged, an exchange fee was a
+ * completely different, known-wrong formula) or a specific zone's rate did
+ * not (Israel and the derived `*` fallback moved a day later, commit
+ * 38aeb59), reconstruction is unsound and the order stays `indeterminate` —
+ * see lib/exchangeOverchargeAudit.ts's cutover constants for the exact
+ * verification. `reconstructed` / `reconstructed-clean` /
+ * `reconstructed-undercharged` are NEVER merged into `exact`: `exact` means
+ * Stripe's own itemisation said so directly, with no reconstruction at all.
+ *
  * READ-ONLY. It queries Postgres, Stripe and Shopify and writes nothing to
  * any of them. It issues no refunds. Report the numbers; the refund
  * decision belongs to a human.
@@ -39,8 +56,8 @@
  *     > .superpowers/sdd/2026-09-01-exchange-keeps-sale-price/exchange-overcharges.csv
  *
  * Output: CSV on stdout (order_id,order_number,email,status,difference_eur,
- * line_labels), a per-status summary and the euro total of `exact` rows on
- * stderr.
+ * line_labels), a per-status summary and the euro total of `exact` and of
+ * `reconstructed` rows on stderr.
  *
  * `getProducts` and the rest of db/queries.ts are NOT imported here: that
  * file starts with "use server" and defines several exports wrapped in
@@ -50,18 +67,30 @@
  * module evaluates all of it. So the Shopify products query and the DB
  * access below are reimplemented directly against `db/drizzle` and a raw
  * fetch, exactly as the `pilar-311198` and `resend-return-label.ts`
- * precedents do.
+ * precedents do. `db/fees.ts`'s `getFeeTable` has the same problem from a
+ * different direction — it wraps its reader in Next's `unstable_cache`,
+ * which is also request-context-bound — so the fee table below is read with
+ * a plain `db.select()` mirroring its grouping/sorting exactly, not by
+ * importing it.
  */
 import "dotenv/config";
 
 import { inArray } from "drizzle-orm";
 import db from "@/db/drizzle";
-import { orders, productsOrder } from "@/db/schema";
+import { orders, productsOrder, shippingFees } from "@/db/schema";
+import { FALLBACK_ITEM_GRAMS } from "@/lib/basket";
+import { feesForCountry, resolveFee, type FeeBand, type FeeTable } from "@/lib/fees";
 import { indexCatalogue } from "@/lib/replacementPricing";
+import { resolveZone } from "@/lib/zones";
 import {
+  classifyResidual,
   classifySessionLines,
+  EXCHANGE_FEE_MODEL_CUTOVER_UNIX,
   isAllSameProductExchange,
+  isReconstructionSound,
+  reconstructBasketFromLines,
   type LineStatus,
+  type ReconstructedStatus,
 } from "@/lib/exchangeOverchargeAudit";
 import { stripe } from "@/lib/stripe";
 import type { Product } from "@/types";
@@ -171,12 +200,47 @@ async function buildSessionIndex(): Promise<Map<string, Stripe.Checkout.Session>
   return byOrder;
 }
 
+/**
+ * The current `shipping_fees` table, read directly (not via `db/fees.ts`'s
+ * `getFeeTable` — see the module comment) and grouped/sorted exactly as it
+ * does: ascending by `maxGrams` per country, since `feesForWeight` depends
+ * on that order as a precondition.
+ */
+async function fetchFeeTable(): Promise<FeeTable> {
+  const rows = await db.select().from(shippingFees);
+  const table: Record<string, FeeBand[]> = {};
+  for (const row of rows) {
+    (table[row.countryCode] ??= []).push({
+      maxGrams: row.maxGrams,
+      returnFeeCents: row.returnFeeCents,
+      exchangeFeeCents: row.exchangeFeeCents,
+    });
+  }
+  for (const bands of Object.values(table)) {
+    bands.sort((a, b) => a.maxGrams - b.maxGrams);
+  }
+  console.error(
+    `[fees] read ${rows.length} shipping_fees rows across ${Object.keys(table).length} zones`
+  );
+  return table;
+}
+
 function csvField(value: string): string {
   if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
   return value;
 }
 
-type ReportStatus = LineStatus | "no-session";
+type ReportStatus = LineStatus | "no-session" | ReconstructedStatus;
+
+const REPORT_STATUSES: readonly ReportStatus[] = [
+  "exact",
+  "reconstructed",
+  "reconstructed-clean",
+  "reconstructed-undercharged",
+  "indeterminate",
+  "no-charge",
+  "no-session",
+];
 
 type ReportRow = {
   orderId: string;
@@ -186,6 +250,8 @@ type ReportRow = {
   differenceEur: string;
   lineLabels: string;
 };
+
+const BUNDLED_FEE_LABEL_TRIMMED = "Returns & Exchanges Fee";
 
 async function main() {
   // --- Step 1: candidate orders (pure DB + catalogue logic) ---------------
@@ -233,21 +299,31 @@ async function main() {
   // --- Step 2: Stripe sessions, paginated once -----------------------------
   const sessionIndex = await buildSessionIndex();
 
-  // --- Step 3: order metadata for the candidates ---------------------------
+  // --- Step 3: order metadata + fee table for the candidates ---------------
   const orderMeta = candidates.length
     ? await db.select().from(orders).where(inArray(orders.id, candidates))
     : [];
   const orderMetaById = new Map(orderMeta.map((o) => [o.id, o]));
+  const feeTable = await fetchFeeTable();
 
   // --- Step 4: classify each candidate --------------------------------------
   const results: ReportRow[] = [];
   const counts: Record<ReportStatus, number> = {
     exact: 0,
+    reconstructed: 0,
+    "reconstructed-clean": 0,
+    "reconstructed-undercharged": 0,
     indeterminate: 0,
     "no-charge": 0,
     "no-session": 0,
   };
+  // R19 sanity-check counters — reported alongside the CSV so a reader can
+  // see WHY each unsound order was left indeterminate, not just that it was.
+  let preCutoverCount = 0;
+  let israelGapCount = 0;
+  let otherUnsoundCount = 0;
   let exactTotalCents = 0;
+  let reconstructedTotalCents = 0;
 
   for (const orderId of candidates) {
     const meta = orderMetaById.get(orderId);
@@ -272,21 +348,94 @@ async function main() {
       limit: 20,
     });
     const classification = classifySessionLines(lineItems.data);
-    counts[classification.status]++;
-    if (classification.status === "exact" && classification.differenceCents) {
-      exactTotalCents += classification.differenceCents;
+
+    if (classification.status !== "indeterminate") {
+      counts[classification.status]++;
+      if (classification.status === "exact" && classification.differenceCents) {
+        exactTotalCents += classification.differenceCents;
+      }
+      results.push({
+        orderId,
+        orderNumber,
+        email,
+        status: classification.status,
+        differenceEur:
+          classification.status === "exact" && classification.differenceCents
+            ? (classification.differenceCents / 100).toFixed(2)
+            : "",
+        lineLabels: classification.labels.join("; "),
+      });
+      continue;
     }
+
+    // --- R19: attempt to reconstruct the bundled fee -----------------------
+    const bundledLine = lineItems.data.find(
+      (li) => (li.description ?? "").trim() === BUNDLED_FEE_LABEL_TRIMMED
+    );
+    const bundledCents = bundledLine?.amount_total ?? null;
+    const lines = byOrder.get(orderId) ?? [];
+    const basket = reconstructBasketFromLines(
+      lines.map((l) => ({ action: l.action, price: l.price, quantity: l.quantity })),
+      FALLBACK_ITEM_GRAMS
+    );
+    const zone = resolveZone(meta?.shippingCountry ?? null, meta?.shippingZip ?? null);
+    const usedFallbackZone = !(zone && feeTable[zone]?.length);
+
+    let status: ReportStatus = "indeterminate";
+    let differenceEur = "";
+    let reason = "";
+
+    if (bundledCents == null) {
+      otherUnsoundCount++;
+      reason = "no bundled fee amount found on the session";
+    } else if (!basket.hasItems) {
+      otherUnsoundCount++;
+      reason = "no active productsorder lines to reconstruct a basket from";
+    } else if (meta?.returnMethod === "SELF") {
+      // Defensive only: the self-booked lane (2026-08-24) postdates every
+      // bundled-fee session by a month, so this should never actually fire.
+      otherUnsoundCount++;
+      reason = "self-booked return — unexpected for a pre-itemisation session";
+    } else if (
+      !isReconstructionSound({
+        sessionCreatedUnix: session.created,
+        zone,
+        usedFallbackZone,
+      })
+    ) {
+      if (session.created < EXCHANGE_FEE_MODEL_CUTOVER_UNIX) {
+        preCutoverCount++;
+        reason =
+          "before the exchange-fee-model cutover (commit 7919d72 / PR #15) — different rule, not reconstructable";
+      } else {
+        israelGapCount++;
+        reason =
+          `zone ${zone ?? "*"} priced between the exchange-fee-model cutover and the ` +
+          `Israel repricing (commit 38aeb59 / PR #23) — current rate does not apply yet`;
+      }
+    } else {
+      const bands = feesForCountry(feeTable, zone);
+      const fee = resolveFee(bands, basket);
+      const residual = classifyResidual(bundledCents, fee.feeCents);
+      status = residual.status;
+      counts[status]++;
+      if (status === "reconstructed") reconstructedTotalCents += residual.residualCents;
+      differenceEur = (residual.residualCents / 100).toFixed(2);
+      reason =
+        `reconstructed: expected €${(fee.feeCents / 100).toFixed(2)} ` +
+        `(zone ${zone ?? "*"}, ${fee.kind}, ${basket.grams}g) vs charged ` +
+        `€${(bundledCents / 100).toFixed(2)}`;
+    }
+
+    if (status === "indeterminate") counts.indeterminate++;
 
     results.push({
       orderId,
       orderNumber,
       email,
-      status: classification.status,
-      differenceEur:
-        classification.status === "exact" && classification.differenceCents
-          ? (classification.differenceCents / 100).toFixed(2)
-          : "",
-      lineLabels: classification.labels.join("; "),
+      status,
+      differenceEur,
+      lineLabels: [...classification.labels, reason].join("; "),
     });
   }
 
@@ -306,10 +455,16 @@ async function main() {
   }
 
   console.error("--- summary ---");
-  for (const status of ["exact", "indeterminate", "no-charge", "no-session"] as const) {
+  for (const status of REPORT_STATUSES) {
     console.error(`${status}: ${counts[status]}`);
   }
+  console.error(
+    `  of which indeterminate: ${preCutoverCount} before the fee-model cutover, ` +
+      `${israelGapCount} in the Israel-repricing gap, ${otherUnsoundCount} other ` +
+      `(no bundled amount / no active lines / self-booked)`
+  );
   console.error(`exact total: EUR ${(exactTotalCents / 100).toFixed(2)}`);
+  console.error(`reconstructed (overcharge) total: EUR ${(reconstructedTotalCents / 100).toFixed(2)}`);
 }
 
 main()

@@ -193,3 +193,17 @@ describe("parcelGrams resolves BARE productsorder variant ids", () => {
     expect(valueBasket(items, CATALOGUE).grams).toBe(FALLBACK_ITEM_GRAMS);
   });
 });
+
+describe("valueBasket degradation reporting", () => {
+  it("flags a basket whose original variant has left the catalogue", () => {
+    const items = [
+      line({
+        productId: "99999999",
+        variant_id: "88888888",
+        new_variant_id: vgid("54623384404294"),
+        price: "40.00",
+      }),
+    ];
+    expect(valueBasket(items, CATALOGUE).degraded).toBe(true);
+  });
+});

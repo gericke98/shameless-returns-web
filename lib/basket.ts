@@ -99,7 +99,8 @@ export function valueBasket(
         index,
         fallbackRatio
       );
-      // The server-side caller alerts on this; a pure module cannot.
+      // The server-side caller (createStripeUrl, actions/payments.ts) alerts
+      // on this; a pure module cannot.
       if (priced.basis === "median" || priced.basis === "none") degraded = true;
       return sum + priced.price;
     }, 0);

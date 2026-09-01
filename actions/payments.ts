@@ -6,6 +6,7 @@ import { loadBasket } from "@/lib/loadBasket";
 import { normalizeCountry } from "@/lib/countries";
 import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
+import { alertOps } from "@/actions/opsAlert";
 import {
   centsToEuros,
   checkoutLines,
@@ -50,6 +51,23 @@ export const createStripeUrl = async (
   if (!loaded) return { data: null };
 
   const { order, basket } = loaded;
+
+  // A degraded basket means at least one replacement was priced from the
+  // order's median discount depth, or from list price, because its original
+  // variant is no longer in the catalogue. That has never happened in
+  // production (0 of 289 exchange lines) — so if it does, we want to hear
+  // about it before the customer is charged, not after. Placed ahead of
+  // every early return below: a degraded basket that ends up owing nothing,
+  // or owing less than Stripe's minimum, is still a mispriced basket someone
+  // should look at.
+  if (basket.degraded) {
+    await alertOps(
+      "EXCHANGE PRICED ON A FALLBACK",
+      `Order ${id}: a replacement could not be priced from its own line. ` +
+        `Charge derived from a fallback ratio. Check before refunding.`
+    );
+  }
+
   const feeTable = await getFeeTable();
   const fees = feesForCountry(
     feeTable,

@@ -5,6 +5,7 @@ import {
   classifySessionLines,
   EXCHANGE_FEE_MODEL_CUTOVER_UNIX,
   isAllSameProductExchange,
+  isMixedSameProductExchange,
   isReconstructionSound,
   ISRAEL_REPRICE_CUTOVER_UNIX,
   reconstructBasketFromLines,
@@ -54,6 +55,62 @@ describe("isAllSameProductExchange", () => {
     ];
     const index = { productOf: () => null };
     expect(isAllSameProductExchange(swaps, index)).toBe(false);
+  });
+});
+
+// R20: the 4 orders excluded by isAllSameProductExchange but which still
+// hold a same-product swap line — precisely the shape the pre-branch
+// applyGlobalDiscount ratio bug needed to mis-price a same-product line
+// using a ratio borrowed from a DIFFERENT, non-same-product line.
+describe("isMixedSameProductExchange", () => {
+  it("is false when there are no swap lines", () => {
+    const index = { productOf: () => "P1" };
+    expect(isMixedSameProductExchange([], index)).toBe(false);
+  });
+
+  it("is false when ALL swap lines are same-product (that's isAllSameProductExchange's case, not mixed)", () => {
+    const swaps: SwapLine[] = [
+      { action: "CAMBIO", new_variant_id: "v1", productId: "P1" },
+      { action: "CAMBIO", new_variant_id: "v2", productId: "P2" },
+    ];
+    const index = {
+      productOf: (id: string | null | undefined) =>
+        id === "v1" ? "P1" : id === "v2" ? "P2" : null,
+    };
+    expect(isMixedSameProductExchange(swaps, index)).toBe(false);
+  });
+
+  it("is false when NO swap line is same-product (nothing to salvage)", () => {
+    const swaps: SwapLine[] = [
+      { action: "CAMBIO", new_variant_id: "v1", productId: "P1" },
+    ];
+    const index = { productOf: () => "SOMETHING-ELSE" };
+    expect(isMixedSameProductExchange(swaps, index)).toBe(false);
+  });
+
+  it("is true when at least one but not all swap lines are same-product", () => {
+    const swaps: SwapLine[] = [
+      { action: "CAMBIO", new_variant_id: "v1", productId: "P1" }, // same
+      { action: "CAMBIO", new_variant_id: "v2", productId: "P1" }, // different
+    ];
+    const index = {
+      productOf: (id: string | null | undefined) =>
+        id === "v1" ? "P1" : id === "v2" ? "P2" : null,
+    };
+    expect(isMixedSameProductExchange(swaps, index)).toBe(true);
+  });
+
+  it("matches order #38625's real shape: 2 of 3 swap lines same-product", () => {
+    const swaps: SwapLine[] = [
+      { action: "CAMBIO", new_variant_id: "v1", productId: "P1" },
+      { action: "CAMBIO", new_variant_id: "v2", productId: "P1" },
+      { action: "CAMBIO", new_variant_id: "v3", productId: "P2" },
+    ];
+    const index = {
+      productOf: (id: string | null | undefined) =>
+        id === "v1" || id === "v2" ? "P1" : id === "v3" ? "P3" : null,
+    };
+    expect(isMixedSameProductExchange(swaps, index)).toBe(true);
   });
 });
 

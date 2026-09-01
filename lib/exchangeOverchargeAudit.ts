@@ -33,6 +33,31 @@ export function isAllSameProductExchange(
   );
 }
 
+/**
+ * R20: an order excluded by `isAllSameProductExchange` because not every
+ * swap line resolves to its own product, but which still holds AT LEAST ONE
+ * line that does. Excluded from the main "owes exactly EUR 0" candidate set
+ * for a real reason (the ORDER's total is not provably zero — a different
+ * line's mispriced replacement could inflate or deflate what was charged),
+ * but reported as its own labelled category rather than dropped silently:
+ * this is precisely the shape the pre-branch `applyGlobalDiscount` bug
+ * needed to mis-price a same-product line specifically (one line's ratio,
+ * borrowed from another line in the same order, applied to a line it did
+ * not belong to).
+ */
+export function isMixedSameProductExchange(
+  swaps: SwapLine[],
+  index: Pick<CatalogueIndex, "productOf">
+): boolean {
+  if (swaps.length === 0) return false;
+  const sameFlags = swaps.map(
+    (l) => index.productOf(l.new_variant_id) === String(l.productId)
+  );
+  const anySame = sameFlags.some(Boolean);
+  const allSame = sameFlags.every(Boolean);
+  return anySame && !allSame;
+}
+
 // The Stripe line names are a closed set of four labels in two locales,
 // written by actions/payments.ts from lib/i18n/{en,es}.ts:
 //
@@ -164,18 +189,30 @@ export function reconstructBasketFromLines(
 // Unix seconds (Stripe's `session.created` unit) for the two points where the
 // LIVE fee-computation rules stopped matching what today's `shipping_fees`
 // table + `resolveFee` would compute — verified against git history, not
-// assumed:
+// assumed. Round 2 (R20) corrected the lineage of the first constant below;
+// re-verify with `git log --ancestry-path --merges <sha>..main` rather than
+// trusting either version of this comment.
 //
-//  - EXCHANGE_FEE_MODEL_CUTOVER_UNIX = the merge of PR #15 (commit 7919d72,
-//    2026-07-28T23:25:35+02:00 authored; merged as 22a7657 at
-//    2026-07-28T23:48:20+02:00 = 2026-07-28T21:48:20Z). Before this, an
-//    exchange's fee was `return fee, minus EUR 1` — a completely different,
-//    known-wrong formula (see that commit's message) — not today's
-//    `exchangeFeeCents` (= return + outbound leg). This also strictly
-//    subsumes the whole same-day churn on 2026-07-28 that came before it
-//    (the initial per-country + per-weight seed at ~16:49 CEST, the
-//    real-carrier-cost fix at 16:57, the Spain zone split at 18:34): all of
-//    it is earlier than this cutover, so one boundary covers all of it.
+//  - EXCHANGE_FEE_MODEL_CUTOVER_UNIX. The commit that actually changed the
+//    formula is 7919d72 ("charge an exchange for both shipping legs, not
+//    one") — before it, an exchange's fee was `return fee, minus EUR 1`, a
+//    completely different, known-wrong formula (see that commit's message),
+//    not today's `exchangeFeeCents` (= return + outbound leg). Its FIRST
+//    merge into main is d0ff03f, "Merge pull request #14", at
+//    2026-07-28T23:33:30+02:00 = 2026-07-28T21:33:30Z (unix 1785274410) —
+//    confirmed with `git log --ancestry-path --merges 7919d72..main`.
+//    The constant below is instead PR #15's merge time (22a7657, merging
+//    only b71055e — a `shipping_fees` snapshot, NOT 7919d72 — at
+//    2026-07-28T23:48:20+02:00 = 2026-07-28T21:48:20Z, unix 1785275300),
+//    roughly 15 minutes LATER than the real code cutover. That is a
+//    same-direction, conservative error: it can only mark a few more
+//    genuinely-sound orders "before cutover" than strictly necessary, never
+//    the reverse (it cannot manufacture a `reconstructed` row that
+//    shouldn't exist), so the value is kept as-is rather than tightened.
+//    It also still strictly subsumes the whole same-day churn on
+//    2026-07-28 that came before it (the initial per-country + per-weight
+//    seed at ~16:49 CEST, the real-carrier-cost fix at 16:57, the Spain
+//    zone split at 18:34) — one boundary covers all of it either way.
 //  - ISRAEL_REPRICE_CUTOVER_UNIX = the merge of PR #23 (commit 38aeb59,
 //    merged as 6f34f20 at 2026-07-29T13:49:06+02:00 = 2026-07-29T11:49:06Z).
 //    The carrier cut Israel by a flat EUR 30 at every band; nothing else in
@@ -185,7 +222,7 @@ export function reconstructBasketFromLines(
 //    IL, or zoned to `*` (an unrecognised country or a country absent from
 //    the table), was charged a rate today's table no longer has — so
 //    reconstruction is unsound for those specific orders in that specific
-//    ~14-hour window, even though the general model was already correct.
+//    window, even though the general model was already correct.
 export const EXCHANGE_FEE_MODEL_CUTOVER_UNIX = 1785275300;
 export const ISRAEL_REPRICE_CUTOVER_UNIX = 1785325746;
 

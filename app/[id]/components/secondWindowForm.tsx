@@ -34,9 +34,10 @@ export const SecondWindowForm = ({
   const [state, formAction] = useFormState(updateData, position);
 
   // Same valuation the server charges from: payments.ts -> loadBasket ->
-  // valueBasket, over the same discounted product list. This used to be a
-  // hand-rolled copy of that reduce; the two agreed, but nothing made them
-  // keep agreeing.
+  // valueBasket, over the RAW catalogue — there is no discounted product
+  // list any more; each replacement is priced against the line it replaces
+  // (lib/replacementPricing.ts). This used to be a hand-rolled copy of that
+  // reduce; the two agreed, but nothing made them keep agreeing.
   const basket = valueBasket(items, allProducts);
   const fees = useFees();
   const { feeCents } = resolveFee(fees, basket);

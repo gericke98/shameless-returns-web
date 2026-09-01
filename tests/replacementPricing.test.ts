@@ -233,3 +233,43 @@ describe("orderRatio", () => {
     expect(ratio).toBeCloseTo(47.03 / 69.0, 6);
   });
 });
+
+describe("indexCatalogue keys the catalogue side too, not just the lookup", () => {
+  it("resolves a BARE catalogue variant id from either a bare or a GID lookup", () => {
+    // F4: db/queries.ts happens to always return GIDs today, so this never
+    // shows up in production, but indexCatalogue must not silently rely on
+    // that. A catalogue entry stored under its raw id builds a key the
+    // normalised lookup below can never match, and priceOf/productOf then
+    // return null — which routes replacementPriceForVariant to the "paid"
+    // basis and hands out a free exchange with no error.
+    const bareCatalogue: Product[] = [
+      {
+        id: "gid://shopify/Product/15296978026822",
+        title: "P15296978026822",
+        handle: "p15296978026822",
+        description: "",
+        images: { edges: [] },
+        image: { src: "" },
+        variants: {
+          edges: [
+            {
+              node: {
+                id: "55598268973382", // BARE catalogue id, not a GID
+                price: "55.00",
+                title: "L",
+                inventoryQuantity: 5,
+                grams: 400,
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const index = indexCatalogue(bareCatalogue);
+
+    expect(index.priceOf("55598268973382")).toBe(55.0);
+    expect(index.priceOf(vgid("55598268973382"))).toBe(55.0);
+    expect(index.productOf(vgid("55598268973382"))).toBe("15296978026822");
+  });
+});

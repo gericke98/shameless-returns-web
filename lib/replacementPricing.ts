@@ -64,19 +64,29 @@ export function indexCatalogue(catalogue: Product[]): CatalogueIndex {
   const price = new Map<string, number>();
   const owner = new Map<string, string>();
 
+  // Both build and lookup key through variantKey(). db/queries.ts happens
+  // to always hand back GIDs today, so building the map from raw
+  // edge.node.id looked safe — but a catalogue entry that ever arrived
+  // bare would build a key the normalised lookup below can never match,
+  // silently falling through to the "paid" basis: a free exchange with no
+  // error. A variant whose id doesn't normalise to anything is skipped
+  // rather than indexed under a key nothing can ever look up again.
   for (const product of catalogue) {
     const bareProductId = product.id.split("/").pop() ?? "";
     for (const edge of product.variants.edges) {
+      const variantKeyForEdge = variantKey(edge.node.id);
+      if (variantKeyForEdge === null) continue;
       const parsed = parseFloat(edge.node.price);
-      if (Number.isFinite(parsed)) price.set(edge.node.id, parsed);
-      owner.set(edge.node.id, bareProductId);
+      if (Number.isFinite(parsed)) price.set(variantKeyForEdge, parsed);
+      owner.set(variantKeyForEdge, bareProductId);
     }
   }
 
-  // Keys are GIDs. Callers may hand us either shape, so normalise on the way
-  // in: `productsorder.variant_id` is bare while `new_variant_id` is a GID,
-  // and comparing the two shapes directly is how this silently returns null
-  // for every original variant in the system.
+  // Keys are normalised via variantKey(). Callers may hand us either shape,
+  // so normalise on the way in too: `productsorder.variant_id` is bare
+  // while `new_variant_id` is a GID, and comparing the two shapes directly
+  // is how this silently returns null for every original variant in the
+  // system.
   const key = (id: string | null | undefined) => variantKey(id);
 
   return {

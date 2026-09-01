@@ -8,7 +8,12 @@ import { Dispatch, ReactNode, SetStateAction } from "react";
 // ==========================================
 
 export type DiscountAllocation = {
-  amount: number;
+  /**
+   * Shopify REST sends this as a decimal STRING ("2.95"), not a number, and it
+   * is allocated against the LINE, not the unit. Typed as both because the
+   * shape is not ours to control; always read it through Number().
+   */
+  amount: string | number;
 };
 
 export type ProductVariant = {

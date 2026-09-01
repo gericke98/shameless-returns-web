@@ -1066,7 +1066,7 @@ export async function getProduct(id: string) {
             }
           }
         }
-        variants(first: 10) {
+        variants(first: 50) {
           edges {
             node {
               id
@@ -1285,7 +1285,7 @@ export async function getProducts() {
                 }
               }
             }
-            variants(first: 10) {
+            variants(first: 50) {
               edges {
                 node {
                   id

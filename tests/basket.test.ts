@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { valueBasket } from "@/lib/basket";
+import { FALLBACK_ITEM_GRAMS, valueBasket } from "@/lib/basket";
 import type { OrderItem, Product } from "@/types";
 
 const vgid = (n: string) => `gid://shopify/ProductVariant/${n}`;
@@ -82,5 +82,64 @@ describe("valueBasket — order #311749", () => {
       }),
     ];
     expect(valueBasket(items, CATALOGUE).grams).toBe(400);
+  });
+
+  it("matches a bare order-line id against a GID catalogue id", () => {
+    const items = [
+      line({
+        productId: "15296978026822",
+        variant_id: "55598268973382", // BARE
+        new_variant_id: vgid("55598268940614"), // GID
+        price: "42.75",
+      }),
+    ];
+    const b = valueBasket(items, CATALOGUE); // catalogue ids are GIDs
+    expect(b.grams).toBe(400); // not FALLBACK_ITEM_GRAMS
+    expect(b.netAmount).toBeCloseTo(0, 2);
+  });
+});
+
+describe("parcelGrams resolves BARE productsorder variant ids", () => {
+  it("uses the catalogue weight, not the fallback", () => {
+    const items = [
+      line({
+        productId: "15296978026822",
+        variant_id: "55598268973382", // BARE, as productsorder stores it
+        new_variant_id: null,
+        action: "DEVOLUCIÓN",
+        price: "42.75",
+      }),
+    ];
+    // 400g comes from the catalogue fixture. Before the fix this returned
+    // FALLBACK_ITEM_GRAMS, because a bare id never matched a GID key.
+    expect(valueBasket(items, CATALOGUE).grams).toBe(400);
+    expect(valueBasket(items, CATALOGUE).grams).not.toBe(FALLBACK_ITEM_GRAMS);
+  });
+
+  it("multiplies by quantity", () => {
+    const items = [
+      line({
+        productId: "15296978026822",
+        variant_id: "55598268973382",
+        new_variant_id: null,
+        action: "DEVOLUCIÓN",
+        quantity: 3,
+        price: "42.75",
+      }),
+    ];
+    expect(valueBasket(items, CATALOGUE).grams).toBe(1200);
+  });
+
+  it("still falls back for a variant that is genuinely gone", () => {
+    const items = [
+      line({
+        productId: "99999999",
+        variant_id: "88888888",
+        new_variant_id: null,
+        action: "DEVOLUCIÓN",
+        price: "10.00",
+      }),
+    ];
+    expect(valueBasket(items, CATALOGUE).grams).toBe(FALLBACK_ITEM_GRAMS);
   });
 });

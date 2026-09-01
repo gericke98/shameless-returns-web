@@ -44,6 +44,22 @@ export type CatalogueIndex = {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * Normalise a variant id to one comparable key.
+ *
+ * `productsorder.variant_id` is bare, `new_variant_id` and the catalogue are
+ * GIDs, so the two real shapes must collapse to the same string. Anything
+ * variantGid() refuses is compared verbatim instead of being dropped: an id
+ * shape we do not recognise should still match itself.
+ */
+export const variantKey = (
+  id: string | number | null | undefined
+): string | null => {
+  const raw = String(id ?? "").trim();
+  if (!raw) return null;
+  return variantGid(raw) ?? raw;
+};
+
 export function indexCatalogue(catalogue: Product[]): CatalogueIndex {
   const price = new Map<string, number>();
   const owner = new Map<string, string>();
@@ -61,7 +77,7 @@ export function indexCatalogue(catalogue: Product[]): CatalogueIndex {
   // in: `productsorder.variant_id` is bare while `new_variant_id` is a GID,
   // and comparing the two shapes directly is how this silently returns null
   // for every original variant in the system.
-  const key = (id: string | null | undefined) => variantGid(id);
+  const key = (id: string | null | undefined) => variantKey(id);
 
   return {
     priceOf: (id) => {

@@ -9,17 +9,24 @@ import {
   indexCatalogue,
   orderRatio,
   replacementPrice,
+  variantKey,
   type PricedLine,
 } from "@/lib/replacementPricing";
 
 /**
  * Weight a variant contributes when the catalogue does not say.
  *
- * Only reachable for a variant that has been deleted or archived in Shopify
- * since the order was placed — every one of the 217 live variants carries a
- * weight. Zero would be the dangerous default: it makes a parcel look lighter
- * than it is and drops it into a cheaper band, so an unknown item would
- * *reduce* the fee. It sits between the catalogue's median (423g) and p75 (550g).
+ * Reachable for a variant genuinely absent from the catalogue — deleted or
+ * archived in Shopify since the order was placed. Zero would be the
+ * dangerous default: it makes a parcel look lighter than it is and drops it
+ * into a cheaper band, so an unknown item would *reduce* the fee. It sits
+ * between the catalogue's median (423g) and p75 (550g).
+ *
+ * Until 2026-09-01 this was reachable for EVERY item, not just genuinely
+ * missing ones: `parcelGrams` keyed its lookup by GID but read it with the
+ * bare `variant_id` `productsorder` stores, so the lookup missed for every
+ * item and every parcel was weighed at this fallback regardless of the
+ * catalogue.
  */
 export const FALLBACK_ITEM_GRAMS = 500;
 
@@ -40,12 +47,14 @@ export function parcelGrams(
   const byVariantId = new Map<string, ProductVariant>();
   for (const product of discountedProducts) {
     for (const edge of product.variants.edges) {
-      byVariantId.set(String(edge.node.id), edge.node);
+      const key = variantKey(edge.node.id);
+      if (key) byVariantId.set(key, edge.node);
     }
   }
 
   return items.reduce((sum, item) => {
-    const variant = byVariantId.get(String(item.variant_id));
+    const key = variantKey(item.variant_id);
+    const variant = key ? byVariantId.get(key) : undefined;
     const grams = variant?.grams ?? FALLBACK_ITEM_GRAMS;
     const quantity = Math.max(1, Number(item.quantity) || 1);
     return sum + grams * quantity;

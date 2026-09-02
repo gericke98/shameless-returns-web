@@ -104,6 +104,7 @@ describe("ProductLineClient — the chosen-replacement card", () => {
         orderProduct={orderProduct}
         product={ORIGINAL}
         allProducts={ALL_PRODUCTS}
+        fallbackRatio={null}
       />
     );
 

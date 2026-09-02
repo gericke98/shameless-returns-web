@@ -15,5 +15,5 @@ export async function loadBasket(orderId: string) {
   const catalogue = await getProducts();
   const basket = valueBasket(order.products as OrderItem[], catalogue);
 
-  return { order, discountedProducts: catalogue, basket };
+  return { order, catalogue, basket };
 }

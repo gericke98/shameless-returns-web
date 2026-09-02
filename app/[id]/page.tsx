@@ -68,14 +68,12 @@ export default async function OrderPage({ params }: OrderPageProps) {
   }
 
   const orderData = await fetchOrderWithProducts(params.id);
+  // Raw catalogue. Replacement prices are per-line; see lib/replacementPricing.ts.
   const allProducts = await getProducts();
 
   if (!orderData) {
     redirect("/");
   }
-
-  // Raw catalogue. Replacement prices are per-line; see lib/replacementPricing.ts.
-  const discountedAllProducts = allProducts;
 
   const feeTable = await getFeeTable();
   const fees = feesForCountry(
@@ -117,7 +115,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
           items={orderData.products}
           order={orderData}
           id={orderData.id}
-          allProducts={discountedAllProducts}
+          allProducts={allProducts}
           statusPanel={statusPanel}
         />
       </FeesProvider>

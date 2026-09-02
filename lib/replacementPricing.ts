@@ -18,7 +18,9 @@ import type { Product } from "@/types";
  * - `paid`   the line's own paid price, verbatim. Same-product size swaps.
  * - `ratio`  the line's own discount depth applied to a different garment.
  * - `median` the order's median depth, because this line's original variant
- *            has left the catalogue.
+ *            is not in the catalogue `getProducts` returns — filtered to
+ *            `query: "status:ACTIVE"`, so a product merely set to DRAFT is
+ *            just as invisible here as one actually deleted or archived.
  * - `none`   list price: nothing in the order resolved. Degraded.
  *
  * `median` and `none` are degraded. This module cannot alert — alertOps is a
@@ -42,7 +44,14 @@ export type CatalogueIndex = {
   productOf(variantId: string | null | undefined): string | null;
 };
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+/**
+ * Round to cents. Exported so callers summing per-line euro contributions
+ * (lib/basket.ts's `returnPrice`) round at the same single point this module
+ * already does for `exchangePrice` — two sums rounded at different points can
+ * disagree by fractions of a cent, which is enough to flip a `netAmount > 0`
+ * comparison. See lib/basket.ts's `valueBasket` for the concrete case.
+ */
+export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Normalise a variant id to one comparable key.

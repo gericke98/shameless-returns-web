@@ -9,6 +9,7 @@ import {
   indexCatalogue,
   orderRatio,
   replacementPrice,
+  round2,
   variantKey,
   type PricedLine,
 } from "@/lib/replacementPricing";
@@ -16,11 +17,14 @@ import {
 /**
  * Weight a variant contributes when the catalogue does not say.
  *
- * Reachable for a variant genuinely absent from the catalogue — deleted or
- * archived in Shopify since the order was placed. Zero would be the
- * dangerous default: it makes a parcel look lighter than it is and drops it
- * into a cheaper band, so an unknown item would *reduce* the fee. It sits
- * between the catalogue's median (423g) and p75 (550g).
+ * Reachable for a variant genuinely absent from the catalogue AS
+ * `db/queries.ts`'s `getProducts()` READS IT — it filters Shopify to
+ * `query: "status:ACTIVE"`, so a product merely set to DRAFT (46 of this
+ * store's 83, as of 2026-09-01) is invisible here exactly like one actually
+ * deleted or archived. Zero would be the dangerous default: it makes a parcel
+ * look lighter than it is and drops it into a cheaper band, so an unknown
+ * item would *reduce* the fee. It sits between the catalogue's median (423g)
+ * and p75 (550g).
  *
  * Until 2026-09-01 this was reachable for EVERY item, not just genuinely
  * missing ones: `parcelGrams` keyed its lookup by GID but read it with the
@@ -42,10 +46,10 @@ export const FALLBACK_ITEM_GRAMS = 500;
  */
 export function parcelGrams(
   items: OrderItem[],
-  discountedProducts: Product[]
+  catalogue: Product[]
 ): number {
   const byVariantId = new Map<string, ProductVariant>();
-  for (const product of discountedProducts) {
+  for (const product of catalogue) {
     for (const edge of product.variants.edges) {
       const key = variantKey(edge.node.id);
       if (key) byVariantId.set(key, edge.node);
@@ -66,9 +70,9 @@ export function parcelGrams(
  * action counts toward the return total; CAMBIO lines subtract the price of
  * their replacement.
  *
- * `discountedProducts` used to arrive pre-mutated by `applyGlobalDiscount`.
- * It now arrives RAW, and each replacement is priced against the line it
- * replaces — see lib/replacementPricing.ts for why.
+ * `catalogue` used to arrive pre-mutated by `applyGlobalDiscount`. It now
+ * arrives RAW, and each replacement is priced against the line it replaces —
+ * see lib/replacementPricing.ts for why.
  */
 export function valueBasket(
   items: OrderItem[],
@@ -85,8 +89,21 @@ export function valueBasket(
   const index = indexCatalogue(catalogue);
   const fallbackRatio = orderRatio(items as unknown as PricedLine[], index);
 
+  // Rounded per line, to cents, exactly like exchangePrice below already is —
+  // `item.price` comes from calculatePriceWithDiscount's unrounded
+  // `unit - allocated/quantity` (utils/order-utils.ts) stored verbatim
+  // (db/repository.ts), so a qty>=3 line with a non-divisible allocation
+  // lands here as e.g. 50.88333333333333. Summing that raw against
+  // exchangePrice's already-rounded 50.88 left a same-product swap with
+  // netAmount = +0.0033... instead of exactly 0, which flipped resolveFee
+  // from the exchange lane to the return lane — undercharging the outbound
+  // leg entirely. Rounding here, at the same single point exchangePrice
+  // already rounds at, keeps both sums at the same cents-precision so their
+  // difference is exact; it deliberately does NOT round at the source
+  // (calculatePriceWithDiscount), which would drift a line's own total (3 x
+  // 50.88 = 152.64, not the 152.65 the unrounded per-unit price sums to).
   const returnPrice = active.reduce(
-    (sum, item) => sum + parseFloat(item.price),
+    (sum, item) => sum + round2(parseFloat(item.price)),
     0
   );
 

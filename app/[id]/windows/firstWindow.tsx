@@ -4,6 +4,11 @@ import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { OrderItem, Product } from "@/types";
 import { useT } from "@/lib/i18n/context";
+import {
+  indexCatalogue,
+  orderRatio,
+  type PricedLine,
+} from "@/lib/replacementPricing";
 
 type FirstWindowProps = {
   name: string;
@@ -22,6 +27,19 @@ const FirstWindowBase = ({
   const hasSelectedItems = useMemo(
     () => items.some((item) => item.action !== null),
     [items]
+  );
+
+  // Same value SummaryComponent derives internally (and the same one
+  // payments.ts's createStripeUrl prices the charge from), threaded down
+  // rather than recomputed per line so every card agrees with the total on
+  // this same screen. See ProductLineProps.fallbackRatio.
+  const fallbackRatio = useMemo(
+    () =>
+      orderRatio(
+        items as unknown as PricedLine[],
+        indexCatalogue(allProducts)
+      ),
+    [items, allProducts]
   );
 
   return (
@@ -52,6 +70,7 @@ const FirstWindowBase = ({
                 }
               }
               allProducts={allProducts}
+              fallbackRatio={fallbackRatio}
               onItemChange={onItemChange}
             />
           ))}

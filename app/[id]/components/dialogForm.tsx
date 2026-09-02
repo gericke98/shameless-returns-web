@@ -25,6 +25,10 @@ type Props = {
   onSuccess: () => void;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   allProducts: Product[];
+  /** Same order-wide ratio ProductLineClient receives — see
+   *  ProductLineProps.fallbackRatio in types/index.ts for why it must be the
+   *  identical value the summary/Stripe total is priced from. */
+  fallbackRatio: number | null;
 };
 
 export const FormProduct = ({
@@ -35,6 +39,7 @@ export const FormProduct = ({
   onSuccess,
   onItemChange,
   allProducts,
+  fallbackRatio,
 }: Props) => {
   const t = useT();
   const [action, setAction] = useState<string | null>(
@@ -381,9 +386,9 @@ export const FormProduct = ({
       orderProduct as unknown as PricedLine,
       selectedVariantId,
       catalogueIndex,
-      null
+      fallbackRatio
     ).price;
-  }, [orderProduct, variantId, new_product_change, catalogueIndex]);
+  }, [orderProduct, variantId, new_product_change, catalogueIndex, fallbackRatio]);
 
   return (
     <div className="relative">
@@ -536,7 +541,7 @@ export const FormProduct = ({
                                 orderProduct as unknown as PricedLine,
                                 firstVariant.id,
                                 catalogueIndex,
-                                null
+                                fallbackRatio
                               ).price
                             )
                           : "";

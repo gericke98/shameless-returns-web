@@ -79,7 +79,9 @@ export const createStripeUrl = async (
 
   // A degraded basket means at least one replacement was priced from the
   // order's median discount depth, or from list price, because its original
-  // variant is no longer in the catalogue. That has never happened in
+  // variant is not in the catalogue getProducts() returns — that filters
+  // Shopify to `status:ACTIVE`, so a product merely set to DRAFT is just as
+  // invisible here as one actually deleted. That has never happened in
   // production (0 of 289 exchange lines) — so if it does, we want to hear
   // about it before the customer is charged, not after.
   //

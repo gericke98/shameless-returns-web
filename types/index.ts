@@ -179,6 +179,18 @@ export type ProductLineProps = {
   product: Product;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   allProducts: Product[];
+  /**
+   * The order's median discount ratio — `orderRatio(items, index)` from
+   * lib/replacementPricing.ts, computed ONCE by an ancestor that holds the
+   * full order (firstWindow.tsx / lastWindow.tsx) and threaded down verbatim.
+   * This line's own replacement price falls back to it only when this line's
+   * own original variant is not in the catalogue; it must be the SAME value
+   * summary.tsx and payments.ts use, or the "median" basis renders a
+   * different price on this card than on the summary/Stripe total for the
+   * same line. Null when the caller has no order-wide item list to derive it
+   * from, or genuinely no line in the order resolves a ratio.
+   */
+  fallbackRatio: number | null;
 };
 
 export type ProductDialogProps = ProductLineProps & {

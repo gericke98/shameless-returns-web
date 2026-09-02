@@ -183,6 +183,7 @@ const ProductDialog = ({
   onSuccess,
   onItemChange,
   allProducts,
+  fallbackRatio,
   t,
   locale,
 }: ProductDialogProps & { t: Dictionary; locale: Locale }) => {
@@ -215,9 +216,12 @@ const ProductDialog = ({
   );
   const newPrice = useMemo(
     () =>
-      replacementPrice(orderProduct as unknown as PricedLine, catalogueIndex, null)
-        .price,
-    [orderProduct, catalogueIndex]
+      replacementPrice(
+        orderProduct as unknown as PricedLine,
+        catalogueIndex,
+        fallbackRatio
+      ).price,
+    [orderProduct, catalogueIndex, fallbackRatio]
   );
 
   return (
@@ -278,6 +282,7 @@ const ProductDialog = ({
                 }
               }}
               allProducts={allProducts}
+              fallbackRatio={fallbackRatio}
             />
           </div>
         </ScrollArea>
@@ -291,6 +296,7 @@ export const ProductLineClient = ({
   product,
   onItemChange,
   allProducts,
+  fallbackRatio,
 }: ProductLineProps) => {
   const t = useT();
   const locale = useLocale();
@@ -326,9 +332,12 @@ export const ProductLineClient = ({
   );
   const newPrice = useMemo(
     () =>
-      replacementPrice(orderProduct as unknown as PricedLine, catalogueIndex, null)
-        .price,
-    [orderProduct, catalogueIndex]
+      replacementPrice(
+        orderProduct as unknown as PricedLine,
+        catalogueIndex,
+        fallbackRatio
+      ).price,
+    [orderProduct, catalogueIndex, fallbackRatio]
   );
 
   return (
@@ -400,6 +409,7 @@ export const ProductLineClient = ({
             }
           }}
           allProducts={allProducts}
+          fallbackRatio={fallbackRatio}
           t={t}
           locale={locale}
         />

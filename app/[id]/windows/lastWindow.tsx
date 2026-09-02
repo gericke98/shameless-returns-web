@@ -12,6 +12,11 @@ import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 import { ReturnMethodChoice } from "../components/returnMethodChoice";
 import type { ReturnMethod } from "@/lib/returnMethods";
+import {
+  indexCatalogue,
+  orderRatio,
+  type PricedLine,
+} from "@/lib/replacementPricing";
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
@@ -73,6 +78,19 @@ const LastWindowBase = ({
     };
   }, [allProducts, credito, items, fees, method]);
 
+  // Same value SummaryComponent derives internally for its own cards, threaded
+  // down to ProductLineClient so its "chosen replacement" card cannot show a
+  // different median-basis price than the summary/Stripe total two lines
+  // below it. See ProductLineProps.fallbackRatio.
+  const fallbackRatio = useMemo(
+    () =>
+      orderRatio(
+        items as unknown as PricedLine[],
+        indexCatalogue(allProducts)
+      ),
+    [items, allProducts]
+  );
+
   const handleBack = () => {
     setPosition(finalTotal > 0 ? position - 1 : position - 2);
   };
@@ -98,6 +116,7 @@ const LastWindowBase = ({
                 product={product.newp}
                 onItemChange={onItemChange}
                 allProducts={allProducts}
+                fallbackRatio={fallbackRatio}
               />
             )
         )}

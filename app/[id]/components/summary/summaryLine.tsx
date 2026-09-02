@@ -10,6 +10,14 @@ type SummaryLineProps = {
   item: typeof productsOrder.$inferSelect;
   newAction: boolean;
   newProduct?: Product | null;
+  /**
+   * Per-line replacement price from lib/replacementPricing, priced against
+   * the pairing this line actually made rather than the catalogue's list
+   * price. `newProduct` above still supplies the title/image — only the
+   * price moved to the shared pricing module. Undefined/null means "no
+   * priced replacement for this line"; falls back to item.price.
+   */
+  newPrice?: number | null;
 };
 
 const ProductTitle = ({ title }: { title: string }) => (
@@ -53,15 +61,14 @@ export const SummaryLine = ({
   item,
   newAction,
   newProduct,
+  newPrice,
 }: SummaryLineProps) => {
   return (
     <div className="w-full h-full flex flex-col pl-4 mt-4 gap-2">
       <div className="w-full h-full flex flex-col sm:flex-row sm:justify-between sm:items-center">
         <ProductTitle title={newProduct ? newProduct.title : item.title} />
         <ProductPrice
-          price={
-            newProduct ? newProduct.variants.edges[0]?.node.price : item.price
-          }
+          price={newPrice != null ? String(newPrice) : item.price}
           newAction={newAction}
         />
       </div>

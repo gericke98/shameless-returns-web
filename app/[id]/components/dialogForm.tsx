@@ -3,7 +3,7 @@ import Image from "next/image";
 import { FormInput } from "../../../components/formInput";
 import { FormSelect } from "../../../components/formSelect";
 import { FormSelectSize } from "../../../components/formSelectSize";
-import { useState, useTransition, useRef, useEffect } from "react";
+import { useState, useTransition, useRef, useEffect, useMemo } from "react";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Product } from "@/types";
 import { productsOrder } from "@/db/schema";
@@ -11,6 +11,11 @@ import { anularOrder, updateOrder } from "@/actions/updateOrder";
 import { ACTIONS, REASON_KEYS } from "@/placeholder";
 import { useT } from "@/lib/i18n/context";
 import { toReasonKey } from "@/lib/reasons";
+import {
+  indexCatalogue,
+  replacementPriceForVariant,
+  type PricedLine,
+} from "@/lib/replacementPricing";
 
 type Props = {
   product: Product;
@@ -20,6 +25,10 @@ type Props = {
   onSuccess: () => void;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   allProducts: Product[];
+  /** Same order-wide ratio ProductLineClient receives — see
+   *  ProductLineProps.fallbackRatio in types/index.ts for why it must be the
+   *  identical value the summary/Stripe total is priced from. */
+  fallbackRatio: number | null;
 };
 
 export const FormProduct = ({
@@ -30,6 +39,7 @@ export const FormProduct = ({
   onSuccess,
   onItemChange,
   allProducts,
+  fallbackRatio,
 }: Props) => {
   const t = useT();
   const [action, setAction] = useState<string | null>(
@@ -350,6 +360,36 @@ export const FormProduct = ({
 
   const showNewProduct = action === ACTIONS.CHANGE && motivo !== "";
 
+  // Hoisted so the index is not rebuilt on every render of the dropdown's
+  // option list below.
+  const catalogueIndex = useMemo(
+    () => indexCatalogue(allProducts),
+    [allProducts]
+  );
+
+  // The "Selected Product Preview" price, for whichever variant is actually
+  // chosen (variantId) rather than the new product's first variant — this
+  // used to show list price for a garment the customer would be charged the
+  // sale-adjusted price for.
+  //
+  // Display-only: the price itself comes straight from
+  // replacementPriceForVariant, which tests/replacementPricing.test.ts
+  // exhaustively unit-tests (paid/ratio/median/none bases). Deliberately not
+  // covered by a render test here — FormProduct's stateful, stock-aware size
+  // selection makes a faithful harness for this specific call site
+  // disproportionate to the risk (R15).
+  const previewPrice = useMemo(() => {
+    if (!new_product_change) return null;
+    const selectedVariantId =
+      variantId || new_product_change.variants.edges[0]?.node.id || null;
+    return replacementPriceForVariant(
+      orderProduct as unknown as PricedLine,
+      selectedVariantId,
+      catalogueIndex,
+      fallbackRatio
+    ).price;
+  }, [orderProduct, variantId, new_product_change, catalogueIndex, fallbackRatio]);
+
   return (
     <div className="relative">
       <form
@@ -483,7 +523,28 @@ export const FormProduct = ({
 
                         // Get the first variant with stock or the first variant if none have stock
                         const firstVariant = p.variants.edges[0]?.node;
-                        const price = firstVariant?.price || "";
+                        // Priced against this line's own pairing (its paid
+                        // price / discount depth), not the catalogue's raw
+                        // list price — a raw price here showed €55 for a
+                        // garment the customer would actually pay €42.75 for.
+                        //
+                        // Display-only: the price itself comes straight from
+                        // replacementPriceForVariant, which
+                        // tests/replacementPricing.test.ts exhaustively
+                        // unit-tests. Deliberately not covered by a render
+                        // test here — FormProduct's stateful, stock-aware
+                        // size selection makes a faithful harness for this
+                        // dropdown disproportionate to the risk (R15).
+                        const price = firstVariant
+                          ? String(
+                              replacementPriceForVariant(
+                                orderProduct as unknown as PricedLine,
+                                firstVariant.id,
+                                catalogueIndex,
+                                fallbackRatio
+                              ).price
+                            )
+                          : "";
 
                         return {
                           product: p,
@@ -585,7 +646,7 @@ export const FormProduct = ({
                       {new_product_change.title}
                     </p>
                     <p className="text-xs text-gray-500">
-                      {new_product_change.variants.edges[0]?.node.price || ""} €
+                      {previewPrice ?? ""} €
                     </p>
                   </div>
                 </div>

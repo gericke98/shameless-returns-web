@@ -30,7 +30,7 @@ const sessions: any[] = [];
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 vi.mock("@/db/fees", () => ({ getFeeTable: async () => ({ "*": BANDS }) }));
 vi.mock("@/lib/loadBasket", () => ({
-  loadBasket: async () => ({ order, discountedProducts: [], basket }),
+  loadBasket: async () => ({ order, catalogue: [], basket }),
 }));
 vi.mock("@/lib/stripe", () => ({
   stripe: {

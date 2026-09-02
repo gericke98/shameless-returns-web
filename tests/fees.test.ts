@@ -265,8 +265,8 @@ describe("centsToEuros", () => {
   });
 });
 
-const product = (variantId: string, price: string) => ({
-  id: "gid://shopify/Product/1",
+const product = (variantId: string, price: string, productId = "1") => ({
+  id: `gid://shopify/Product/${productId}`,
   title: "T",
   handle: "t",
   description: "",
@@ -300,11 +300,26 @@ describe("valueBasket", () => {
   });
 
   it("nets an exchange against the replacement variant price", () => {
+    // Cross-product exchange: the catalogue must also carry the ORIGINAL
+    // variant "v1" so lineRatio can resolve the line's own discount depth.
+    // Paid 30.00 against v1's list of 40.00 is a 0.75 ratio; applied to
+    // v2's list of 25.00 that is 18.75, netting 11.25.
     const b = valueBasket(
       [line({ action: "CAMBIO", new_variant_id: "v2" })],
-      [product("v2", "25.00")]
+      [product("v1", "40.00"), product("v2", "25.00", "2")]
     );
-    expect(b).toMatchObject({ returnPrice: 30, exchangePrice: 25, netAmount: 5 });
+    expect(b).toMatchObject({ returnPrice: 30, exchangePrice: 18.75, netAmount: 11.25 });
+  });
+
+  it("charges nothing to swap size within the same product", () => {
+    // Same product id ("1") on both sides — a size swap, not a cross-product
+    // exchange. The old code charged the difference (25.00) here; the fix
+    // keeps the line at its paid price regardless of the catalogue.
+    const b = valueBasket(
+      [line({ action: "CAMBIO", new_variant_id: "v2" })],
+      [product("v1", "40.00"), product("v2", "25.00")]
+    );
+    expect(b).toMatchObject({ returnPrice: 30, exchangePrice: 30, netAmount: 0 });
   });
 
   it("falls back to the original price when the variant is missing", () => {

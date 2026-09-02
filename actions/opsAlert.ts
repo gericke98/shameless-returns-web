@@ -49,6 +49,13 @@ export async function alertOps(subject: string, body: string): Promise<void> {
           "Content-Type": "application/json",
           "X-Postmark-Server-Token": token,
         },
+        // This sits on the charge path (createStripeUrl awaits it before
+        // sessions.create), and it is best-effort — a failure here must never
+        // block or alter a charge. Without a timeout, axios waits
+        // indefinitely, so a hung Postmark stalls the charge itself. A few
+        // seconds is enough for a real request to complete; anything longer
+        // is Postmark being down, which the catch below already handles.
+        timeout: 5000,
       }
     );
   } catch (error: any) {

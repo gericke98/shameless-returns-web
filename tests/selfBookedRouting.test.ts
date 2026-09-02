@@ -96,7 +96,7 @@ vi.mock("@/db/fees", () => ({ getFeeTable: async () => ({ "*": bands }) }));
 vi.mock("@/lib/loadBasket", () => ({
   loadBasket: async () => ({
     order,
-    discountedProducts: [],
+    catalogue: [],
     basket: { hasItems: true, netAmount: 52.5, grams: 500 },
   }),
 }));

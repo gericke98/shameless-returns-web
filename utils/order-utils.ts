@@ -32,13 +32,25 @@ export function extractOrderNoteInfo(note: string): {
 }
 
 /**
- * Calculates the price with discount for a line item
+ * The per-unit price the customer actually paid.
+ *
+ * Shopify's `discount_allocations[].amount` is allocated against the LINE, not
+ * the unit, and a line can carry more than one allocation (an automatic
+ * discount stacked on a code). Subtracting only `[0]` from a unit price is
+ * wrong on both counts. Latent until now — no qty>1 discounted line existed in
+ * the last 250 orders — but this number is what every exchange is priced from.
  *
  * @param item Line item to calculate price for
  * @returns Price with discount applied
  */
 export function calculatePriceWithDiscount(item: OrderLineItem): number {
-  return Number(item.price) - (item.discount_allocations?.[0]?.amount ?? 0);
+  const unit = Number(item.price) || 0;
+  const quantity = Math.max(1, Number(item.quantity) || 1);
+  const allocated = (item.discount_allocations ?? []).reduce(
+    (sum, allocation) => sum + (Number(allocation.amount) || 0),
+    0
+  );
+  return Math.max(0, unit - allocated / quantity);
 }
 
 /**

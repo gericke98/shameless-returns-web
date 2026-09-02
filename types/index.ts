@@ -8,7 +8,12 @@ import { Dispatch, ReactNode, SetStateAction } from "react";
 // ==========================================
 
 export type DiscountAllocation = {
-  amount: number;
+  /**
+   * Shopify REST sends this as a decimal STRING ("2.95"), not a number, and it
+   * is allocated against the LINE, not the unit. Typed as both because the
+   * shape is not ours to control; always read it through Number().
+   */
+  amount: string | number;
 };
 
 export type ProductVariant = {
@@ -174,6 +179,18 @@ export type ProductLineProps = {
   product: Product;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   allProducts: Product[];
+  /**
+   * The order's median discount ratio — `orderRatio(items, index)` from
+   * lib/replacementPricing.ts, computed ONCE by an ancestor that holds the
+   * full order (firstWindow.tsx / lastWindow.tsx) and threaded down verbatim.
+   * This line's own replacement price falls back to it only when this line's
+   * own original variant is not in the catalogue; it must be the SAME value
+   * summary.tsx and payments.ts use, or the "median" basis renders a
+   * different price on this card than on the summary/Stripe total for the
+   * same line. Null when the caller has no order-wide item list to derive it
+   * from, or genuinely no line in the order resolves a ratio.
+   */
+  fallbackRatio: number | null;
 };
 
 export type ProductDialogProps = ProductLineProps & {

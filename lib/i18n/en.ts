@@ -87,6 +87,7 @@ export const en: Dictionary = {
     deliverElsewhereHint:
       "Your parcel is still collected from the address above. Only the replacement goes here, and the delivery cost is updated for that country.",
     deliveryCountry: "Delivery country",
+    deliveryCountryPlaceholder: "Select a country",
     deliveryIncomplete: "Please fill in every delivery field except the optional ones.",
   },
   third: {

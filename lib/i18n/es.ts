@@ -88,6 +88,7 @@ export const es = {
     deliverElsewhereHint:
       "Tu paquete se seguirá recogiendo en la dirección de arriba. Solo el producto de cambio se envía aquí, y el coste de envío se actualiza para ese país.",
     deliveryCountry: "País de entrega",
+    deliveryCountryPlaceholder: "Selecciona un país",
     deliveryIncomplete:
       "Por favor, rellena todos los campos de entrega salvo los opcionales.",
   },

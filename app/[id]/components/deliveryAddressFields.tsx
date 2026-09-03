@@ -70,8 +70,31 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
     setDraft(parsed.ok ? parsed.value : null);
   }, [open, fields, setDraft]);
 
-  const set = (name: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  // `deliveryName` is pre-filled from `order.shippingName`, so the instant
+  // the box is ticked the block already has one of five required fields
+  // filled — `parseDeliveryInput` calls that "partial", and until now nothing
+  // stopped the customer submitting it: `updateData` silently returned
+  // `prevState` unchanged, `position` never advanced, and Continue did
+  // nothing with no message anywhere. The `required` attributes below (on
+  // every REQUIRED field in lib/deliveryAddressInput.ts except the country,
+  // which is required on its own <select>) make the browser block submission
+  // and say which field is missing, so this is defence-in-depth: it catches
+  // the case where a customer somehow gets a submit through anyway — e.g. an
+  // in-page requestSubmit() call — that native validation didn't stop.
+  const [showIncomplete, setShowIncomplete] = useState(false);
+
+  const set = (name: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Actively fixing the block — stop nagging as soon as they touch it.
+    setShowIncomplete(false);
     setFields((f) => ({ ...f, [name]: e.target.value }));
+  };
+
+  // Captures the native `invalid` event any required delivery field fires
+  // when a submit attempt is blocked. `invalid` does not bubble, but a
+  // capture-phase listener on an ancestor still runs for every field that
+  // fires it, regardless of bubbling — so one handler here catches all of
+  // them without wiring one per input.
+  const handleInvalidCapture = () => setShowIncomplete(true);
 
   return (
     <div className="flex flex-col gap-3">
@@ -79,7 +102,12 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
         <input
           type="checkbox"
           checked={open}
-          onChange={(e) => setOpen(e.target.checked)}
+          onChange={(e) => {
+            setOpen(e.target.checked);
+            // Closing the block dismisses the message with it — there is
+            // nothing left on screen for it to describe.
+            if (!e.target.checked) setShowIncomplete(false);
+          }}
           className="mt-1"
         />
         <span className="flex flex-col">
@@ -93,12 +121,16 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
       </label>
 
       {open && (
-        <div className="flex flex-col gap-4 border-l-2 border-shameless-orange pl-3">
+        <div
+          className="flex flex-col gap-4 border-l-2 border-shameless-orange pl-3"
+          onInvalidCapture={handleInvalidCapture}
+        >
           <FormInput
             name="deliveryName"
             title={t.second.name}
             valueini={fields.deliveryName}
             icon={false}
+            required
             onChange={set("deliveryName")}
           />
           <FormInput
@@ -106,6 +138,7 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
             title={t.second.address}
             valueini={fields.deliveryAddress1}
             icon={false}
+            required
             onChange={set("deliveryAddress1")}
           />
           <FormInput
@@ -120,6 +153,7 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
             title={t.second.zip}
             valueini={fields.deliveryZip}
             icon={false}
+            required
             onChange={set("deliveryZip")}
           />
           <FormInput
@@ -127,6 +161,7 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
             title={t.second.city}
             valueini={fields.deliveryCity}
             icon={false}
+            required
             onChange={set("deliveryCity")}
           />
           <FormInput
@@ -146,13 +181,15 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
             <select
               id="deliveryCountry"
               name="deliveryCountry"
+              required
               value={fields.deliveryCountry}
-              onChange={(e) =>
-                setFields((f) => ({ ...f, deliveryCountry: e.target.value }))
-              }
+              onChange={(e) => {
+                setShowIncomplete(false);
+                setFields((f) => ({ ...f, deliveryCountry: e.target.value }));
+              }}
               className="w-full p-2 border border-slate-200 rounded-md"
             >
-              <option value="" />
+              <option value="">{t.second.deliveryCountryPlaceholder}</option>
               {countryOptions.map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.label}
@@ -160,6 +197,11 @@ export const DeliveryAddressFields = ({ order }: { order: OrderAddressFields }) 
               ))}
             </select>
           </div>
+          {showIncomplete && (
+            <p className="text-xs text-red-500" role="alert">
+              {t.second.deliveryIncomplete}
+            </p>
+          )}
         </div>
       )}
     </div>

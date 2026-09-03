@@ -25,6 +25,26 @@ export const orders = pgTable("orders", {
   shippingProvince: text("shipping_province").notNull(),
   shippingCountry: text("shipping_country").notNull(),
   shippingPhone: text("shipping_phone").notNull(),
+  // Where the REPLACEMENT goes, when that is not where the parcel came from.
+  //
+  // All seven are null for almost every order and null is the whole feature:
+  // it means "deliver to the collection address above", so every row that
+  // predates this reads and prices exactly as it did before. They are never
+  // backfilled.
+  //
+  // These do NOT affect the return leg. The parcel is still collected from
+  // shipping_*, which still picks the carrier lane and the customs
+  // declaration; only the outbound leg and the exchange order's destination
+  // read these.
+  deliveryName: text("delivery_name"),
+  deliveryAddress1: text("delivery_address1"),
+  deliveryAddress2: text("delivery_address2"),
+  deliveryZip: text("delivery_zip"),
+  deliveryCity: text("delivery_city"),
+  deliveryProvince: text("delivery_province"),
+  // A display NAME or an ISO-2 code, same as shipping_country — normalizeCountry
+  // resolves either.
+  deliveryCountry: text("delivery_country"),
   // Tracking number (Correos CodEnvio for ES, or Amphora carrier_number for intl).
   locator: text("locator"),
   // Set for international (Amphora) returns: the carrier code + customer tracking URL.

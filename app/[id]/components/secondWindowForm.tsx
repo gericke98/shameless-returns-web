@@ -143,6 +143,15 @@ export const SecondWindowForm = ({
       {hasExchange && (
         <>
           <span className="border w-full border-gray-300 mt-2" />
+          {/*
+            Marks that the delivery block was OFFERED this pass, independent
+            of whether it was ticked. updateData reads this to decide whether
+            to touch the seven delivery_* columns at all — see the comment
+            there. Without it, a later pure-return pass (which never renders
+            this block) is indistinguishable, at the database, from this
+            customer unticking a saved address, and silently wipes it.
+          */}
+          <input type="hidden" name="deliveryBlockOffered" value="1" />
           <DeliveryAddressFields order={order as unknown as OrderAddressFields} />
         </>
       )}

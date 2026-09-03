@@ -5,14 +5,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // where the return label (and now the replacement garment) is sent.
 //
 // These tests pin its write behaviour for the delivery_* block:
-//  - an absent block CLEARS all seven columns to null, rather than omitting
-//    them from the payload (which would leave a previously stored address in
-//    place);
+//  - an absent block, WHEN THE BLOCK WAS OFFERED (deliveryBlockOffered
+//    present — a customer unticking a saved address), CLEARS all seven
+//    columns to null, rather than omitting them from the payload (which
+//    would leave a previously stored address in place);
 //  - a complete block writes the parsed values, with the country normalised
 //    to its ISO-2 code;
 //  - a partial or unsupported-country block rejects the WHOLE submission —
 //    `db.update` must never be called, and `updateData` must return
 //    `prevState` unchanged;
+//  - a PURE-RETURN pass — deliveryBlockOffered absent, because
+//    <DeliveryAddressFields> is only rendered for an exchange basket — OMITS
+//    all seven delivery_* keys from the payload entirely, rather than
+//    nulling them. Before this gate, every later pure-return pass through
+//    this same form silently wiped a paid-for delivery address, because
+//    `position` always restarts at 1 and a returning customer necessarily
+//    walks back through this step;
 //  - `shippingCountry` is never part of the payload, in any path.
 
 // `actions/updateOrder.ts` imports `db/queries.ts`, which wraps reads in
@@ -53,8 +61,17 @@ vi.mock("@/db/drizzle", () => {
 
 const PREV_STATE = 7;
 
-/** A base form covering the required shipping-address fields, plus whatever
- *  delivery_* overrides the test supplies. */
+/**
+ * A base form covering the required shipping-address fields, plus whatever
+ * delivery_* overrides the test supplies.
+ *
+ * Includes `deliveryBlockOffered` by default: every existing scenario below
+ * represents a pass where <DeliveryAddressFields> was actually rendered (an
+ * exchange basket), ticked or not — that marker is what secondWindowForm.tsx
+ * renders alongside it whenever the block is offered, independent of whether
+ * it is ticked. `withoutDeliveryBlockOffered` below is the one case that
+ * omits it: a PURE-RETURN pass, where the block never renders at all.
+ */
 function buildFormData(delivery: Record<string, string> = {}): FormData {
   const fd = new FormData();
   fd.set("id", "5678901234");
@@ -65,9 +82,18 @@ function buildFormData(delivery: Record<string, string> = {}): FormData {
   fd.set("city", "Madrid");
   fd.set("province", "Madrid");
   fd.set("phone", "600000000");
+  fd.set("deliveryBlockOffered", "1");
   for (const [key, value] of Object.entries(delivery)) {
     fd.set(key, value);
   }
+  return fd;
+}
+
+/** Same base form, but WITHOUT the marker — a pure-return pass, where
+ *  <DeliveryAddressFields> was never rendered and so never submitted it. */
+function buildFormDataWithoutDeliveryBlockOffered(): FormData {
+  const fd = buildFormData();
+  fd.delete("deliveryBlockOffered");
   return fd;
 }
 
@@ -160,6 +186,47 @@ describe("updateData — delivery address write behaviour", () => {
 
     expect(updates).toHaveLength(0);
     expect(result).toBe(PREV_STATE);
+  });
+
+  it("omits all seven delivery columns from the payload on a pure-return pass (no delivery block offered)", async () => {
+    // Reproduces the wipe scenario from the review finding: a customer paid
+    // for a split delivery address on an earlier exchange pass, then returns
+    // a SECOND garment. That basket is a pure return, so
+    // <DeliveryAddressFields> never renders, `deliveryBlockOffered` is never
+    // submitted, and this form submission carries no delivery_* fields at
+    // all — indistinguishable, by the OLD code, from unticking the box.
+    const { updateData } = await import("@/actions/updateOrder");
+    const result = await updateData(
+      PREV_STATE,
+      buildFormDataWithoutDeliveryBlockOffered()
+    );
+
+    expect(updates).toHaveLength(1);
+    const values = updates[0];
+
+    // Not "written as null" — genuinely ABSENT. A previously stored delivery
+    // address must survive this write untouched, and the only way `.set()`
+    // leaves a column alone is by never mentioning it.
+    for (const key of [
+      "deliveryName",
+      "deliveryAddress1",
+      "deliveryAddress2",
+      "deliveryZip",
+      "deliveryCity",
+      "deliveryProvince",
+      "deliveryCountry",
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(values, key)).toBe(false);
+    }
+
+    // The rest of the address form still writes normally — this gate is
+    // scoped to the delivery_* columns only.
+    expect(values).toMatchObject({
+      shippingName: "Ana Ruiz Garcia",
+      shippingAddress1: "Calle Mayor 12",
+    });
+
+    expect(result).toBe(PREV_STATE + 1);
   });
 
   it("never writes shippingCountry, on the clearing path or the complete path", async () => {

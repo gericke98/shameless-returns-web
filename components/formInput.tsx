@@ -16,6 +16,7 @@ interface FormInputProps {
   minLength?: number;
   maxLength?: number;
   placeholder?: string;
+  onChange?: (e: ChangeEvent<HTMLInputElement>) => void;
 }
 
 /**
@@ -32,6 +33,7 @@ export const FormInput = ({
   minLength,
   maxLength,
   placeholder,
+  onChange,
 }: FormInputProps) => {
   const [value, setValue] = useState<string>(valueini || "");
   const [error, setError] = useState<string>("");
@@ -40,6 +42,9 @@ export const FormInput = ({
     const newValue = e.target.value;
     setValue(newValue);
     validateInput(newValue);
+    // Optional: only the delivery fields need to drive a price elsewhere on
+    // the page. Called last so the input's own state is already settled.
+    onChange?.(e);
   };
 
   const validateInput = (inputValue: string) => {

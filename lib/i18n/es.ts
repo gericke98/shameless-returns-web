@@ -82,6 +82,14 @@ export const es = {
     province: "Provincia",
     country: "País",
     phone: "Teléfono",
+    // La dirección de entrega alternativa. Solo se muestra cuando hay un
+    // cambio: una devolución pura no tiene nada que entregar.
+    deliverElsewhere: "Enviar mi producto de cambio a otra dirección",
+    deliverElsewhereHint:
+      "Tu paquete se seguirá recogiendo en la dirección de arriba. Solo el producto de cambio se envía aquí, y el coste de envío se actualiza para ese país.",
+    deliveryCountry: "País de entrega",
+    deliveryIncomplete:
+      "Por favor, rellena todos los campos de entrega salvo los opcionales.",
   },
   third: {
     title: "Elige tu reembolso",

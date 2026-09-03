@@ -10,6 +10,9 @@ import { useFeeLegs } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
+import { DeliveryAddressFields } from "./deliveryAddressFields";
+import type { OrderAddressFields } from "@/lib/deliveryAddress";
+import { ACTIONS } from "@/placeholder";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -39,6 +42,18 @@ export const SecondWindowForm = ({
   // (lib/replacementPricing.ts). This used to be a hand-rolled copy of that
   // reduce; the two agreed, but nothing made them keep agreeing.
   const basket = valueBasket(items, allProducts);
+  // Only an exchange has a replacement to deliver. A pure return must not be
+  // offered a delivery address: there is nothing to send, and the outbound leg
+  // it would price is zero.
+  //
+  // ACTIONS.CHANGE, never the literal "CAMBIO" and never the dropdown's label:
+  // productsorder.action stores the stable code, and comparing against the
+  // localized text is what once made an English exchange save as a return.
+  // `!confirmed` matches the filter orderWindowContent already uses — a line
+  // already submitted on an earlier pass is not part of this basket.
+  const hasExchange = items.some(
+    (item) => item.action === ACTIONS.CHANGE && !item.confirmed
+  );
   const legs = useFeeLegs();
   const { feeCents } = resolveFee(legs, basket);
   const totalPrice = basket.netAmount - centsToEuros(feeCents);
@@ -125,6 +140,12 @@ export const SecondWindowForm = ({
         valueini={order.shippingPhone?.toString()}
         icon={false}
       />
+      {hasExchange && (
+        <>
+          <span className="border w-full border-gray-300 mt-2" />
+          <DeliveryAddressFields order={order as unknown as OrderAddressFields} />
+        </>
+      )}
       <span className="border w-full border-gray-300 mt-2" />
       <div className="rounded-lg">
         <SummaryComponent

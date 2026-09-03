@@ -12,6 +12,7 @@ import {
 import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
+import { parseDeliveryInput } from "@/lib/deliveryAddressInput";
 import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
@@ -49,6 +50,17 @@ type FormDataFields = {
   // No `country`: the destination country is never taken from the form. See
   // updateData below.
   phone?: string;
+  // The delivery block. Absent for almost every submission — see updateData.
+  deliveryName?: string;
+  deliveryAddress1?: string;
+  deliveryAddress2?: string;
+  deliveryZip?: string;
+  deliveryCity?: string;
+  deliveryProvince?: string;
+  // Unlike `country` above, this one IS read from the form. It sets the
+  // outbound leg's price, not the carrier lane, and parseDeliveryInput
+  // restricts it to SUPPORTED_COUNTRIES.
+  deliveryCountry?: string;
 };
 
 function parseFormData(formData: FormData): FormDataFields {
@@ -71,6 +83,13 @@ function parseFormData(formData: FormData): FormDataFields {
     city: formData.get("city")?.toString(),
     province: formData.get("province")?.toString(),
     phone: formData.get("phone")?.toString(),
+    deliveryName: formData.get("deliveryName")?.toString(),
+    deliveryAddress1: formData.get("deliveryAddress1")?.toString(),
+    deliveryAddress2: formData.get("deliveryAddress2")?.toString(),
+    deliveryZip: formData.get("deliveryZip")?.toString(),
+    deliveryCity: formData.get("deliveryCity")?.toString(),
+    deliveryProvince: formData.get("deliveryProvince")?.toString(),
+    deliveryCountry: formData.get("deliveryCountry")?.toString(),
   };
 }
 
@@ -177,6 +196,18 @@ export async function updateData(prevState: number, formData: FormData) {
     return prevState;
   }
 
+  // The delivery block is validated before anything is written, and a bad one
+  // rejects the WHOLE submission rather than being dropped: silently ignoring
+  // it would advance the customer to checkout believing their replacement is
+  // going somewhere it is not.
+  const delivery = parseDeliveryInput(data as Record<string, string | undefined>);
+  if (!delivery.ok) {
+    console.warn(
+      `updateData: rejected the delivery address on order ${data.orderId} (${delivery.reason})`
+    );
+    return prevState;
+  }
+
   // NOTE: `shippingCountry` is deliberately absent from this payload.
   //
   // The country decides which carrier books the return (Correos domestically,
@@ -199,6 +230,15 @@ export async function updateData(prevState: number, formData: FormData) {
       shippingCity: data.city,
       shippingProvince: data.province,
       shippingPhone: data.phone,
+      // Null when the customer did not ask for a separate address, which also
+      // CLEARS a previously stored one — unticking the box has to undo it.
+      deliveryName: delivery.value?.name ?? null,
+      deliveryAddress1: delivery.value?.address1 ?? null,
+      deliveryAddress2: delivery.value?.address2 ?? null,
+      deliveryZip: delivery.value?.zip ?? null,
+      deliveryCity: delivery.value?.city ?? null,
+      deliveryProvince: delivery.value?.province ?? null,
+      deliveryCountry: delivery.value?.country ?? null,
     })
     .where(eq(orders.id, data.orderId));
 

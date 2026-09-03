@@ -6,8 +6,8 @@ import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
-import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
+import { useFeeLegs } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 
@@ -39,8 +39,8 @@ export const SecondWindowForm = ({
   // (lib/replacementPricing.ts). This used to be a hand-rolled copy of that
   // reduce; the two agreed, but nothing made them keep agreeing.
   const basket = valueBasket(items, allProducts);
-  const fees = useFees();
-  const { feeCents } = resolveFee(sameZone(fees), basket);
+  const legs = useFeeLegs();
+  const { feeCents } = resolveFee(legs, basket);
   const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
   useEffect(() => {

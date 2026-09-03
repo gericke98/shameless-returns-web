@@ -4,8 +4,8 @@ import { FirstWindow } from "./firstWindow";
 import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 import { LastWindow } from "./lastWindow";
-import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee, sameZone, type FeeLegs } from "@/lib/fees";
+import { useFeeLegs } from "../feesContext";
+import { centsToEuros, resolveFee, type FeeLegs } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 
 // Valuation comes from lib/basket.ts — the same function payments.ts charges
@@ -39,10 +39,10 @@ export const OrderWindowContent = ({
   onItemChange,
   allProducts,
 }: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
-  const fees = useFees();
+  const legs = useFeeLegs();
   const { totalPrice } = useMemo(
-    () => calculatePrices(items, allProducts, sameZone(fees)),
-    [items, allProducts, fees]
+    () => calculatePrices(items, allProducts, legs),
+    [items, allProducts, legs]
   );
   const itemsToShow = useMemo(
     () => items.filter((item) => item.action && !item.confirmed),

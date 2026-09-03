@@ -26,6 +26,8 @@ import userEvent from "@testing-library/user-event";
 import { SummaryComponent } from "@/app/[id]/components/summary/summary";
 import { ProductLineClient } from "@/app/[id]/components/productLineClient";
 import { FeesProvider } from "@/app/[id]/feesContext";
+import type { FeeTable } from "@/lib/fees";
+import type { OrderAddressFields } from "@/lib/deliveryAddress";
 import { orderRatio, indexCatalogue, type PricedLine } from "@/lib/replacementPricing";
 import { en } from "@/lib/i18n/en";
 import type { Product } from "@/types";
@@ -138,13 +140,33 @@ const lineB = {
 
 const ITEMS = [lineA, lineB];
 
+// Empty table: feesForCountry falls back to the '*' row, which is absent, so
+// every leg resolves to []. Reproduces the old `fees={[]}` fixture exactly.
+const EMPTY_TABLE: FeeTable = {};
+const ORDER = {
+  shippingName: "Ana Ruiz",
+  shippingAddress1: "Calle Mayor 1",
+  shippingAddress2: null,
+  shippingZip: "28013",
+  shippingCity: "Madrid",
+  shippingProvince: "Madrid",
+  shippingCountry: "ES",
+  deliveryName: null,
+  deliveryAddress1: null,
+  deliveryAddress2: null,
+  deliveryZip: null,
+  deliveryCity: null,
+  deliveryProvince: null,
+  deliveryCountry: null,
+} satisfies OrderAddressFields;
+
 describe("summary and ProductLineClient agree on the median basis", () => {
   it("prices line A's replacement the same way in both surfaces: 70.00, not the raw 100.00 list price", async () => {
     // Surface 1: the summary/Stripe path. summary.tsx derives its own
     // fallbackRatio via orderRatio(items, index) internally, same as
     // valueBasket (and so createStripeUrl) does.
     const { container: summaryContainer } = render(
-      <FeesProvider fees={[]}>
+      <FeesProvider table={EMPTY_TABLE} order={ORDER}>
         <SummaryComponent
           items={ITEMS}
           shipping={false}

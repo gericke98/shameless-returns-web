@@ -5,8 +5,8 @@ import { Product } from "@/types";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
-import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
+import { useFeeLegs } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
@@ -47,7 +47,7 @@ const LastWindowBase = ({
   id,
   allProducts,
 }: Props) => {
-  const fees = useFees();
+  const legs = useFeeLegs();
   const t = useT();
   const locale = useLocale();
   const { finalTotal, returnLegCents } = useMemo(() => {
@@ -60,7 +60,7 @@ const LastWindowBase = ({
     // This previously used a Rule B variant keyed on action type, which
     // disagreed with the checkout total on a cheaper-item exchange.
     const { feeCents, returnLegCents, outboundLegCents } = resolveFee(
-      sameZone(fees),
+      legs,
       basket
     );
 
@@ -76,7 +76,7 @@ const LastWindowBase = ({
       finalTotal: credito ? totalPrice * 1.15 : totalPrice,
       returnLegCents,
     };
-  }, [allProducts, credito, items, fees, method]);
+  }, [allProducts, credito, items, legs, method]);
 
   // Same value SummaryComponent derives internally for its own cards, threaded
   // down to ProductLineClient so its "chosen replacement" card cannot show a

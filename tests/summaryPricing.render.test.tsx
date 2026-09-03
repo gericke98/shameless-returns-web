@@ -20,6 +20,8 @@ import { render, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SummaryComponent } from "@/app/[id]/components/summary/summary";
 import { FeesProvider } from "@/app/[id]/feesContext";
+import type { FeeTable } from "@/lib/fees";
+import type { OrderAddressFields } from "@/lib/deliveryAddress";
 import { en } from "@/lib/i18n/en";
 import type { Product } from "@/types";
 
@@ -158,10 +160,30 @@ const ITEMS = [
   },
 ] as never;
 
+// Empty table: feesForCountry falls back to the '*' row, which is absent, so
+// every leg resolves to []. Reproduces the old `fees={[]}` fixture exactly.
+const EMPTY_TABLE: FeeTable = {};
+const ORDER = {
+  shippingName: "Ana Ruiz",
+  shippingAddress1: "Calle Mayor 1",
+  shippingAddress2: null,
+  shippingZip: "28013",
+  shippingCity: "Madrid",
+  shippingProvince: "Madrid",
+  shippingCountry: "ES",
+  deliveryName: null,
+  deliveryAddress1: null,
+  deliveryAddress2: null,
+  deliveryZip: null,
+  deliveryCity: null,
+  deliveryProvince: null,
+  deliveryCountry: null,
+} satisfies OrderAddressFields;
+
 describe("SummaryComponent's exchange rows agree with replacementPricing", () => {
   it("renders the replacement's title AND its correctly-priced amount, not the catalogue's raw list price", async () => {
     const { container } = render(
-      <FeesProvider fees={[]}>
+      <FeesProvider table={EMPTY_TABLE} order={ORDER}>
         <SummaryComponent
           items={ITEMS}
           shipping={false}

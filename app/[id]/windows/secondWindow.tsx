@@ -10,8 +10,8 @@ import { SecondWindowForm } from "../components/secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
-import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
+import { useFeeLegs } from "../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { isInternationalOrder } from "@/lib/countries";
 import { useLocale, useT } from "@/lib/i18n/context";
@@ -44,13 +44,13 @@ const SecondWindowBase = ({
     () => valueBasket(items, allProducts),
     [allProducts, items]
   );
-  const fees = useFees();
+  const legs = useFeeLegs();
   // The legs are shown separately because this screen is about choosing a
   // RETURN METHOD. Only the return leg is the cost of the drop-off; the rest
   // is delivering the replacement, which happens whatever method is chosen.
   // Billing the combined figure against the method overstated it — an Italian
   // exchange read "Cost: 18.20 €" for a drop-off that costs 11.00 €.
-  const { returnLegCents, outboundLegCents } = resolveFee(sameZone(fees), basket);
+  const { returnLegCents, outboundLegCents } = resolveFee(legs, basket);
 
   // Spain drops the parcel at a Correos point; everything else is collected
   // from the customer's address through Amphora. Read from the stored

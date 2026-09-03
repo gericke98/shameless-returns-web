@@ -53,7 +53,8 @@ import { LastWindow } from "@/app/[id]/windows/lastWindow";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
 import { FeesProvider } from "@/app/[id]/feesContext";
 import type { ReturnMethod } from "@/lib/returnMethods";
-import type { CountryBands } from "@/lib/fees";
+import { DEFAULT_FEE_KEY, type CountryBands, type FeeTable } from "@/lib/fees";
+import type { OrderAddressFields } from "@/lib/deliveryAddress";
 import type { OrderItem } from "@/types";
 
 // One returnable item worth enough that the return leg costs money — the
@@ -92,6 +93,28 @@ const FEES: CountryBands = [
   { maxGrams: 2147483647, returnFeeCents: 500, exchangeFeeCents: 900 },
 ];
 
+// Only the '*' row is populated, and ORDER's country is not a key in TABLE,
+// so feesForCountry falls back to it for both legs -- reproducing the old
+// `sameZone(FEES)` fixture exactly, since there is no separate delivery
+// address either.
+const TABLE: FeeTable = { [DEFAULT_FEE_KEY]: FEES };
+const ORDER = {
+  shippingName: "Ana Ruiz",
+  shippingAddress1: "Calle Mayor 1",
+  shippingAddress2: null,
+  shippingZip: "28013",
+  shippingCity: "Madrid",
+  shippingProvince: "Madrid",
+  shippingCountry: "US",
+  deliveryName: null,
+  deliveryAddress1: null,
+  deliveryAddress2: null,
+  deliveryZip: null,
+  deliveryCity: null,
+  deliveryProvince: null,
+  deliveryCountry: null,
+} satisfies OrderAddressFields;
+
 /**
  * The slice of app/[id]/clientOrder.tsx that matters here: `method` state
  * held above both leaves, passed down as plain props — exactly how
@@ -100,7 +123,7 @@ const FEES: CountryBands = [
 function Harness() {
   const [method, setMethod] = useState<ReturnMethod>("CORREOS");
   return (
-    <FeesProvider fees={FEES}>
+    <FeesProvider table={TABLE} order={ORDER}>
       <LastWindow
         items={[ITEM]}
         position={4}

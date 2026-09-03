@@ -11,9 +11,9 @@ import RegaloWhite from "@/public/giftWhite.svg";
 import RegaloBlack from "@/public/giftBlack.svg";
 import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
-import { useFees } from "../feesContext";
+import { useFeeLegs } from "../feesContext";
 import { valueBasket } from "@/lib/basket";
-import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
 
@@ -172,7 +172,7 @@ const ThirdWindowBase = ({
   allProducts,
 }: Props) => {
   const [selected, setSelected] = useState<number>(0);
-  const fees = useFees();
+  const legs = useFeeLegs();
   const t = useT();
   const locale = useLocale();
 
@@ -187,14 +187,14 @@ const ThirdWindowBase = ({
   const totalPrice = useMemo(() => {
     const basket = valueBasket(items, allProducts);
     let result = basket.netAmount;
-    const { feeCents } = resolveFee(sameZone(fees), {
+    const { feeCents } = resolveFee(legs, {
       hasItems: basket.hasItems,
       netAmount: result,
       grams: basket.grams,
     });
     if (shipping) result -= centsToEuros(feeCents);
     return result;
-  }, [allProducts, items, shipping, fees]);
+  }, [allProducts, items, shipping, legs]);
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);

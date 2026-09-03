@@ -12,6 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ThirdWindow } from "@/app/[id]/windows/thirdWindow";
 import { FeesProvider } from "@/app/[id]/feesContext";
+import type { FeeTable } from "@/lib/fees";
+import type { OrderAddressFields } from "@/lib/deliveryAddress";
 import { valueBasket } from "@/lib/basket";
 import { en } from "@/lib/i18n/en";
 import type { OrderItem, Product } from "@/types";
@@ -103,6 +105,26 @@ const ITEMS: OrderItem[] = [
   }),
 ];
 
+// Empty table: feesForCountry falls back to the '*' row, which is absent, so
+// every leg resolves to []. Reproduces the old `fees={[]}` fixture exactly.
+const EMPTY_TABLE: FeeTable = {};
+const ORDER = {
+  shippingName: "Ana Ruiz",
+  shippingAddress1: "Calle Mayor 1",
+  shippingAddress2: null,
+  shippingZip: "28013",
+  shippingCity: "Madrid",
+  shippingProvince: "Madrid",
+  shippingCountry: "ES",
+  deliveryName: null,
+  deliveryAddress1: null,
+  deliveryAddress2: null,
+  deliveryZip: null,
+  deliveryCity: null,
+  deliveryProvince: null,
+  deliveryCountry: null,
+} satisfies OrderAddressFields;
+
 describe("ThirdWindow total agrees with valueBasket", () => {
   it("renders the shared valuation's netAmount, not the old inline copy's total", () => {
     const expected = valueBasket(ITEMS, CATALOGUE).netAmount;
@@ -113,7 +135,7 @@ describe("ThirdWindow total agrees with valueBasket", () => {
     expect(expected).toBeCloseTo(0, 2);
 
     render(
-      <FeesProvider fees={[]}>
+      <FeesProvider table={EMPTY_TABLE} order={ORDER}>
         <ThirdWindow
           items={ITEMS}
           shipping={false}

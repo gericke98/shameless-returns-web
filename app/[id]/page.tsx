@@ -2,9 +2,7 @@ import { getOrderById, getProduct, getProducts } from "@/db/queries";
 import { ClientOrder } from "./clientOrder";
 import { redirect } from "next/navigation";
 import { getFeeTable } from "@/db/fees";
-import { feesForCountry } from "@/lib/fees";
 import { normalizeCountry } from "@/lib/countries";
-import { resolveZone } from "@/lib/zones";
 import { FeesProvider } from "./feesContext";
 import { cookies } from "next/headers";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
@@ -76,10 +74,6 @@ export default async function OrderPage({ params }: OrderPageProps) {
   }
 
   const feeTable = await getFeeTable();
-  const fees = feesForCountry(
-    feeTable,
-    resolveZone(orderData.shippingCountry, orderData.shippingZip)
-  );
 
   const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
 
@@ -109,7 +103,7 @@ export default async function OrderPage({ params }: OrderPageProps) {
 
   return (
     <LocaleProvider locale={locale}>
-      <FeesProvider fees={fees}>
+      <FeesProvider table={feeTable} order={orderData as any}>
         <ClientOrder
           name={orderData.orderNumber}
           items={orderData.products}

@@ -11,8 +11,8 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { Product } from "@/types";
-import { useFees } from "../../feesContext";
-import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
+import { useFeeLegs } from "../../feesContext";
+import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import {
   indexCatalogue,
@@ -90,9 +90,9 @@ export const SummaryComponent = ({
   const totalPriceDevolver = basket.returnPrice;
   const totalPriceCambio = basket.exchangePrice;
 
-  const fees = useFees();
+  const legs = useFeeLegs();
   const { feeCents, returnLegCents, outboundLegCents } = resolveFee(
-    sameZone(fees),
+    legs,
     basket
   );
   // Mirror actions/payments.ts exactly: a self-booked return pays the outbound

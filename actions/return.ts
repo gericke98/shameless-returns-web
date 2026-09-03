@@ -13,7 +13,7 @@ import { getOrderById } from "@/db/queries";
 import { defaultMethodFor, resolveReturnMethod, type ReturnMethod } from "@/lib/returnMethods";
 import { getFeeTable } from "@/db/fees";
 import { loadBasket } from "@/lib/loadBasket";
-import { feesForCountry, resolveFee } from "@/lib/fees";
+import { feesForCountry, resolveFee, sameZone } from "@/lib/fees";
 import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "./opsAlert";
@@ -73,7 +73,7 @@ async function decideMethod(id: string, claimed: unknown): Promise<ReturnMethod>
     feeTable,
     resolveZone(order.shippingCountry, order.shippingZip)
   );
-  const { returnLegCents } = resolveFee(fees, basket);
+  const { returnLegCents } = resolveFee(sameZone(fees), basket);
 
   return resolveReturnMethod(claimed, order.shippingCountry, amphoraEnabled, returnLegCents);
 }

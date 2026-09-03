@@ -6,7 +6,7 @@ import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
+import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
@@ -60,7 +60,7 @@ const LastWindowBase = ({
     // This previously used a Rule B variant keyed on action type, which
     // disagreed with the checkout total on a cheaper-item exchange.
     const { feeCents, returnLegCents, outboundLegCents } = resolveFee(
-      fees,
+      sameZone(fees),
       basket
     );
 

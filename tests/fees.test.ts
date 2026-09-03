@@ -7,6 +7,7 @@ import {
   feesForWeight,
   checkoutLines,
   resolveFee,
+  sameZone,
   type FeeTable,
 } from "@/lib/fees";
 import { FALLBACK_ITEM_GRAMS, valueBasket } from "@/lib/basket";
@@ -116,28 +117,28 @@ describe("resolveFee — Rule A, by net amount", () => {
   const es = TABLE.ES;
 
   it("charges nothing for an empty basket", () => {
-    expect(resolveFee(es, { hasItems: false, netAmount: 0, grams: 0 })).toMatchObject({
+    expect(resolveFee(sameZone(es), { hasItems: false, netAmount: 0, grams: 0 })).toMatchObject({
       feeCents: 0,
       kind: "none",
     });
   });
 
   it("charges the return fee when money flows back to the customer", () => {
-    expect(resolveFee(es, { hasItems: true, netAmount: 42.5, grams: 0 })).toMatchObject({
+    expect(resolveFee(sameZone(es), { hasItems: true, netAmount: 42.5, grams: 0 })).toMatchObject({
       feeCents: 400,
       kind: "return",
     });
   });
 
   it("charges the exchange fee when the customer owes money", () => {
-    expect(resolveFee(es, { hasItems: true, netAmount: -12, grams: 0 })).toMatchObject({
+    expect(resolveFee(sameZone(es), { hasItems: true, netAmount: -12, grams: 0 })).toMatchObject({
       feeCents: 0,
       kind: "exchange",
     });
   });
 
   it("charges the exchange fee on an even swap", () => {
-    expect(resolveFee(TABLE.FR, { hasItems: true, netAmount: 0, grams: 0 })).toMatchObject({
+    expect(resolveFee(sameZone(TABLE.FR), { hasItems: true, netAmount: 0, grams: 0 })).toMatchObject({
       feeCents: 600,
       kind: "exchange",
     });
@@ -147,14 +148,14 @@ describe("resolveFee — Rule A, by net amount", () => {
   // a pure exchange for a CHEAPER item leaves netAmount > 0, so Rule A
   // charges the return fee. Rule B charged the exchange fee here.
   it("charges the return fee on an exchange for a cheaper item", () => {
-    expect(resolveFee(TABLE.FR, { hasItems: true, netAmount: 5, grams: 0 })).toMatchObject({
+    expect(resolveFee(sameZone(TABLE.FR), { hasItems: true, netAmount: 5, grams: 0 })).toMatchObject({
       feeCents: 900,
       kind: "return",
     });
   });
 
   it("ignores netAmount entirely when the basket is empty", () => {
-    expect(resolveFee(TABLE.FR, { hasItems: false, netAmount: 99, grams: 0 })).toMatchObject({
+    expect(resolveFee(sameZone(TABLE.FR), { hasItems: false, netAmount: 99, grams: 0 })).toMatchObject({
       feeCents: 0,
       kind: "none",
     });
@@ -169,14 +170,14 @@ describe("resolveFee — Rule A, by net amount", () => {
     ];
 
     it("charges the heavier band's return fee for a heavy basket", () => {
-      expect(resolveFee(BANDED, { hasItems: true, netAmount: 50, grams: 2500 })).toMatchObject({
+      expect(resolveFee(sameZone(BANDED), { hasItems: true, netAmount: 50, grams: 2500 })).toMatchObject({
         feeCents: 2100,
         kind: "return",
       });
     });
 
     it("charges the heavier band's exchange fee for a heavy even swap", () => {
-      expect(resolveFee(BANDED, { hasItems: true, netAmount: 0, grams: 2500 })).toMatchObject({
+      expect(resolveFee(sameZone(BANDED), { hasItems: true, netAmount: 0, grams: 2500 })).toMatchObject({
         feeCents: 2000,
         kind: "exchange",
       });
@@ -185,8 +186,8 @@ describe("resolveFee — Rule A, by net amount", () => {
     it("keeps weight and Rule A independent", () => {
       // Same weight, opposite sign: the band is identical, only the fee
       // within it differs.
-      const heavyReturn = resolveFee(BANDED, { hasItems: true, netAmount: 1, grams: 5000 });
-      const heavyExchange = resolveFee(BANDED, { hasItems: true, netAmount: -1, grams: 5000 });
+      const heavyReturn = resolveFee(sameZone(BANDED), { hasItems: true, netAmount: 1, grams: 5000 });
+      const heavyExchange = resolveFee(sameZone(BANDED), { hasItems: true, netAmount: -1, grams: 5000 });
       expect(heavyReturn.kind).toBe("return");
       expect(heavyExchange.kind).toBe("exchange");
       expect(heavyReturn.feeCents).toBe(2100);
@@ -194,7 +195,7 @@ describe("resolveFee — Rule A, by net amount", () => {
     });
 
     it("still charges nothing for an empty basket however heavy", () => {
-      expect(resolveFee(BANDED, { hasItems: false, netAmount: 0, grams: 9999 })).toMatchObject({
+      expect(resolveFee(sameZone(BANDED), { hasItems: false, netAmount: 0, grams: 9999 })).toMatchObject({
         feeCents: 0,
         kind: "none",
         returnLegCents: 0,
@@ -212,7 +213,7 @@ describe("resolveFee — Rule A, by net amount", () => {
     ];
 
     it("reports one leg for a return", () => {
-      const fee = resolveFee(BANDS, { hasItems: true, netAmount: 40, grams: 400 });
+      const fee = resolveFee(sameZone(BANDS), { hasItems: true, netAmount: 40, grams: 400 });
       expect(fee).toMatchObject({
         kind: "return",
         feeCents: 1100,
@@ -222,7 +223,7 @@ describe("resolveFee — Rule A, by net amount", () => {
     });
 
     it("splits an exchange into the parcel back and the replacement out", () => {
-      const fee = resolveFee(BANDS, { hasItems: true, netAmount: -5, grams: 400 });
+      const fee = resolveFee(sameZone(BANDS), { hasItems: true, netAmount: -5, grams: 400 });
       expect(fee).toMatchObject({
         kind: "exchange",
         feeCents: 1820,
@@ -236,7 +237,7 @@ describe("resolveFee — Rule A, by net amount", () => {
       // breakdown is lying about the total.
       for (const netAmount of [50, 0, -50]) {
         for (const grams of [0, 500, 4000]) {
-          const fee = resolveFee(BANDS, { hasItems: true, netAmount, grams });
+          const fee = resolveFee(sameZone(BANDS), { hasItems: true, netAmount, grams });
           expect(fee.returnLegCents + fee.outboundLegCents).toBe(fee.feeCents);
         }
       }
@@ -249,11 +250,79 @@ describe("resolveFee — Rule A, by net amount", () => {
       const inverted = [
         { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 1100, exchangeFeeCents: 900 },
       ];
-      const fee = resolveFee(inverted, { hasItems: true, netAmount: -5, grams: 400 });
+      const fee = resolveFee(sameZone(inverted), { hasItems: true, netAmount: -5, grams: 400 });
       expect(fee.outboundLegCents).toBe(0);
       expect(fee.returnLegCents).toBe(900);
       expect(fee.returnLegCents + fee.outboundLegCents).toBe(fee.feeCents);
     });
+  });
+});
+
+describe("resolveFee — split legs", () => {
+  // The real tariff rows for a 1 kg parcel (data/return-tariff.csv).
+  const ES = [{ maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 500, exchangeFeeCents: 850 }];
+  const US = [{ maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 2200, exchangeFeeCents: 3496 }];
+
+  it("prices the return leg from the collection zone and the outbound leg from the delivery zone", () => {
+    // Collected in Spain, replacement delivered to the US.
+    expect(
+      resolveFee({ collection: ES, delivery: US }, { hasItems: true, netAmount: 0, grams: 500 })
+    ).toEqual({
+      feeCents: 1796,
+      kind: "exchange",
+      returnLegCents: 500,
+      outboundLegCents: 1296,
+    });
+  });
+
+  it("is unchanged from the single-zone result when both zones are the same", () => {
+    const legs = { collection: ES, delivery: ES };
+    expect(resolveFee(legs, { hasItems: true, netAmount: 0, grams: 500 })).toEqual({
+      feeCents: 850,
+      kind: "exchange",
+      returnLegCents: 500,
+      outboundLegCents: 350,
+    });
+  });
+
+  it("ignores the delivery zone entirely for a pure return", () => {
+    // netAmount > 0 is a return: there is no replacement to deliver, so an
+    // expensive delivery zone must not raise the price.
+    const cheap = resolveFee({ collection: ES, delivery: ES }, { hasItems: true, netAmount: 40, grams: 500 });
+    const dear = resolveFee({ collection: ES, delivery: US }, { hasItems: true, netAmount: 40, grams: 500 });
+    expect(dear).toEqual(cheap);
+    expect(dear.outboundLegCents).toBe(0);
+  });
+
+  it("selects each leg's weight band from its own zone", () => {
+    // A 2.5 kg parcel: ES stays in its heavy band, US in its own.
+    const esBands = [
+      { maxGrams: 1000, returnFeeCents: 500, exchangeFeeCents: 850 },
+      { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 900, exchangeFeeCents: 1250 },
+    ];
+    const usBands = [
+      { maxGrams: 1000, returnFeeCents: 2200, exchangeFeeCents: 3496 },
+      { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 13800, exchangeFeeCents: 15096 },
+    ];
+    expect(
+      resolveFee({ collection: esBands, delivery: usBands }, { hasItems: true, netAmount: 0, grams: 2500 })
+    ).toMatchObject({ returnLegCents: 900, outboundLegCents: 1296 });
+  });
+
+  it("clamps a delivery zone whose exchange fee is below its return fee", () => {
+    // Not reachable from the seeded tariff, which asserts exchange > return,
+    // but a hand-edited row must not produce a negative leg.
+    const broken = [{ maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 900, exchangeFeeCents: 600 }];
+    expect(
+      resolveFee({ collection: ES, delivery: broken }, { hasItems: true, netAmount: 0, grams: 0 })
+    ).toMatchObject({ outboundLegCents: 0, returnLegCents: 500, feeCents: 500 });
+  });
+});
+
+describe("sameZone", () => {
+  it("puts one band list on both legs", () => {
+    const bands = TABLE.FR;
+    expect(sameZone(bands)).toEqual({ collection: bands, delivery: bands });
   });
 });
 

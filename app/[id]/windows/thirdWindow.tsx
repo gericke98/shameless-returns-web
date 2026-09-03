@@ -13,7 +13,7 @@ import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
 import { useFees } from "../feesContext";
 import { valueBasket } from "@/lib/basket";
-import { centsToEuros, resolveFee } from "@/lib/fees";
+import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
 
@@ -187,7 +187,7 @@ const ThirdWindowBase = ({
   const totalPrice = useMemo(() => {
     const basket = valueBasket(items, allProducts);
     let result = basket.netAmount;
-    const { feeCents } = resolveFee(fees, {
+    const { feeCents } = resolveFee(sameZone(fees), {
       hasItems: basket.hasItems,
       netAmount: result,
       grams: basket.grams,

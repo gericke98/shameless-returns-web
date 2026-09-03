@@ -40,7 +40,7 @@ import {
   replacementPriceForVariant,
   type PricedLine,
 } from "@/lib/replacementPricing";
-import { feesForCountry, feesForWeight, resolveFee, centsToEuros } from "@/lib/fees";
+import { feesForCountry, feesForWeight, resolveFee, sameZone, centsToEuros } from "@/lib/fees";
 import { resolveZone } from "@/lib/zones";
 import { defaultMethodFor, selfBookingOffered } from "@/lib/returnMethods";
 import type { OrderItem, Product } from "@/types";
@@ -297,7 +297,7 @@ async function main() {
   const bands = feesForCountry(table, zone);
   console.log(`  bands for zone "${zone}": ${JSON.stringify(bands)}`);
 
-  const { feeCents, kind, returnLegCents, outboundLegCents } = resolveFee(bands, result);
+  const { feeCents, kind, returnLegCents, outboundLegCents } = resolveFee(sameZone(bands), result);
   console.log(
     `  resolveFee(grams=${result.grams}, netAmount=${result.netAmount}) => ` +
       `kind=${kind}  feeCents=${feeCents}  returnLegCents=${returnLegCents}  outboundLegCents=${outboundLegCents}`

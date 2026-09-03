@@ -11,7 +11,7 @@ import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import { useFees } from "../feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
+import { centsToEuros, resolveFee, sameZone } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { isInternationalOrder } from "@/lib/countries";
 import { useLocale, useT } from "@/lib/i18n/context";
@@ -50,7 +50,7 @@ const SecondWindowBase = ({
   // is delivering the replacement, which happens whatever method is chosen.
   // Billing the combined figure against the method overstated it — an Italian
   // exchange read "Cost: 18.20 €" for a drop-off that costs 11.00 €.
-  const { returnLegCents, outboundLegCents } = resolveFee(fees, basket);
+  const { returnLegCents, outboundLegCents } = resolveFee(sameZone(fees), basket);
 
   // Spain drops the parcel at a Correos point; everything else is collected
   // from the customer's address through Amphora. Read from the stored

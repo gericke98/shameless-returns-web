@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { valueBasket } from "@/lib/basket";
-import { resolveFee, UNBOUNDED_MAX_GRAMS, type CountryBands } from "@/lib/fees";
+import { resolveFee, sameZone, UNBOUNDED_MAX_GRAMS, type CountryBands } from "@/lib/fees";
 import { calculatePriceWithDiscount } from "@/utils/order-utils";
 import type { OrderItem, OrderLineItem, Product } from "@/types";
 
@@ -92,7 +92,7 @@ describe("valueBasket returnPrice rounding — the fee-lane flip (F1)", () => {
     const bands: CountryBands = [
       { maxGrams: UNBOUNDED_MAX_GRAMS, returnFeeCents: 600, exchangeFeeCents: 950 },
     ];
-    const fee = resolveFee(bands, basket);
+    const fee = resolveFee(sameZone(bands), basket);
 
     // The bug: netAmount landed a fraction of a cent ABOVE zero, so Rule A
     // ("netAmount > 0" => return) picked the return lane (feeCents 600,

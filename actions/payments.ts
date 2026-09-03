@@ -12,6 +12,7 @@ import {
   checkoutLines,
   feesForCountry,
   resolveFee,
+  sameZone,
   type CheckoutLine,
 } from "@/lib/fees";
 import { dictionaries, readLocale } from "@/lib/i18n";
@@ -57,7 +58,7 @@ export const createStripeUrl = async (
     feeTable,
     resolveZone(order.shippingCountry, order.shippingZip)
   );
-  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(fees, basket);
+  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(sameZone(fees), basket);
 
   // A self-booked return pays its own courier, so we bill the outbound leg
   // alone — the replacement garment still travels on our account. This is the

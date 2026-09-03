@@ -167,11 +167,18 @@ const ORDERS: Record<string, any> = {
   },
 };
 
-const state: { returns: any[]; listThrows: boolean; dbThrows: boolean; failIds: string[] } = {
+const state: {
+  returns: any[];
+  listThrows: boolean;
+  dbThrows: boolean;
+  failIds: string[];
+  sweepThrows: boolean;
+} = {
   returns: [OURS, RECREATED, THEIRS, UNKNOWN],
   listThrows: false,
   dbThrows: false,
   failIds: [],
+  sweepThrows: false,
 };
 const applied: any[] = [];
 
@@ -220,7 +227,10 @@ vi.mock("@/db/queries", () => ({
 // only needs to not pull in the real db connection, since this file mocks
 // none of `@/db/drizzle`.
 vi.mock("@/actions/selfReturnSweep", () => ({
-  sweepSelfReturns: async () => ({ reminded: 0, alerted: 0 }),
+  sweepSelfReturns: async () => {
+    if (state.sweepThrows) throw new Error('column "delivery_name" does not exist');
+    return { reminded: 0, alerted: 0 };
+  },
 }));
 
 const alerts: Array<{ subject: string; body: string }> = [];
@@ -242,6 +252,7 @@ beforeEach(() => {
   state.listThrows = false;
   state.dbThrows = false;
   state.failIds = [];
+  state.sweepThrows = false;
   ORDERS["13150000000000"].products = [{ id: "p5", confirmed: false }];
   // The lane is per-test; anything but SELF behaves as it did before
   // self-booking existed.
@@ -483,5 +494,53 @@ describe("amphora-sync cron — total failure is not silent", () => {
 
     expect(res.status).toBe(200);
     expect(alerts).toHaveLength(0);
+  });
+});
+
+// The sweep is the other half of this cron, and on 2026-09-03 it failed on
+// every single run alongside the poll — `[amphora-sync] self-return sweep
+// failed: column "delivery_name" does not exist` — with nothing but a
+// console.error to show for it. A healthy poll with a broken sweep is the case
+// the total-failure alert above cannot see at all.
+describe("amphora-sync cron — the self-return sweep is not silent either", () => {
+  it("emails ops when the sweep throws, even though the poll succeeded", async () => {
+    state.sweepThrows = true;
+
+    const res = await call({ authorization: "Bearer s3cret" });
+    const body = await res.json();
+
+    // The poll's own results must survive a sweep failure — that is why the
+    // sweep is wrapped separately — so this still reports a normal run.
+    expect(res.status).toBe(200);
+    expect(body.scanned).toBe(2);
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].subject).toContain("SELF-RETURN SWEEP FAILED");
+    expect(alerts[0].body).toContain("delivery_name");
+  });
+
+  it("does not alert about the sweep when it succeeds", async () => {
+    const res = await call({ authorization: "Bearer s3cret" });
+
+    expect(res.status).toBe(200);
+    expect(alerts).toHaveLength(0);
+  });
+});
+
+// The floor was set to 3 so a single bad row could not page every 15 minutes.
+// But "every return we touched failed" is already the systemic signal — a quiet
+// window with two international returns, both failing, is still a sync that did
+// nothing, and staying silent there is the exact gap that cost 15 hours.
+describe("amphora-sync cron — total failure alerts regardless of volume", () => {
+  it("alerts when both of only two returns fail", async () => {
+    state.returns = [OURS, RECREATED];
+    state.dbThrows = true;
+
+    const res = await call({ authorization: "Bearer s3cret" });
+
+    expect(res.status).toBe(200);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].subject).toContain("AMPHORA SYNC FAILING");
+    expect(alerts[0].subject).toContain("2/2");
   });
 });

@@ -13,8 +13,8 @@ import { getOrderById } from "@/db/queries";
 import { defaultMethodFor, resolveReturnMethod, type ReturnMethod } from "@/lib/returnMethods";
 import { getFeeTable } from "@/db/fees";
 import { loadBasket } from "@/lib/loadBasket";
-import { feesForCountry, resolveFee, sameZone } from "@/lib/fees";
-import { resolveZone } from "@/lib/zones";
+import { resolveFee } from "@/lib/fees";
+import { feeLegsForOrder } from "@/lib/feeLegs";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "./opsAlert";
 import { createInternationalReturn } from "./amphoraReturn";
@@ -69,11 +69,13 @@ async function decideMethod(id: string, claimed: unknown): Promise<ReturnMethod>
 
   const { order, basket } = loaded;
   const feeTable = await getFeeTable();
-  const fees = feesForCountry(
-    feeTable,
-    resolveZone(order.shippingCountry, order.shippingZip)
-  );
-  const { returnLegCents } = resolveFee(sameZone(fees), basket);
+  // Only `returnLegCents` is read here — the return method is a decision about
+  // the parcel coming back, not about where the replacement goes — but the real
+  // legs are passed rather than sameZone so that a later reader of
+  // `outboundLegCents` on this path gets the truth rather than a plausible
+  // wrong number.
+  const legs = feeLegsForOrder(feeTable, order);
+  const { returnLegCents } = resolveFee(legs, basket);
 
   return resolveReturnMethod(claimed, order.shippingCountry, amphoraEnabled, returnLegCents);
 }

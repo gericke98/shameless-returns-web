@@ -104,7 +104,7 @@ import { inArray, type InferSelectModel } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders, productsOrder, shippingFees } from "@/db/schema";
 import { FALLBACK_ITEM_GRAMS } from "@/lib/basket";
-import { feesForCountry, resolveFee, type FeeBand, type FeeTable } from "@/lib/fees";
+import { feesForCountry, resolveFee, sameZone, type FeeBand, type FeeTable } from "@/lib/fees";
 import { indexCatalogue } from "@/lib/replacementPricing";
 import { resolveZone } from "@/lib/zones";
 import {
@@ -437,7 +437,7 @@ async function classifyCandidate(orderId: string, ctx: ClassifyContext): Promise
     }
   } else {
     const bands = feesForCountry(ctx.feeTable, zone);
-    const fee = resolveFee(bands, basket);
+    const fee = resolveFee(sameZone(bands), basket);
     const residual = classifyResidual(bundledCents, fee.feeCents);
     status = residual.status;
     if (status === "reconstructed") reconstructedResidualCents = residual.residualCents;

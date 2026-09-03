@@ -81,6 +81,14 @@ export const en: Dictionary = {
     province: "Province",
     country: "Country",
     phone: "Phone",
+    // The alternate delivery address. Shown only when the basket contains an
+    // exchange — a pure return has no replacement to deliver.
+    deliverElsewhere: "Deliver my replacement to a different address",
+    deliverElsewhereHint:
+      "Your parcel is still collected from the address above. Only the replacement goes here, and the delivery cost is updated for that country.",
+    deliveryCountry: "Delivery country",
+    deliveryCountryPlaceholder: "Select a country",
+    deliveryIncomplete: "Please fill in every delivery field except the optional ones.",
   },
   third: {
     title: "Choose your refund",

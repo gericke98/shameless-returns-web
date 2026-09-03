@@ -4,16 +4,15 @@ import { stripe } from "@/lib/stripe";
 import { getFeeTable } from "@/db/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { normalizeCountry } from "@/lib/countries";
-import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "@/actions/opsAlert";
 import {
   centsToEuros,
   checkoutLines,
-  feesForCountry,
   resolveFee,
   type CheckoutLine,
 } from "@/lib/fees";
+import { feeLegsForOrder } from "@/lib/feeLegs";
 import { dictionaries, readLocale } from "@/lib/i18n";
 import type { ReturnMethod } from "@/lib/returnMethods";
 
@@ -53,11 +52,13 @@ export const createStripeUrl = async (
   const { order, basket } = loaded;
 
   const feeTable = await getFeeTable();
-  const fees = feesForCountry(
-    feeTable,
-    resolveZone(order.shippingCountry, order.shippingZip)
-  );
-  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(fees, basket);
+  // Two legs, two zones. The parcel is collected from `order.shipping*` and the
+  // replacement is delivered to the delivery address, which is the same place
+  // unless the customer named a different one. Before this, both were priced
+  // from the collection country: a Spain-collected exchange delivered to the
+  // US was charged Spain's 8.50 for a journey costing 5.00 + 12.96.
+  const legs = feeLegsForOrder(feeTable, order);
+  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(legs, basket);
 
   // A self-booked return pays its own courier, so we bill the outbound leg
   // alone — the replacement garment still travels on our account. This is the

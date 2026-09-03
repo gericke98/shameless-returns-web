@@ -12,6 +12,7 @@ import {
 import { getFeeTable } from "@/db/fees";
 import { orders, productsOrder } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
+import { parseDeliveryInput } from "@/lib/deliveryAddressInput";
 import { resolveZone } from "@/lib/zones";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
@@ -49,6 +50,24 @@ type FormDataFields = {
   // No `country`: the destination country is never taken from the form. See
   // updateData below.
   phone?: string;
+  // The delivery block. Absent for almost every submission — see updateData.
+  deliveryName?: string;
+  deliveryAddress1?: string;
+  deliveryAddress2?: string;
+  deliveryZip?: string;
+  deliveryCity?: string;
+  deliveryProvince?: string;
+  // Unlike `country` above, this one IS read from the form. It sets the
+  // outbound leg's price, not the carrier lane, and parseDeliveryInput
+  // restricts it to SUPPORTED_COUNTRIES.
+  deliveryCountry?: string;
+  // A hidden marker rendered alongside <DeliveryAddressFields> whenever that
+  // block is OFFERED — i.e. whenever the basket contains an exchange — not
+  // only when it is ticked. See updateData: this is what tells the write path
+  // apart a customer unticking a saved address (marker present, fields
+  // absent — clear it) from a pure-return pass that never rendered the block
+  // at all (marker absent — leave a previously paid-for address alone).
+  deliveryBlockOffered?: string;
 };
 
 function parseFormData(formData: FormData): FormDataFields {
@@ -71,6 +90,14 @@ function parseFormData(formData: FormData): FormDataFields {
     city: formData.get("city")?.toString(),
     province: formData.get("province")?.toString(),
     phone: formData.get("phone")?.toString(),
+    deliveryName: formData.get("deliveryName")?.toString(),
+    deliveryAddress1: formData.get("deliveryAddress1")?.toString(),
+    deliveryAddress2: formData.get("deliveryAddress2")?.toString(),
+    deliveryZip: formData.get("deliveryZip")?.toString(),
+    deliveryCity: formData.get("deliveryCity")?.toString(),
+    deliveryProvince: formData.get("deliveryProvince")?.toString(),
+    deliveryCountry: formData.get("deliveryCountry")?.toString(),
+    deliveryBlockOffered: formData.get("deliveryBlockOffered")?.toString(),
   };
 }
 
@@ -177,6 +204,18 @@ export async function updateData(prevState: number, formData: FormData) {
     return prevState;
   }
 
+  // The delivery block is validated before anything is written, and a bad one
+  // rejects the WHOLE submission rather than being dropped: silently ignoring
+  // it would advance the customer to checkout believing their replacement is
+  // going somewhere it is not.
+  const delivery = parseDeliveryInput(data as Record<string, string | undefined>);
+  if (!delivery.ok) {
+    console.warn(
+      `updateData: rejected the delivery address on order ${data.orderId} (${delivery.reason})`
+    );
+    return prevState;
+  }
+
   // NOTE: `shippingCountry` is deliberately absent from this payload.
   //
   // The country decides which carrier books the return (Correos domestically,
@@ -189,6 +228,39 @@ export async function updateData(prevState: number, formData: FormData) {
   // not in SUPPORTED_COUNTRIES had the <select> pre-select España and, on
   // Continue, overwrote the real destination with "ES" — which then booked a
   // domestic label for a foreign address and charged the cheaper ES fee.
+  // <DeliveryAddressFields> is only rendered — offered at all, ticked or not
+  // — when the basket contains an exchange (secondWindowForm.tsx). A pure
+  // return never renders it and so never submits `deliveryBlockOffered`.
+  //
+  // Without this gate, `updateData` used to write all seven delivery_*
+  // columns unconditionally, nulling them whenever the block was absent from
+  // the submission. That is correct for unticking a previously-ticked box
+  // (the marker is still present; the fields are not), but it also fired on
+  // every later PURE-RETURN pass through this same form — silently wiping a
+  // paid-for delivery address days after the customer paid the split fee for
+  // it, with no alert and no trace. `position` always restarts at 1, so a
+  // customer returning a second garment necessarily walks back through this
+  // step.
+  //
+  // Gating the seven columns on the marker means: block offered + unticked
+  // -> marker present, fields absent -> nulls (still clears, as before).
+  // Block never offered (pure return) -> marker absent -> columns omitted
+  // from the payload entirely, leaving a stored address untouched.
+  const deliveryColumns = data.deliveryBlockOffered
+    ? {
+        // Null when the customer did not ask for a separate address, which
+        // also CLEARS a previously stored one — unticking the box has to
+        // undo it.
+        deliveryName: delivery.value?.name ?? null,
+        deliveryAddress1: delivery.value?.address1 ?? null,
+        deliveryAddress2: delivery.value?.address2 ?? null,
+        deliveryZip: delivery.value?.zip ?? null,
+        deliveryCity: delivery.value?.city ?? null,
+        deliveryProvince: delivery.value?.province ?? null,
+        deliveryCountry: delivery.value?.country ?? null,
+      }
+    : {};
+
   await db
     .update(orders)
     .set({
@@ -199,6 +271,7 @@ export async function updateData(prevState: number, formData: FormData) {
       shippingCity: data.city,
       shippingProvince: data.province,
       shippingPhone: data.phone,
+      ...deliveryColumns,
     })
     .where(eq(orders.id, data.orderId));
 

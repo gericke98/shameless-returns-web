@@ -8,6 +8,7 @@ import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
 import { normalizeCountry } from "@/lib/countries";
 import { alertOps } from "@/actions/opsAlert";
+import { deliveryAddressOf } from "@/lib/deliveryAddress";
 
 const createSession = (): RequestInit => {
   if (
@@ -556,6 +557,11 @@ export async function createOrder(order: any, products: any[]) {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
 
+  // The billing address stays with the collection address — that is where the
+  // customer lives and where they were billed originally. Only the SHIPPING
+  // address follows the replacement, which may be another country entirely.
+  const delivery = deliveryAddressOf(order);
+
   // The customer's OWN country, not the shop's.
   //
   // This was hardcoded to "ES" in both addresses below. We store the country as
@@ -566,20 +572,22 @@ export async function createOrder(order: any, products: any[]) {
   //
   // The zips were never wrong. A four-digit Belgian zip filed under Spain just
   // READS as a broken Spanish postcode, which is why this looked like a zip bug.
-  const countryCode = normalizeCountry(order.shippingCountry);
-  if (!countryCode) {
+  const countryCode = normalizeCountry(delivery.country);
+  const billingCountryCode = normalizeCountry(order.shippingCountry);
+  if (!countryCode || !billingCountryCode) {
     // Refuse rather than guess. Defaulting to the shop's own country is exactly
     // what shipped those four parcels to Spain, and a parcel sent to the wrong
     // nation is worse than an exchange that visibly did not happen: returning
     // failure leaves the line unsettled and still visible in the dashboard.
     console.error(
-      `createOrder: cannot resolve country ${JSON.stringify(order.shippingCountry)} for order ${order.orderNumber} — refusing to create the exchange`
+      `createOrder: cannot resolve country (delivery ${JSON.stringify(delivery.country)}, billing ${JSON.stringify(order.shippingCountry)}) for order ${order.orderNumber} — refusing to create the exchange`
     );
     await alertOps(
       `[returns] EXCHANGE NOT CREATED — unresolvable country on ${order.orderNumber}`,
       [
         `The exchange order for ${order.orderNumber} was not created because we could not resolve its country to an ISO-2 code.`,
-        `Stored country: ${JSON.stringify(order.shippingCountry)}`,
+        `Delivery country: ${JSON.stringify(delivery.country)}`,
+        `Billing country:  ${JSON.stringify(order.shippingCountry)}`,
         `Nothing was charged and no parcel was booked. The return line is still unsettled in the dashboard.`,
         `Fix by correcting the country on the order, or by adding it to lib/countries.ts, then settling the return again.`,
       ].join("\n")
@@ -592,8 +600,21 @@ export async function createOrder(order: any, products: any[]) {
   // the province field blank the city was passed in instead, so order #311687
   // sent "Woluwe-Saint-Pierre" — a Belgian city — as a province code. Omit the
   // field abroad rather than send a value we cannot map.
+  //
+  // Both halves read the DELIVERY address, and they must move together: testing
+  // the delivery country against the collection city would reintroduce that bug
+  // from the other side.
   const provinceCode =
     countryCode === "ES"
+      ? delivery.province
+        ? getProvinceCode(delivery.province)
+        : getProvinceCode(delivery.city)
+      : undefined;
+
+  // Same rule, applied independently to the billing address, which does not
+  // move.
+  const billingProvinceCode =
+    billingCountryCode === "ES"
       ? order.shippingProvince
         ? getProvinceCode(order.shippingProvince)
         : getProvinceCode(order.shippingCity)
@@ -641,11 +662,11 @@ export async function createOrder(order: any, products: any[]) {
         address1: order.shippingAddress1,
         address2: order.shippingAddress2 || "",
         city: order.shippingCity,
-        countryCode,
+        countryCode: billingCountryCode,
         firstName: order.shippingName || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
-        provinceCode: provinceCode,
+        provinceCode: billingProvinceCode,
         zip: order.shippingZip,
       },
       buyerAcceptsMarketing: true,
@@ -659,15 +680,15 @@ export async function createOrder(order: any, products: any[]) {
       })),
       note: `Exchange order for ${order.orderNumber}`,
       shippingAddress: {
-        address1: order.shippingAddress1,
-        address2: order.shippingAddress2 || "",
-        city: order.shippingCity,
+        address1: delivery.address1,
+        address2: delivery.address2 || "",
+        city: delivery.city,
         countryCode,
-        firstName: order.shippingName || "Return",
+        firstName: delivery.name || "Return",
         lastName: order.lastName || "Return",
         phone: order.shippingPhone || "+34608667749",
         provinceCode: provinceCode,
-        zip: order.shippingZip,
+        zip: delivery.zip,
       },
       shippingLines: [
         {

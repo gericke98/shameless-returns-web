@@ -6,10 +6,13 @@ import { useEffect } from "react";
 import { useFormState } from "react-dom";
 import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
-import { useFees } from "../feesContext";
+import { useFeeLegs } from "../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
+import { DeliveryAddressFields } from "./deliveryAddressFields";
+import type { OrderAddressFields } from "@/lib/deliveryAddress";
+import { ACTIONS } from "@/placeholder";
 
 type Props = {
   order: typeof orders.$inferSelect;
@@ -39,8 +42,20 @@ export const SecondWindowForm = ({
   // (lib/replacementPricing.ts). This used to be a hand-rolled copy of that
   // reduce; the two agreed, but nothing made them keep agreeing.
   const basket = valueBasket(items, allProducts);
-  const fees = useFees();
-  const { feeCents } = resolveFee(fees, basket);
+  // Only an exchange has a replacement to deliver. A pure return must not be
+  // offered a delivery address: there is nothing to send, and the outbound leg
+  // it would price is zero.
+  //
+  // ACTIONS.CHANGE, never the literal "CAMBIO" and never the dropdown's label:
+  // productsorder.action stores the stable code, and comparing against the
+  // localized text is what once made an English exchange save as a return.
+  // `!confirmed` matches the filter orderWindowContent already uses — a line
+  // already submitted on an earlier pass is not part of this basket.
+  const hasExchange = items.some(
+    (item) => item.action === ACTIONS.CHANGE && !item.confirmed
+  );
+  const legs = useFeeLegs();
+  const { feeCents } = resolveFee(legs, basket);
   const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
   useEffect(() => {
@@ -125,6 +140,21 @@ export const SecondWindowForm = ({
         valueini={order.shippingPhone?.toString()}
         icon={false}
       />
+      {hasExchange && (
+        <>
+          <span className="border w-full border-gray-300 mt-2" />
+          {/*
+            Marks that the delivery block was OFFERED this pass, independent
+            of whether it was ticked. updateData reads this to decide whether
+            to touch the seven delivery_* columns at all — see the comment
+            there. Without it, a later pure-return pass (which never renders
+            this block) is indistinguishable, at the database, from this
+            customer unticking a saved address, and silently wipes it.
+          */}
+          <input type="hidden" name="deliveryBlockOffered" value="1" />
+          <DeliveryAddressFields order={order as unknown as OrderAddressFields} />
+        </>
+      )}
       <span className="border w-full border-gray-300 mt-2" />
       <div className="rounded-lg">
         <SummaryComponent

@@ -84,6 +84,28 @@ export function feesForWeight(bands: CountryBands, grams: number): CountryFees {
 }
 
 /**
+ * The two journeys an exchange pays for, each priced in its own zone.
+ *
+ * `collection` is where the customer's parcel is picked up — the return leg,
+ * and the only leg a pure return has. `delivery` is where the replacement is
+ * sent. They are the same zone for almost every order, and `sameZone` is the
+ * honest way to say so; they diverge when the customer asks for the
+ * replacement to go somewhere else.
+ *
+ * Named fields, not a positional pair: transposing them would silently charge
+ * a Spanish collection at a US rate and vice versa.
+ */
+export type FeeLegs = {
+  readonly collection: CountryBands;
+  readonly delivery: CountryBands;
+};
+
+/** Both legs in one zone — every order that has no separate delivery address. */
+export function sameZone(bands: CountryBands): FeeLegs {
+  return { collection: bands, delivery: bands };
+}
+
+/**
  * Rule A — by net amount.
  *
  * Empty basket    -> no fee.
@@ -91,7 +113,7 @@ export function feesForWeight(bands: CountryBands, grams: number): CountryFees {
  * otherwise       -> the customer owes or breaks even: exchange fee.
  */
 export function resolveFee(
-  bands: CountryBands,
+  legs: FeeLegs,
   basket: Basket
 ): {
   feeCents: number;
@@ -104,32 +126,45 @@ export function resolveFee(
   if (!basket.hasItems) {
     return { feeCents: 0, kind: "none", returnLegCents: 0, outboundLegCents: 0 };
   }
-  // Weight selects the band; Rule A then selects which of its two fees
-  // applies. The two are independent — a heavier parcel does not change
-  // whether this is a return or an exchange.
-  const fees = feesForWeight(bands, basket.grams);
+  // Weight selects the band within each zone; Rule A then selects which of its
+  // two fees applies. The two are independent — a heavier parcel does not
+  // change whether this is a return or an exchange.
+  const collection = feesForWeight(legs.collection, basket.grams);
 
   if (basket.netAmount > 0) {
+    // A pure return has no second journey, so the delivery zone is not
+    // consulted at all. A customer returning for a refund must not be charged
+    // more because they once named an expensive delivery address.
     return {
-      feeCents: fees.returnFeeCents,
+      feeCents: collection.returnFeeCents,
       kind: "return",
-      returnLegCents: fees.returnFeeCents,
+      returnLegCents: collection.returnFeeCents,
       outboundLegCents: 0,
     };
   }
 
-  // An exchange is two journeys and its fee is the sum of both, so the split
-  // is recoverable rather than stored. Clamped and derived by subtraction so
-  // the two legs always add up to exactly what is charged, even if a
-  // hand-edited row ever made the exchange fee the cheaper of the two.
+  // An exchange is two journeys in two possibly-different zones. Each leg is
+  // priced where it happens: the parcel is collected from the collection zone
+  // and the replacement is delivered into the delivery zone.
+  //
+  // Both expressions are exactly the single-zone formula this replaced, split
+  // across two rows. With collection === delivery they reproduce it for every
+  // input, including a row where the exchange fee is BELOW the return fee —
+  // verified exhaustively. `min` rather than a bare `returnFeeCents` is what
+  // preserves that case; do not "simplify" it.
+  const delivery = feesForWeight(legs.delivery, basket.grams);
   const outboundLegCents = Math.max(
     0,
-    fees.exchangeFeeCents - fees.returnFeeCents
+    delivery.exchangeFeeCents - delivery.returnFeeCents
+  );
+  const returnLegCents = Math.min(
+    collection.exchangeFeeCents,
+    collection.returnFeeCents
   );
   return {
-    feeCents: fees.exchangeFeeCents,
+    feeCents: returnLegCents + outboundLegCents,
     kind: "exchange",
-    returnLegCents: fees.exchangeFeeCents - outboundLegCents,
+    returnLegCents,
     outboundLegCents,
   };
 }

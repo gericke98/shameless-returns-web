@@ -68,6 +68,13 @@ function order(over: Record<string, unknown> = {}) {
     shippingZip: "1150",
     shippingCountry: "Belgium",
     shippingPhone: "0470678370",
+    deliveryName: null,
+    deliveryAddress1: null,
+    deliveryAddress2: null,
+    deliveryZip: null,
+    deliveryCity: null,
+    deliveryProvince: null,
+    deliveryCountry: null,
     ...over,
   };
 }
@@ -221,5 +228,126 @@ describe("createOrder — province codes are Spanish-only", () => {
     );
 
     expect(addresses().shipping.provinceCode).toBe("B");
+  });
+});
+
+describe("a separate delivery address", () => {
+  const US_DELIVERY = {
+    deliveryName: "Ana Ruiz",
+    deliveryAddress1: "120 Broadway",
+    deliveryAddress2: "Apt 4",
+    deliveryZip: "10271",
+    deliveryCity: "New York",
+    deliveryProvince: "NY",
+    deliveryCountry: "United States",
+  };
+
+  /** The helper's defaults are Belgian; spell out the Spanish collection
+   *  address wherever a test asserts on it. */
+  const SPANISH_COLLECTION = {
+    shippingName: "Ana Ruiz",
+    shippingAddress1: "Calle Mayor 1",
+    shippingAddress2: "3B",
+    shippingCity: "Madrid",
+    shippingProvince: "Madrid",
+    shippingZip: "28013",
+    shippingCountry: "España",
+  };
+
+  it("ships to the delivery address and bills to the collection address", async () => {
+    stubShopify();
+    const { createOrder } = await import("@/db/queries");
+    await createOrder(
+      order({ ...SPANISH_COLLECTION, ...US_DELIVERY }),
+      [{ new_variant_id: "gid://shopify/ProductVariant/1" }]
+    );
+
+    const input = sent[0].variables.order;
+    expect(input.shippingAddress).toMatchObject({
+      address1: "120 Broadway",
+      city: "New York",
+      countryCode: "US",
+      zip: "10271",
+    });
+    // The card was charged where the customer lives, which is where they were
+    // billed originally.
+    expect(input.billingAddress).toMatchObject({
+      address1: "Calle Mayor 1",
+      city: "Madrid",
+      countryCode: "ES",
+      zip: "28013",
+    });
+  });
+
+  // The province is Spanish-only and getProvinceCode returns its INPUT
+  // UNCHANGED when nothing matches. Reading the delivery country against the
+  // collection city is how "Woluwe-Saint-Pierre" reached Shopify as a province
+  // code (759bb1b); the two halves have to move together.
+  it("omits provinceCode on a non-Spanish delivery address", async () => {
+    stubShopify();
+    const { createOrder } = await import("@/db/queries");
+    await createOrder(
+      order({ ...SPANISH_COLLECTION, ...US_DELIVERY }),
+      [{ new_variant_id: "gid://shopify/ProductVariant/1" }]
+    );
+    expect(sent[0].variables.order.shippingAddress.provinceCode).toBeUndefined();
+  });
+
+  it("derives provinceCode from the DELIVERY province for a Spanish delivery address", async () => {
+    stubShopify();
+    const { createOrder } = await import("@/db/queries");
+    await createOrder(
+      order({
+        shippingCountry: "United States",
+        shippingProvince: "NY",
+        shippingCity: "New York",
+        deliveryName: "Ana Ruiz",
+        deliveryAddress1: "Calle Mayor 1",
+        deliveryZip: "28013",
+        deliveryCity: "Madrid",
+        deliveryProvince: "Madrid",
+        deliveryCountry: "España",
+      }),
+      [{ new_variant_id: "gid://shopify/ProductVariant/1" }]
+    );
+    const shipping = sent[0].variables.order.shippingAddress;
+    expect(shipping.countryCode).toBe("ES");
+    // Whatever getProvinceCode maps "Madrid" to, it must not be "NY" and must
+    // not be undefined — the point is that it read the delivery address.
+    expect(shipping.provinceCode).toBeDefined();
+    expect(shipping.provinceCode).not.toBe("NY");
+  });
+
+  it("refuses and alerts when the delivery country cannot be resolved", async () => {
+    stubShopify();
+    const { createOrder } = await import("@/db/queries");
+    const result = await createOrder(
+      order({
+        shippingCountry: "España",
+        deliveryName: "Ana Ruiz",
+        deliveryAddress1: "1 Nowhere St",
+        deliveryZip: "0000",
+        deliveryCity: "Nowhere",
+        deliveryCountry: "Freedonia",
+      }),
+      [{ new_variant_id: "gid://shopify/ProductVariant/1" }]
+    );
+    expect(result).toMatchObject({ success: false });
+    expect(sent).toHaveLength(0);
+    expect(alerts.join("\n")).toContain("EXCHANGE NOT CREATED");
+  });
+
+  it("still ships to the collection address when no delivery address is set", async () => {
+    stubShopify();
+    const { createOrder } = await import("@/db/queries");
+    await createOrder(
+      order({ shippingCountry: "Portugal", shippingCity: "Lisboa", shippingZip: "1100-148" }),
+      [{ new_variant_id: "gid://shopify/ProductVariant/1" }]
+    );
+    expect(sent[0].variables.order.shippingAddress).toMatchObject({
+      city: "Lisboa",
+      countryCode: "PT",
+      zip: "1100-148",
+    });
   });
 });

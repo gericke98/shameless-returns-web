@@ -229,12 +229,16 @@ export async function GET(req: Request) {
   // `tracking-sync` both do. Vercel drops runtime logs after about an hour, so
   // the outage was on its way to leaving no evidence at all.
   //
-  // Gated on TOTAL failure, and on there being enough returns for "all of them"
-  // to mean something: the per-return catch above is deliberately forgiving, so
-  // a single malformed return must not page anyone every 15 minutes — that is
-  // how real alerts get buried.
-  const MIN_FAILURES_TO_ALERT = 3;
-  if (failed >= MIN_FAILURES_TO_ALERT && failed === matches.length) {
+  // Gated on TOTAL failure — every return the run touched threw — which the
+  // forgiving per-return catch above cannot express on its own. A PARTIAL
+  // failure stays quiet on purpose: one malformed return must not page anyone
+  // every 15 minutes, which is how real alerts get buried.
+  //
+  // Deliberately no volume floor. An earlier version required 3+ failures so a
+  // single bad row could not page, but that also bought silence on a quiet
+  // window where the only two international returns both failed — still a sync
+  // that did nothing, which is precisely the gap that cost 15 hours.
+  if (failed > 0 && failed === matches.length) {
     await alertOps(
       `[returns] AMPHORA SYNC FAILING — ${failed}/${matches.length} returns errored`,
       [
@@ -256,7 +260,24 @@ export async function GET(req: Request) {
   } catch (error: any) {
     // The Amphora poll above already did its work; a sweep failure must not
     // discard those results.
-    console.error("[amphora-sync] self-return sweep failed:", error?.message || error);
+    const detail = String(error?.message || error);
+    console.error("[amphora-sync] self-return sweep failed:", detail);
+    // A healthy poll with a broken sweep is invisible to the total-failure
+    // alert above, and on 2026-09-03 the sweep failed on every run for ~15
+    // hours behind nothing but this console.error. Self-booked customers are
+    // the ones who go quiet here: the sweep is what reminds them to post their
+    // parcel and what flags the ones who never did.
+    await alertOps(
+      `[returns] SELF-RETURN SWEEP FAILED — no reminders sent this run`,
+      [
+        `The Amphora poll finished, but the self-return sweep threw:`,
+        ``,
+        `${detail}`,
+        ``,
+        `No self-booked customer was reminded and no stalled return was flagged`,
+        `on this run. It runs every 15 minutes, so it is still failing now.`,
+      ].join("\n")
+    );
   }
 
   return NextResponse.json({

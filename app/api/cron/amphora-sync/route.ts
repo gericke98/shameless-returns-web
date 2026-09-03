@@ -5,6 +5,7 @@ import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
 import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { isInternationalOrder } from "@/lib/countries";
 import { sweepSelfReturns } from "@/actions/selfReturnSweep";
+import { alertOps } from "@/actions/opsAlert";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -79,6 +80,8 @@ export async function GET(req: Request) {
     (typeof matches)[number] & { returnMethod?: string | null }
   > = [];
   let scanned = 0;
+  let failed = 0;
+  let firstError = "";
   let skipped = 0;
   let skippedUnknownCountry = 0;
   let skippedNoReturn = 0;
@@ -182,6 +185,8 @@ export async function GET(req: Request) {
     } catch (error: any) {
       // One bad return must not stop the sweep — the others are still owed
       // their notifications.
+      failed += 1;
+      if (!firstError) firstError = String(error?.message || error);
       console.error(
         `[amphora-sync] ${ret.name ?? ret.id} failed:`,
         error?.message || error
@@ -213,6 +218,35 @@ export async function GET(req: Request) {
       .join(", ");
     console.warn(
       `[amphora-sync] ${stranded} return(s) approved with no carrier assigned — collections are not booked: ${names}`
+    );
+  }
+
+  // Every single return erroring is not a bad row, it is a broken sync — and
+  // until 2026-09-03 nothing here said so. PR #38 deployed with its migration
+  // unapplied, every `orders` read threw, and this cron accomplished nothing
+  // for ~15 hours across ~60 runs without sending a thing. It is the only
+  // money-path cron that never called `alertOps`; `auto-approve` and
+  // `tracking-sync` both do. Vercel drops runtime logs after about an hour, so
+  // the outage was on its way to leaving no evidence at all.
+  //
+  // Gated on TOTAL failure, and on there being enough returns for "all of them"
+  // to mean something: the per-return catch above is deliberately forgiving, so
+  // a single malformed return must not page anyone every 15 minutes — that is
+  // how real alerts get buried.
+  const MIN_FAILURES_TO_ALERT = 3;
+  if (failed >= MIN_FAILURES_TO_ALERT && failed === matches.length) {
+    await alertOps(
+      `[returns] AMPHORA SYNC FAILING — ${failed}/${matches.length} returns errored`,
+      [
+        `Every one of the ${matches.length} returns this run touched threw, so the sync did nothing.`,
+        `No collection was booked and no customer was notified.`,
+        ``,
+        `First error: ${firstError}`,
+        ``,
+        `This runs every 15 minutes, so it is still failing now. A schema error here`,
+        `usually means a migration was deployed but never applied — check that the`,
+        `columns db/schema.ts declares actually exist on ShamelessReturns.`,
+      ].join("\n")
     );
   }
 

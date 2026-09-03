@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Self-booking is a SUBTRACTION from the fee we already compute, not a new
 // pricing path: resolveFee already splits the charge into the customer's parcel
@@ -24,11 +24,23 @@ const BANDS = [
   { maxGrams: 2147483647, returnFeeCents: 650, exchangeFeeCents: 1100 },
 ];
 
+// Real 1 kg rows from data/return-tariff.csv, used only by the delivery-zone
+// split test below. The Italy-collected tests above never resolve to ES or
+// US, so adding these rows does not disturb them.
+const ES_BANDS = [
+  { maxGrams: 2147483647, returnFeeCents: 500, exchangeFeeCents: 850 },
+];
+const US_BANDS = [
+  { maxGrams: 2147483647, returnFeeCents: 2200, exchangeFeeCents: 3496 },
+];
+
 const basket = { hasItems: true, netAmount: 0, grams: 500 };
 const sessions: any[] = [];
 
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
-vi.mock("@/db/fees", () => ({ getFeeTable: async () => ({ "*": BANDS }) }));
+vi.mock("@/db/fees", () => ({
+  getFeeTable: async () => ({ "*": BANDS, ES: ES_BANDS, US: US_BANDS }),
+}));
 vi.mock("@/lib/loadBasket", () => ({
   loadBasket: async () => ({ order, catalogue: [], basket }),
 }));
@@ -135,5 +147,47 @@ describe("SELF drops the return leg", () => {
     const names = sessions[0].line_items.map((li: any) => li.price_data.product_data.name);
     expect(names).toContain(es.summary.returnShipping);
     expect(names).toContain(es.summary.deliveryShipping);
+  });
+});
+
+describe("the real createStripeUrl path charges the delivery zone, not the collection zone", () => {
+  // This is the wiring test, not another arithmetic test — deliveryLegCharge.test.ts
+  // already proves resolveFee/feeLegsForOrder split correctly in isolation. What
+  // that file cannot catch is createStripeUrl calling them wrong (e.g. reverting to
+  // sameZone(fees), or passing the wrong order/table). Only a test that drives the
+  // real createStripeUrl end-to-end, with a delivery address in a different zone
+  // than the collection address, can pin that wiring.
+  const originalShippingCountry = order.shippingCountry;
+  const originalShippingZip = order.shippingZip;
+
+  afterEach(() => {
+    // The `order` object above is shared by every test in this file via the
+    // loadBasket mock's closure — restore it so later tests see the Italy
+    // address they were written against.
+    order.shippingCountry = originalShippingCountry;
+    order.shippingZip = originalShippingZip;
+    delete (order as any).deliveryName;
+    delete (order as any).deliveryAddress1;
+    delete (order as any).deliveryZip;
+    delete (order as any).deliveryCity;
+    delete (order as any).deliveryCountry;
+  });
+
+  it("charges the ES-collection + US-delivery split, not either zone's flat fee", async () => {
+    order.shippingCountry = "Spain";
+    order.shippingZip = "28013"; // peninsular, not an island/enclave prefix
+    (order as any).deliveryName = "Ana Ruiz";
+    (order as any).deliveryAddress1 = "120 Broadway";
+    (order as any).deliveryZip = "10271";
+    (order as any).deliveryCity = "New York";
+    (order as any).deliveryCountry = "US";
+
+    await priceIt("AMPHORA");
+
+    // Collected in Spain at 5.00/8.50, delivered to the US at 22.00/34.96.
+    // returnLegCents = min(850, 500) = 500. outboundLegCents = 3496-2200 = 1296.
+    // Total 1796 — distinct from ES-flat (850) and from US-flat (3496), so this
+    // assertion cannot pass by accident from either zone alone.
+    expect(chargedCents()).toBe(1796);
   });
 });

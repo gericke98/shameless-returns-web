@@ -167,9 +167,11 @@ const ORDERS: Record<string, any> = {
   },
 };
 
-const state: { returns: any[]; listThrows: boolean } = {
+const state: { returns: any[]; listThrows: boolean; dbThrows: boolean; failIds: string[] } = {
   returns: [OURS, RECREATED, THEIRS, UNKNOWN],
   listThrows: false,
+  dbThrows: false,
+  failIds: [],
 };
 const applied: any[] = [];
 
@@ -187,13 +189,31 @@ vi.mock("@/actions/amphoraStatusSync", () => ({
   },
 }));
 
+// `dbThrows` reproduces 2026-09-03: PR #38 deployed with its migration
+// unapplied, so EVERY `orders` read raised `column orders.delivery_name does
+// not exist` — thrown by the very first statement in the loop's try, which is
+// why nothing ever reached `acted` and the counters all stayed at zero.
+function failIfDbDown(id?: string) {
+  if (state.dbThrows) {
+    throw new Error('column orders.delivery_name does not exist');
+  }
+  // A single genuinely broken row, to prove the alert needs TOTAL failure.
+  if (id && state.failIds.includes(id)) {
+    throw new Error(`boom for ${id}`);
+  }
+}
+
 vi.mock("@/db/queries", () => ({
-  getOrderById: async (id: string) => ORDERS[id],
-  getOrderByIdFresh: async (id: string) => ORDERS[id],
-  getOrderByNumberFresh: async (name: string) =>
-    Object.values(ORDERS).find((o: any) => o.orderNumber === name),
-  getOrderByNumber: async (name: string) =>
-    Object.values(ORDERS).find((o: any) => o.orderNumber === name),
+  getOrderById: async (id: string) => { failIfDbDown(id); return ORDERS[id]; },
+  getOrderByIdFresh: async (id: string) => { failIfDbDown(id); return ORDERS[id]; },
+  getOrderByNumberFresh: async (name: string) => {
+    failIfDbDown();
+    return Object.values(ORDERS).find((o: any) => o.orderNumber === name);
+  },
+  getOrderByNumber: async (name: string) => {
+    failIfDbDown();
+    return Object.values(ORDERS).find((o: any) => o.orderNumber === name);
+  },
 }));
 
 // The sweep is exercised on its own in tests/selfReturnSweep.test.ts. Here it
@@ -203,6 +223,13 @@ vi.mock("@/actions/selfReturnSweep", () => ({
   sweepSelfReturns: async () => ({ reminded: 0, alerted: 0 }),
 }));
 
+const alerts: Array<{ subject: string; body: string }> = [];
+vi.mock("@/actions/opsAlert", () => ({
+  alertOps: async (subject: string, body: string) => {
+    alerts.push({ subject, body });
+  },
+}));
+
 async function call(headers: Record<string, string> = {}) {
   const { GET } = await import("@/app/api/cron/amphora-sync/route");
   return GET(new Request("https://x.test/api/cron/amphora-sync", { headers }));
@@ -210,8 +237,11 @@ async function call(headers: Record<string, string> = {}) {
 
 beforeEach(() => {
   applied.length = 0;
+  alerts.length = 0;
   state.returns = [OURS, RECREATED, THEIRS, UNKNOWN];
   state.listThrows = false;
+  state.dbThrows = false;
+  state.failIds = [];
   ORDERS["13150000000000"].products = [{ id: "p5", confirmed: false }];
   // The lane is per-test; anything but SELF behaves as it did before
   // self-booking existed.
@@ -403,5 +433,55 @@ describe("amphora-sync cron — scope and resilience", () => {
 
     expect(res.status).toBe(502);
     expect(applied).toHaveLength(0);
+  });
+});
+
+// 2026-09-03: PR #38 shipped with `drizzle/0002_delivery_address.sql` unapplied,
+// so every `orders` read threw and this sync accomplished NOTHING for ~15 hours
+// — roughly 60 consecutive runs, ~40 orders failing in each. It went unnoticed
+// because this is the one money-path cron that never called `alertOps`:
+// `auto-approve` and `tracking-sync` both do. Vercel drops runtime logs after
+// about an hour, so by the time anyone asked, the only evidence of a 15-hour
+// outage would have been gone.
+//
+// The per-return catch is deliberately forgiving — one bad return must not stop
+// the sweep — but "every single one failed" is not a bad return, it is a broken
+// sync, and it has to reach a human.
+describe("amphora-sync cron — total failure is not silent", () => {
+  it("emails ops when every return attempted failed", async () => {
+    state.dbThrows = true;
+
+    const res = await call({ authorization: "Bearer s3cret" });
+    const body = await res.json();
+
+    // The run still returns 200 with zeroed counters — which is exactly why a
+    // log line was never enough to notice it.
+    expect(res.status).toBe(200);
+    expect(body.scanned).toBe(0);
+    expect(body.changed).toEqual([]);
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].subject).toContain("AMPHORA SYNC FAILING");
+    // Name the cause, so whoever is on call does not have to reproduce it.
+    expect(alerts[0].body).toContain("delivery_name");
+    expect(alerts[0].body).toContain("4");
+  });
+
+  it("stays quiet on a normal run, so the alert keeps meaning something", async () => {
+    const res = await call({ authorization: "Bearer s3cret" });
+
+    expect(res.status).toBe(200);
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("stays quiet when only SOME returns fail — one bad row is not an outage", async () => {
+    // A forgiving per-return catch is the documented behaviour: one bad return
+    // must not stop the sweep, and must not page anyone either.
+    state.failIds = ["13192219558214"];
+
+    const res = await call({ authorization: "Bearer s3cret" });
+
+    expect(res.status).toBe(200);
+    expect(alerts).toHaveLength(0);
   });
 });

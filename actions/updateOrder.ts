@@ -333,6 +333,11 @@ async function resolveFulfillmentLineItems(
       variant_id: String(product.variant_id),
       fulfillmentLineItemId: match.node.id,
       quantity: product.quantity,
+      // Read live from Shopify so `buildReturnInput` can drop a line the store
+      // will no longer take back. A stale DEVOLUCIÓN on an already-refunded row
+      // used to fail the whole mutation and strand every OTHER garment in the
+      // same parcel — order #310828.
+      refundableQuantity: match.node.lineItem?.refundableQuantity ?? null,
       action: product.action,
       reason: product.reason,
       notes: product.notes,

@@ -391,6 +391,9 @@ export type FulfillmentLineItem = {
   node: {
     id: string;
     lineItem: {
+      /** How many of this line Shopify will still take back. Absent on older
+       *  reads; zero once the line has been refunded. */
+      refundableQuantity?: number | null;
       variant: {
         id: string;
       };

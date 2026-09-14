@@ -497,12 +497,25 @@ export async function updateFinalOrder(
   // customer was shown, taken from the order's own money set. See
   // `presentmentRateFromOrder` — a hardcoded EUR here cost order #310741 its
   // whole return.
-  const result = await createReturn(
-    buildReturnInput(String(totalOrder.id), lines, returnFeeEuros, {
-      includeExchangeItems: process.env.NATIVE_EXCHANGES === "true",
-      presentment: presentmentRateFromOrder(totalOrder.total_price_set),
-    })
-  );
+  const returnInput = buildReturnInput(String(totalOrder.id), lines, returnFeeEuros, {
+    includeExchangeItems: process.env.NATIVE_EXCHANGES === "true",
+    presentment: presentmentRateFromOrder(totalOrder.total_price_set),
+  });
+
+  // The `lines.length` guard above cannot cover this: `buildReturnInput` is
+  // what drops a line Shopify will no longer take back, so an order whose every
+  // line has already been refunded still arrives here with lines in hand and an
+  // EMPTY payload. Asking Shopify to create a return with no line items spends
+  // a round trip to be told what we can already see, and turns "nothing to
+  // return" into an opaque mutation error on the customer's screen.
+  if (returnInput.returnLineItems.length === 0) {
+    console.error(
+      `Order ${id}: every line is already refunded in Shopify — nothing to return`
+    );
+    return;
+  }
+
+  const result = await createReturn(returnInput);
 
   if (!result.success) {
     throw new Error(

@@ -21,6 +21,9 @@ const state = {
   shopifyStatuses: {} as Record<string, string>,
   skus: {} as Record<string, string>,
   settleThrowsOn: null as string | null,
+  /** Which variant a settle call REFUSES (returns settled:false) and with what
+   *  reason. A refusal is not a throw: the payout simply did not happen. */
+  settleRefusesOn: null as { variant: string; reason: string } | null,
   /** Which `productsorder` row ids a settle call reports it flipped, by the
    *  variant it was asked about. The exchange lane settles a whole order in
    *  one call, so this is not always the single line the route asked for. */
@@ -45,6 +48,10 @@ vi.mock("@/lib/settleReturn", () => ({
   settleReturnLine: async (product: any) => {
     clock.t += state.msPerSettle;
     if (state.settleThrowsOn === product.variant_id) throw new Error("shopify down");
+    const refusal = state.settleRefusesOn;
+    if (refusal && refusal.variant === product.variant_id) {
+      return { settled: false, reason: refusal.reason };
+    }
     settled.push(product.variant_id);
     return {
       settled: true,
@@ -100,6 +107,7 @@ beforeEach(() => {
   state.shopifyStatuses = { "gid://shopify/Return/v1": "OPEN" };
   state.skus = { v1: "SKU1" };
   state.settleThrowsOn = null;
+  state.settleRefusesOn = null;
   process.env.CRON_SECRET = "s3cret";
   process.env.AUTO_APPROVE_ENABLED = "true";
   delete process.env.AUTO_APPROVE_MAX_PER_RUN;
@@ -353,5 +361,71 @@ describe("auto-approve cron — resilience", () => {
     expect(alerts[0]).toContain("AUTO-APPROVE HELD");
     expect(alertBodies[0]).toContain("NO MONEY MOVED");
     expect(alertBodies[0]).not.toContain("Money may have moved");
+  });
+});
+
+describe("auto-approve cron — a refused payout is not a quiet one", () => {
+  // The silence that stranded #311882. The gate passed the line, Shopify
+  // refused the refund because the stored transaction was a FAILED payment
+  // attempt, the route recorded `settle-refused:refund-failed` in a 200 body
+  // and told nobody. It retried and failed every morning for five days.
+  it("alerts ops when a settlement is refused", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("#1001");
+    expect(alerts[0]).toContain("NOT SETTLED");
+  });
+
+  it("names the refusal reason in the alert body", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "no-refund-transaction" };
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(alertBodies[0]).toContain("no-refund-transaction");
+  });
+
+  it("says plainly that no money moved", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+
+    await call({ authorization: "Bearer s3cret" });
+
+    // A refusal means the payout did not happen. Saying "money may have moved"
+    // here would send whoever is on call hunting a refund that never existed —
+    // this repo has already done that once.
+    expect(alertBodies[0]).toContain("NO money moved");
+  });
+
+  it("still reports the refusal in the held list", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.held).toContainEqual({
+      order: "#1001",
+      reason: "settle-refused:refund-failed",
+    });
+    expect(body.settled).toBe(0);
+  });
+
+  // Gate holds are the normal state of the sweep — 112 of them on 2026-09-14.
+  // Alerting on those would bury the one that means a customer is unpaid.
+  it("stays silent on an ordinary gate hold", async () => {
+    state.shopifyStatuses = { "gid://shopify/Return/v1": "CLOSED" };
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("does not alert in a dry run — nothing was refused, nothing was tried", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+    process.env.AUTO_APPROVE_ENABLED = "false";
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(alerts).toHaveLength(0);
   });
 });

@@ -245,6 +245,19 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
     }
     return { settled: false, reason: "exchange-order-failed" };
   } else {
+    // Refuse BEFORE Shopify rather than after.
+    //
+    // `createReturn` stores null when the order carries no settled payment to
+    // refund against, and `String(null ?? "")` is `""` — an empty parentId that
+    // Shopify rejects with a userError buried in the money path. Refusing here
+    // names the real problem instead, and the caller alerts on it.
+    const refundTransactionId = String(trustedLine.transaction_id ?? "").trim();
+    if (!refundTransactionId) {
+      console.error(
+        `settleReturnLine: line ${trustedLine.id} has no refundable transaction`
+      );
+      return { settled: false, reason: "no-refund-transaction" };
+    }
     if (product.return_id && product.return_line_item_id) {
       // Same rule as the gift-card branch above: a self-booked return's
       // return leg is zero at settlement, because it was zero at checkout.
@@ -259,7 +272,7 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       result = await createRefund(
         String(trustedLine.return_id ?? ""),
         String(trustedLine.return_line_item_id ?? ""),
-        String(trustedLine.transaction_id ?? ""),
+        refundTransactionId,
         amountToRefund
       );
     }

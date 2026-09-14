@@ -205,6 +205,24 @@ export async function GET(req: Request) {
           console.log(`[auto-approve] settled ${label} / ${line.variant_id} (${outcome.lane}, ${outcome.lineIds.length} line(s))`);
         } else {
           held.push({ order: label, reason: `settle-refused:${outcome.reason}` });
+          // A REFUSAL is not a gate hold. The gate holds for ordinary reasons
+          // by the hundred — the goods are still in transit, Amphora has no
+          // record yet — and alerting on those would bury this. Reaching here
+          // means the gate said yes, we tried to pay, and the payout did not
+          // happen: a customer is owed money and only a human can unstick it.
+          //
+          // This path used to be silent. #311882 was refused every morning for
+          // five days because its stored transaction was the customer's FAILED
+          // payment attempt, and the run reported 200 each time.
+          await alertOps(
+            `[returns] AUTO-APPROVE NOT SETTLED — order ${label}`,
+            [
+              `The daily auto-approve run judged ${label} eligible and then could not pay it.`,
+              `Reason: ${outcome.reason}`,
+              `NO money moved — the payout was refused before it completed, so there is nothing to reverse.`,
+              `The customer is still owed. This will keep failing every run until someone looks.`,
+            ].join("\n")
+          );
         }
       }
     } catch (error: any) {

@@ -9,6 +9,7 @@ import type { ReturnCreateInput } from "@/lib/returnPayload";
 import { normalizeCountry } from "@/lib/countries";
 import { alertOps } from "@/actions/opsAlert";
 import { deliveryAddressOf } from "@/lib/deliveryAddress";
+import { pickRefundTransaction } from "@/lib/refundTransaction";
 
 const createSession = (): RequestInit => {
   if (
@@ -850,6 +851,12 @@ export async function createReturn(input: ReturnCreateInput) {
             order {
               transactions(first: 10) {
                 id
+                # Both are load-bearing: without them there is nothing to tell a
+                # settled payment from a failed attempt, which is how an
+                # unfiltered transactions[0] came to be stored as the refund
+                # target. See lib/refundTransaction.ts.
+                kind
+                status
                 amountSet { shopMoney { amount currencyCode } }
               }
             }
@@ -880,7 +887,10 @@ export async function createReturn(input: ReturnCreateInput) {
     }
 
     const returnData = data.data.returnCreate.return;
-    const transactionData = returnData.order.transactions[0];
+    // The LARGEST SETTLED payment, not `transactions[0]`. A customer whose
+    // first attempt failed and who then paid again has the dead attempt first,
+    // and storing it strands their refund permanently.
+    const transactionData = pickRefundTransaction(returnData.order?.transactions);
 
     return {
       success: true as const,
@@ -889,8 +899,11 @@ export async function createReturn(input: ReturnCreateInput) {
         name: returnData.name as string,
         returnLineItems: returnData.returnLineItems.nodes,
         exchangeLineItems: returnData.exchangeLineItems.nodes,
-        transactionId: transactionData?.id,
-        transactionAmount: transactionData?.amountSet?.shopMoney?.amount,
+        // Null rather than a fallback id. There is no safe second choice here:
+        // any other transaction on the order is one Shopify has already told us
+        // cannot take a refund.
+        transactionId: transactionData?.id ?? null,
+        transactionAmount: transactionData?.amountSet?.shopMoney?.amount ?? null,
       },
     };
   } catch (error) {
@@ -1002,6 +1015,11 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
               id
               lineItem {
                 title
+                # How many of this line Shopify will still take back. Zero once
+                # the line has been refunded — including by a 0.00 refund booked
+                # in the admin — and sending a return for it fails the whole
+                # mutation. See lib/returnPayload.ts.
+                refundableQuantity
                 variant {
                   id
                 }

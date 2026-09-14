@@ -24,6 +24,9 @@ export type ReturnableLine = {
   variant_id: string;
   fulfillmentLineItemId: string | null;
   quantity?: number | null;
+  /** How many of this line Shopify will still take back, resolved live from
+   *  the order. `undefined`/`null` means we did not look — never a refusal. */
+  refundableQuantity?: number | null;
   action?: string | null;
   reason?: string | null;
   notes?: string | null;
@@ -69,6 +72,18 @@ type MoneySet = {
 const AT_PAR: PresentmentRate = { currencyCode: "EUR", rate: 1 };
 
 const MAX_NOTE = 255;
+
+/** What we will ask Shopify for. Kept beside the filter that checks it so the
+ *  two can never disagree about the number being validated. */
+function requestedQuantityOf(quantity: number | null | undefined): number {
+  return Math.max(1, Number(quantity) || 1);
+}
+
+/** NaN reads as zero, so an unparseable count refuses rather than being sent. */
+function refundableQuantityOf(refundable: number): number {
+  const parsed = Number(refundable);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 /**
  * Derive the order's own EUR -> presentment conversion from any of its money
@@ -127,6 +142,25 @@ export function buildReturnInput(
     // A line with no fulfillment line item cannot be returned. Dropping it
     // beats sending null, which fails the mutation for every OTHER line too.
     .filter((line) => !!line.fulfillmentLineItemId)
+    // Same rule, one step further on: a line Shopify will not take back at the
+    // quantity we are asking for fails the WHOLE mutation, not just itself —
+    //
+    //   returnInput.returnLineItems.0.quantity
+    //   "Return line item has an invalid quantity."
+    //
+    // — so one dead line makes the other garments in the same parcel
+    // unreturnable too. Order #310828 hit this: a 0.00 EUR refund booked in the
+    // admin dropped one pair of jeans to `refundableQuantity: 0`, the stale
+    // DEVOLUCIÓN on that row kept putting it back in the payload, and the
+    // customer could not return the OTHER pair for three days.
+    //
+    // Unknown is not a refusal: a caller that does not resolve the field, and
+    // every row that predates it, behaves exactly as before.
+    .filter((line) => {
+      const refundable = line.refundableQuantity;
+      if (refundable === null || refundable === undefined) return true;
+      return refundableQuantityOf(refundable) >= requestedQuantityOf(line.quantity);
+    })
     .map((line) => {
       // Per line. This was a single hardcoded COLOR for every return.
       const returnReason = toShopifyReturnReason(line.reason);
@@ -141,7 +175,7 @@ export function buildReturnInput(
           : "");
       return {
         fulfillmentLineItemId: line.fulfillmentLineItemId as string,
-        quantity: Math.max(1, Number(line.quantity) || 1),
+        quantity: requestedQuantityOf(line.quantity),
         returnReason,
         ...(note ? { returnReasonNote: note } : {}),
       };

@@ -170,6 +170,11 @@ beforeEach(() => {
     action: "DEVOLUCIÓN",
     refunded: false,
     return_id: "r1",
+    // The STORED row is what settlement refunds against — the caller's copy is
+    // untrusted for every money-deciding field. A real refund line always
+    // carries this; without it the settlement now correctly refuses, so
+    // omitting it here tested a row that cannot exist in production.
+    transaction_id: "t1",
   };
 });
 

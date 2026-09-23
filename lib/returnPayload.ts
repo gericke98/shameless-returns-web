@@ -122,6 +122,33 @@ export function presentmentRateFromOrder(
 }
 
 /**
+ * The `transactionAmount` for a `returnRefund`, in the currency Shopify will
+ * validate it against.
+ *
+ * `amountEuros` is what our own rules worked out we owe, in the shop currency:
+ * the line price less the return fee. Shopify checks the refund against the
+ * order's PRESENTMENT currency and rejects the whole mutation otherwise
+ * ("The presentment currency of the order needs to be used"), which is why
+ * order #311531 was never paid — GBP-presented, and the payload said EUR.
+ *
+ * Conversion uses the rate Shopify stamped on the order at purchase time, the
+ * same one `buildReturnInput` uses for the return fee, so the refund and the
+ * fee can never disagree about what a euro was worth on that order. Degrades
+ * to EUR at par on anything missing or malformed, because this runs when the
+ * customer is already owed money and a throw here pays them nothing.
+ */
+export function refundTransactionAmount(
+  amountEuros: number,
+  totalPriceSet: MoneySet | null | undefined
+): { amount: string; currencyCode: string } {
+  const presentment = presentmentRateFromOrder(totalPriceSet);
+  return {
+    amount: (amountEuros * presentment.rate).toFixed(2),
+    currencyCode: presentment.currencyCode,
+  };
+}
+
+/**
  * Build the `ReturnInput` for one submission.
  *
  * `includeExchangeItems` gates Shopify's native exchange. With it off the

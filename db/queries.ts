@@ -10,6 +10,7 @@ import { normalizeCountry } from "@/lib/countries";
 import { alertOps } from "@/actions/opsAlert";
 import { deliveryAddressOf } from "@/lib/deliveryAddress";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
+import { refundTransactionAmount } from "@/lib/returnPayload";
 
 const createSession = (): RequestInit => {
   if (
@@ -307,6 +308,55 @@ export async function getOrderTotal(orderId: string) {
   }
 }
 
+/**
+ * The money set of the order a return belongs to, for currency conversion.
+ *
+ * Returns null on any failure. Every caller treats null as "EUR at par", which
+ * is what the ~95% domestic traffic needs, so a hiccup here degrades to today's
+ * behaviour instead of blocking a payout.
+ */
+async function presentmentMoneySetForReturn(returnId: string) {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+    query presentmentForReturn($id: ID!) {
+      return(id: $id) {
+        order {
+          totalPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+        }
+      }
+    }
+  `;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables: { id: returnId } }),
+    });
+    const data = await response.json();
+    const set = data?.data?.return?.order?.totalPriceSet;
+    if (!set) return null;
+    // `presentmentRateFromOrder` reads snake_case, the shape Shopify's REST
+    // payloads use and the one its tests are written against.
+    return {
+      shop_money: {
+        amount: set.shopMoney?.amount,
+        currency_code: set.shopMoney?.currencyCode,
+      },
+      presentment_money: {
+        amount: set.presentmentMoney?.amount,
+        currency_code: set.presentmentMoney?.currencyCode,
+      },
+    };
+  } catch (error) {
+    console.error("presentmentMoneySetForReturn failed, refunding at par:", error);
+    return null;
+  }
+}
+
 export async function createRefund(
   returnId: string,
   returnLineItemId: string,
@@ -329,6 +379,17 @@ export async function createRefund(
       }
     `;
 
+  // What currency will Shopify validate this against? Not necessarily EUR:
+  // it checks the order's PRESENTMENT currency and rejects the whole mutation
+  // otherwise. This used to be hardcoded "EUR", so every non-EUR-presented
+  // order was unpayable by the nightly run — #311531 (GBP) sat unpaid from
+  // 18/09. One extra read, against six round trips the settlement already
+  // makes, and it degrades to EUR at par if the lookup gives nothing.
+  const transactionAmount = refundTransactionAmount(
+    amount,
+    await presentmentMoneySetForReturn(returnId)
+  );
+
   const variables = {
     input: {
       notifyCustomer: true,
@@ -336,10 +397,7 @@ export async function createRefund(
       orderTransactions: [
         {
           parentId: transactionId,
-          transactionAmount: {
-            amount: amount.toString(),
-            currencyCode: "EUR",
-          },
+          transactionAmount,
         },
       ],
       returnRefundLineItems: [

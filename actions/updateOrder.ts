@@ -528,7 +528,25 @@ export async function updateFinalOrder(
 
   // On one of our replacement orders the return's own transaction is the €0.01
   // placeholder; the money is on the root order. See actions/replacementOrder.ts.
-  const refundSource = await refundSourceFor(dbOrder, result.data);
+  //
+  // Guarded HERE, not inside `refundSourceFor`: the Shopify return above
+  // already exists, and `return_id` — written in the loop below — is what the
+  // idempotency guard at the top of this function checks on a retry. Letting
+  // a `resolveRootOrderId` cycle or a failed `getOrderByIdFresh` throw out of
+  // this function would leave that guard blind, so a resubmit or webhook
+  // redelivery would create a SECOND Shopify return for the same parcel. Null
+  // degrades safely instead: `settleReturn` refuses a null transaction with
+  // `no-refund-transaction`, which the cron alerts on.
+  let refundSource: { transactionId: string | null; transactionAmount: string | null };
+  try {
+    refundSource = await refundSourceFor(dbOrder, result.data);
+  } catch (error) {
+    console.error(
+      `Order ${id}: refundSourceFor failed after returnCreate succeeded — storing no refund transaction (settlement will alert):`,
+      error
+    );
+    refundSource = { transactionId: null, transactionAmount: null };
+  }
 
   // Matched on the fulfillment line item, never on array position — Shopify
   // makes no promise to echo the input order, and `return_line_item_id` is what

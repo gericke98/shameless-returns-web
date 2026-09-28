@@ -25,7 +25,7 @@ import {
   refundOnOrder,
 } from "@/db/queries";
 import { productsOrder } from "@/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { getFeeTable } from "@/db/fees";
 import { resolveZone } from "@/lib/zones";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
@@ -305,7 +305,16 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       if (settlementOrder?.exchangeOf) {
         // A replacement order's payment is a €0.01 placeholder: the money goes
         // back on the ROOT order, the goods come back on this one. Order
-        // matters — see the numbered steps.
+        // matters: refuse → CLAIM the row → money → book the goods.
+        //
+        // Why claim before paying: two settlements of the same line can overlap
+        // (a dashboard double-submit, or a click while the cron runs). Both
+        // would pass the plain `refunded` read above, and both would pass
+        // refundOnOrder's note check, which is read-then-write. The ordinary
+        // lane has a Shopify backstop (returnRefund rejects a second refund of
+        // the same return line item); a root-order refundCreate does NOT — it
+        // is capped only by the remaining refundable amount, so a second
+        // payout would succeed. The atomic claim lets exactly one caller in.
         //
         // 0. Find the root BEFORE any money moves. The walk throws on an
         // exchange_of cycle; nothing has been paid yet, so refusing is safe.
@@ -328,7 +337,26 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
           );
           return { settled: false, reason: "refund-failed" };
         }
-        // 1+2. Money, idempotent on the return line item id.
+        // 1. Claim the row atomically. `refunded` is NULL on most live rows,
+        // not false, so the condition must accept NULL.
+        const claimed = await db
+          .update(productsOrder)
+          .set({ refunded: true })
+          .where(
+            and(
+              eq(productsOrder.id, trustedLine.id),
+              or(isNull(productsOrder.refunded), eq(productsOrder.refunded, false))
+            )
+          )
+          .returning({ id: productsOrder.id });
+        if (claimed.length === 0) {
+          console.error(
+            `settleReturnLine: line ${trustedLine.id} was claimed by a concurrent settlement — not paying`
+          );
+          return { settled: false, reason: "already-refunded" };
+        }
+        // 2. Money, also idempotent on the return line item id (a retry after
+        // a crash between Shopify accepting and us returning pays nothing).
         const money = await refundOnOrder(
           rootId,
           refundTransactionId,
@@ -336,10 +364,25 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
           marker,
           `Return from replacement order ${settlementOrder.orderNumber}`
         );
-        if (!money.success) return { settled: false, reason: "refund-failed" };
-        // 3. Paid — record it before anything else can fail, so no later run
-        // can pay again.
-        await db.update(productsOrder).set({ refunded: true }).where(eq(productsOrder.id, trustedLine.id));
+        if (!money.success) {
+          // Nothing was paid: release the claim so a later run can retry. If
+          // the release itself fails the row stays claimed — a human clears it,
+          // and the root-note marker still guards any retry.
+          try {
+            await db
+              .update(productsOrder)
+              .set({ refunded: false })
+              .where(eq(productsOrder.id, trustedLine.id));
+          } catch (error) {
+            console.error(
+              `settleReturnLine: root refund failed for line ${trustedLine.id} and releasing its claim failed too — row stays marked refunded, customer NOT paid`,
+              error
+            );
+          }
+          return { settled: false, reason: "refund-failed" };
+        }
+        // 3. Paid. The row was already marked by the claim, so no later run
+        // can pay again, whatever fails below.
         // 4. Goods. Accounting only; a failure here is cleanup, not a debt.
         // Caught as well as checked: a THROW from here must not escape as a
         // failed settlement either — the customer has been paid.

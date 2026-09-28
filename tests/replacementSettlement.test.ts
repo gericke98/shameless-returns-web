@@ -48,7 +48,13 @@ vi.mock("@/db/drizzle", () => {
       if (payload?.refunded === true) sequence.push("mark");
       return chain;
     },
-    where: () => Promise.resolve(),
+    // `where` must be both awaitable (plain updates) and chainable into
+    // `.returning()` (the atomic claim).
+    where: () => {
+      const p: any = Promise.resolve();
+      p.returning = async () => (CLAIM ? [{ id: dbLine.value?.id }] : []);
+      return p;
+    },
     select: () => chain,
     from: () => Promise.resolve([]),
     query: { productsOrder: { findFirst: async () => dbLine.value, findMany: async () => [] } },
@@ -61,6 +67,7 @@ const singleRefunds: any[] = [];
 const bookings: string[] = [];
 const sequence: string[] = []; // "mark" | "book" | "close", in call order
 let ALLOW_SINGLE = false;
+let CLAIM = true; // does the atomic claim win the row?
 const closed: string[] = [];
 let ROOT_REFUND: any = { success: true, alreadyRefunded: false };
 let BOOKING: any = { success: true };
@@ -76,7 +83,7 @@ vi.mock("@/db/queries", () => ({
     singleRefunds.push(args);
     return { success: true };
   },
-  refundOnOrder: async (...args: any[]) => { rootRefunds.push(args); return ROOT_REFUND; },
+  refundOnOrder: async (...args: any[]) => { sequence.push("money"); rootRefunds.push(args); return ROOT_REFUND; },
   createStoreCreditRefund: async (returnId: string) => { sequence.push("book"); bookings.push(returnId); return BOOKING; },
   noteStoreCreditOnOrder: async () => ({ success: true }),
   createOrder: async () => ({ success: true }),
@@ -88,6 +95,7 @@ beforeEach(() => {
   ROOT_REFUND = { success: true, alreadyRefunded: false };
   BOOKING = { success: true };
   ALLOW_SINGLE = false;
+  CLAIM = true;
   ORDERS["A"] = { id: "A", orderNumber: "#311749", exchangeOf: null, stripePaymentIntent: null, returnMethod: "CORREOS",
     products: [{ variant_id: "old", productId: "P1", new_variant_id: "gid://shopify/ProductVariant/V", action: "CAMBIO", confirmed: true, price: "47.03" }] };
   ORDERS["B"] = { id: "B", orderNumber: "#312061", exchangeOf: "A", returnMethod: "CORREOS", shippingCountry: "Spain", shippingZip: "28001", products: [] };
@@ -111,9 +119,9 @@ describe("refund lane on a replacement order", () => {
     expect(marker).toBe("gid://shopify/ReturnLineItem/L");
   });
 
-  it("marks the row refunded BEFORE booking the goods", async () => {
+  it("claims the row BEFORE the money, and books the goods after", async () => {
     await settle();
-    expect(sequence).toEqual(["mark", "book", "close"]);
+    expect(sequence).toEqual(["mark", "money", "book", "close"]);
     expect(bookings).toEqual(["gid://shopify/Return/R"]);
   });
 
@@ -125,11 +133,22 @@ describe("refund lane on a replacement order", () => {
     expect(alerts.some((a) => a.subject.includes("#312061"))).toBe(true);
   });
 
-  it("marks nothing when the root refund fails", async () => {
+  it("releases the claim and books nothing when the root refund fails", async () => {
     ROOT_REFUND = { success: false, errors: ["no"] };
     const out = await settle();
     expect(out).toEqual({ settled: false, reason: "refund-failed" });
-    expect(sets).toHaveLength(0);
+    // Claimed, then released: the row ends NOT refunded.
+    expect(sets).toEqual([{ refunded: true }, { refunded: false }]);
+    expect(bookings).toHaveLength(0);
+  });
+
+  it("pays nothing when a concurrent settlement already claimed the row", async () => {
+    CLAIM = false;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await settle();
+    errors.mockRestore();
+    expect(out).toEqual({ settled: false, reason: "already-refunded" });
+    expect(rootRefunds).toHaveLength(0);
     expect(bookings).toHaveLength(0);
   });
 

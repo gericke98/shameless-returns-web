@@ -22,6 +22,7 @@ import {
   releaseExchangeReservation,
   reserveExchangeStock,
 } from "./exchangeReservation";
+import { refundSourceFor } from "./replacementOrder";
 import {
   buildReturnInput,
   matchReturnLineItems,
@@ -525,6 +526,10 @@ export async function updateFinalOrder(
     );
   }
 
+  // On one of our replacement orders the return's own transaction is the €0.01
+  // placeholder; the money is on the root order. See actions/replacementOrder.ts.
+  const refundSource = await refundSourceFor(dbOrder, result.data);
+
   // Matched on the fulfillment line item, never on array position — Shopify
   // makes no promise to echo the input order, and `return_line_item_id` is what
   // `returnRefund` later spends. Pairing by index would refund the wrong
@@ -550,8 +555,8 @@ export async function updateFinalOrder(
           confirmed: true,
           return_id: result.data.id,
           return_line_item_id: returnLineItemId,
-          transaction_id: result.data.transactionId,
-          transaction_amount: result.data.transactionAmount,
+          transaction_id: refundSource.transactionId,
+          transaction_amount: refundSource.transactionAmount,
           ...(isCredit ? { credit: true } : {}),
         })
         .where(

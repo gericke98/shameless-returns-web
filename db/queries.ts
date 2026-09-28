@@ -309,6 +309,35 @@ export async function getOrderTotal(orderId: string) {
 }
 
 /**
+ * The transactions of an order, for choosing what a refund is charged against.
+ * Null on any failure — the caller stores null, which the refund lane refuses
+ * with `no-refund-transaction` and the cron alerts on.
+ */
+export async function getOrderTransactions(orderId: string) {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+    query orderTransactions($id: ID!) {
+      order(id: $id) {
+        transactions { id kind status amountSet { shopMoney { amount } } }
+      }
+    }
+  `;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables: { id: `gid://shopify/Order/${orderId}` } }),
+    });
+    const data = await response.json();
+    return data?.data?.order?.transactions ?? null;
+  } catch (error) {
+    console.error("getOrderTransactions failed:", error);
+    return null;
+  }
+}
+
+/**
  * The money set of the order a return belongs to, for currency conversion.
  *
  * Returns null on any failure. Every caller treats null as "EUR at par", which

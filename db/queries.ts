@@ -615,6 +615,42 @@ export async function refundOnOrder(
 }
 
 /**
+ * The notes of every refund already on an order, for the replacement lane's
+ * "was this paid by hand?" check in `settleReturnLine`. A failed read returns
+ * success:false and the caller must REFUSE — never settle blind.
+ */
+export async function getOrderRefundNotes(
+  orderId: string
+): Promise<{ success: true; notes: string[] } | { success: false; errors: unknown }> {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  try {
+    const read = await (
+      await fetch(url, {
+        method: "POST",
+        headers: session.headers,
+        body: JSON.stringify({
+          query: `query refundNotes($id: ID!) { order(id: $id) { refunds { note } } }`,
+          variables: { id: `gid://shopify/Order/${orderId}` },
+        }),
+      })
+    ).json();
+    const order = read?.data?.order;
+    if (read?.errors || !order || !Array.isArray(order.refunds)) {
+      console.error("getOrderRefundNotes: cannot read order", orderId, read?.errors);
+      return { success: false, errors: read?.errors ?? "order-not-found" };
+    }
+    return {
+      success: true,
+      notes: order.refunds.map((r: any) => String(r?.note ?? "")),
+    };
+  } catch (error) {
+    console.error("getOrderRefundNotes fetch error:", error);
+    return { success: false, errors: error };
+  }
+}
+
+/**
  * Record a store-credit return as refunded on Shopify, moving no money.
  *
  * The credit lane pays the customer with `giftCardCreate` and used to stop

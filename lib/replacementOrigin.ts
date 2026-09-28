@@ -108,3 +108,33 @@ export function wasProductSwap(
   const [match] = exchangeRowsFor(originalRows, replacementVariantId);
   return !!match && String(match.productId) !== String(replacementProductId);
 }
+
+// The exact prefix `refundOnOrder` puts on every refund it creates.
+const SETTLEMENT_NOTE = /^\[gid:\/\/shopify\/ReturnLineItem\/\d+\]/;
+
+/**
+ * Does the root order already carry a refund that NAMES this replacement order
+ * but was not made by settlement? That is a hand refund (how #312061 was
+ * handled), and settling again would pay the customer twice: the replacement's
+ * Shopify Return stays OPEN and `refunded` stays NULL, so nothing else sees it.
+ *
+ * A note carrying this line's own bracketed marker is ours — `refundOnOrder`
+ * handles that replay. A note starting with ANY settlement marker is ours too:
+ * a sibling line of the same replacement, settled earlier, legitimately names
+ * the same order number under a different marker.
+ */
+export function hasUnmarkedRefundFor(
+  notes: string[],
+  replacementOrderNumber: string,
+  marker: string
+): boolean {
+  const digits = String(replacementOrderNumber ?? "").replace(/\D/g, "");
+  if (!digits) return false;
+  const mentions = new RegExp(`(?<!\\d)${digits}(?!\\d)`);
+  const bracketed = `[${marker}]`;
+  return notes.some((note) => {
+    const n = String(note ?? "");
+    if (n.includes(bracketed) || SETTLEMENT_NOTE.test(n.trim())) return false;
+    return mentions.test(n);
+  });
+}

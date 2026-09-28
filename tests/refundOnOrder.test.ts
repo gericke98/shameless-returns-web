@@ -115,3 +115,23 @@ describe("refundOnOrder", () => {
     expect(write.variables.input.transactions[0].gateway).toBe("paypal");
   });
 });
+
+describe("getOrderRefundNotes", () => {
+  it("returns every refund note on the order", async () => {
+    READ.data.order.refunds = [{ note: "Refund for #312061" }, { note: null }];
+    const { getOrderRefundNotes } = await import("@/db/queries");
+    await expect(getOrderRefundNotes("1")).resolves.toEqual({
+      success: true,
+      notes: ["Refund for #312061", ""],
+    });
+  });
+
+  it("reports failure when the order cannot be read — the caller must refuse", async () => {
+    READ = { errors: [{ message: "boom" }] };
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { getOrderRefundNotes } = await import("@/db/queries");
+    const out = await getOrderRefundNotes("1");
+    errors.mockRestore();
+    expect(out.success).toBe(false);
+  });
+});

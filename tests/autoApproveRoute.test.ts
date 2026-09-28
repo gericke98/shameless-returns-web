@@ -398,6 +398,19 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
     expect(alertBodies[0]).toContain("NO money moved");
   });
 
+  it.each(["claim-stuck", "root-has-unmarked-refund"])(
+    "does not claim 'still owed, no money moved' for %s — its own alert says what is true",
+    async (reason) => {
+      state.settleRefusesOn = { variant: "v1", reason };
+
+      await call({ authorization: "Bearer s3cret" });
+
+      expect(alertBodies[0]).toContain(reason);
+      expect(alertBodies[0]).not.toContain("NO money moved");
+      expect(alertBodies[0]).not.toContain("keep failing every run");
+    }
+  );
+
   it("still reports the refusal in the held list", async () => {
     state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
 

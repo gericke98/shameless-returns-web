@@ -76,6 +76,12 @@ export const orders = pgTable("orders", {
   // webhook. Null for free returns, and for anything booked before 2026-08-12
   // — those are recovered by listing sessions for the customer's email.
   stripePaymentIntent: text("stripe_payment_intent"),
+  // Set when this order is one of OUR replacement orders (tags `Change` +
+  // `Order #NNN`): the id of the order it replaced. Such an order carries only
+  // a €0.01 placeholder payment and list prices, so anything that values or
+  // refunds its lines must go back through this link. See
+  // lib/replacementOrigin.ts.
+  exchangeOf: text("exchange_of"),
   // Which lane shipped this return: 'CORREOS' | 'AMPHORA' | 'SELF'. Null on
   // rows created before self-booking existed, which are inferred by country
   // exactly as they were.

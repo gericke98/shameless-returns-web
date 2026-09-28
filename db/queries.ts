@@ -309,6 +309,35 @@ export async function getOrderTotal(orderId: string) {
 }
 
 /**
+ * The transactions of an order, for choosing what a refund is charged against.
+ * Null on any failure — the caller stores null, which the refund lane refuses
+ * with `no-refund-transaction` and the cron alerts on.
+ */
+export async function getOrderTransactions(orderId: string) {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const query = `
+    query orderTransactions($id: ID!) {
+      order(id: $id) {
+        transactions { id kind status amountSet { shopMoney { amount } } }
+      }
+    }
+  `;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: session.headers,
+      body: JSON.stringify({ query, variables: { id: `gid://shopify/Order/${orderId}` } }),
+    });
+    const data = await response.json();
+    return data?.data?.order?.transactions ?? null;
+  } catch (error) {
+    console.error("getOrderTransactions failed:", error);
+    return null;
+  }
+}
+
+/**
  * The money set of the order a return belongs to, for currency conversion.
  *
  * Returns null on any failure. Every caller treats null as "EUR at par", which
@@ -433,6 +462,191 @@ export async function createRefund(
   } catch (error) {
     console.error("Fetch error:", error);
     return { success: false, error: error };
+  }
+}
+
+/**
+ * Refund money on an order that is NOT the one the return lives on.
+ *
+ * Used for returns from our replacement orders, whose own payment is a €0.01
+ * placeholder: the money goes back against the root order's real payment.
+ * No line items — the goods are booked back on the replacement order by the
+ * caller, and restocking here would count the garment twice.
+ *
+ * Idempotent on `marker` (the return line item id, a full GID such as
+ * `gid://shopify/ReturnLineItem/91677131078`): a refund whose note already
+ * contains the exact bracketed token `[${marker}]` means the money moved on
+ * an earlier run, so nothing is sent. The note is written with the bracketed
+ * marker FIRST (`[${marker}] ${note}`) and matched as that exact bracketed
+ * token, not a bare substring — a root order can accumulate one refund per
+ * replacement order, and a bare-substring match would let a shorter marker
+ * (e.g. `.../9167`) false-positive against a longer one that merely starts
+ * with it (`.../91677131078`), silently skipping a real refund. Bracketing
+ * and placing the marker first also means any future note-length cap
+ * truncates the free-text tail, never the marker itself.
+ * An unreadable order refuses — it never refunds blind.
+ *
+ * The parent transaction's `gateway` is read off the order rather than
+ * hardcoded to "shopify_payments": a replacement order's root payment could
+ * have gone through any gateway the shop has enabled. If the passed-in
+ * `transactionId` isn't among the order's transactions, this refuses rather
+ * than guessing a gateway.
+ *
+ * `amount` IS the presentment-currency amount, and `RefundInput.currency` must
+ * declare which currency that is. Confirmed by live introspection of the Admin
+ * API 2025-01 schema: `RefundInput.currency` reads "The currency that is used
+ * to refund the order. This must be the presentment currency, which is the
+ * currency used by the customer. This is a required field for orders where
+ * the currency and presentment currency differ." — i.e. Shopify does not infer
+ * presentment from the order; the caller must both convert `amount` AND name
+ * the currency it converted to. `OrderTransactionInput.amount` itself is only
+ * documented as "The amount of money for this transaction," with no currency
+ * of its own — `RefundInput.currency` is what pins it down.
+ */
+export async function refundOnOrder(
+  orderId: string,
+  transactionId: string,
+  amountEuros: number,
+  marker: string,
+  note: string
+): Promise<
+  | { success: true; alreadyRefunded: boolean }
+  | { success: false; errors: unknown }
+> {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const gid = `gid://shopify/Order/${orderId}`;
+  const post = async (query: string, variables: Record<string, unknown>) =>
+    (
+      await fetch(url, {
+        method: "POST",
+        headers: session.headers,
+        body: JSON.stringify({ query, variables }),
+      })
+    ).json();
+
+  try {
+    const read = await post(
+      `query rootRefunds($id: ID!) {
+        order(id: $id) {
+          refunds { note }
+          transactions { id gateway kind status }
+          totalPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
+        }
+      }`,
+      { id: gid }
+    );
+    const order = read?.data?.order;
+    if (read.errors || !order) {
+      console.error("refundOnOrder: cannot read order", orderId, read.errors);
+      return { success: false, errors: read.errors ?? "order-not-found" };
+    }
+    const bracketedMarker = `[${marker}]`;
+    if (
+      (order.refunds ?? []).some((r: any) =>
+        String(r?.note ?? "").includes(bracketedMarker)
+      )
+    ) {
+      return { success: true, alreadyRefunded: true };
+    }
+
+    const parent = (order.transactions ?? []).find(
+      (t: any) => t?.id === transactionId
+    );
+    if (!parent) {
+      console.error(
+        "refundOnOrder: parent transaction not found on order",
+        orderId,
+        transactionId
+      );
+      return { success: false, errors: "parent-transaction-not-found" };
+    }
+
+    const set = order.totalPriceSet;
+    const money = refundTransactionAmount(amountEuros, {
+      shop_money: {
+        amount: set?.shopMoney?.amount,
+        currency_code: set?.shopMoney?.currencyCode,
+      },
+      presentment_money: {
+        amount: set?.presentmentMoney?.amount,
+        currency_code: set?.presentmentMoney?.currencyCode,
+      },
+    } as any);
+
+    const written = await post(
+      `mutation rootRefund($input: RefundInput!) {
+        refundCreate(input: $input) {
+          refund { id }
+          userErrors { field message }
+        }
+      }`,
+      {
+        input: {
+          orderId: gid,
+          notify: true,
+          note: `${bracketedMarker} ${note}`,
+          currency: money.currencyCode,
+          transactions: [
+            {
+              orderId: gid,
+              parentId: transactionId,
+              amount: money.amount,
+              gateway: parent.gateway,
+              kind: "REFUND",
+            },
+          ],
+        },
+      }
+    );
+    const errors = written.errors ?? written?.data?.refundCreate?.userErrors ?? [];
+    if (errors.length > 0 || !written?.data?.refundCreate?.refund) {
+      console.error("refundOnOrder failed:", errors);
+      return { success: false, errors };
+    }
+    return { success: true, alreadyRefunded: false };
+  } catch (error) {
+    console.error("refundOnOrder fetch error:", error);
+    return { success: false, errors: error };
+  }
+}
+
+/**
+ * The notes of every refund already on an order, for the replacement lane's
+ * "was this paid by hand?" check in `settleReturnLine`. A failed read returns
+ * success:false and the caller must REFUSE — never settle blind.
+ */
+export async function getOrderRefundNotes(
+  orderId: string
+): Promise<{ success: true; notes: string[] } | { success: false; errors: unknown }> {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  try {
+    const read = await (
+      await fetch(url, {
+        method: "POST",
+        headers: session.headers,
+        body: JSON.stringify({
+          query: `query refundNotes($id: ID!) { order(id: $id) { refunds { note } } }`,
+          variables: { id: `gid://shopify/Order/${orderId}` },
+        }),
+      })
+    ).json();
+    const order = read?.data?.order;
+    if (read?.errors || !order || !Array.isArray(order.refunds)) {
+      console.error("getOrderRefundNotes: cannot read order", orderId, read?.errors);
+      return { success: false, errors: read?.errors ?? "order-not-found" };
+    }
+    return {
+      success: true,
+      notes: order.refunds.map((r: any) => String(r?.note ?? "")),
+    };
+  } catch (error) {
+    console.error("getOrderRefundNotes fetch error:", error);
+    return { success: false, errors: error };
   }
 }
 

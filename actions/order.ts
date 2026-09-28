@@ -11,6 +11,10 @@ import {
   wasItemReturned,
 } from "@/utils/order-utils";
 import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
+import {
+  planReplacementOrder,
+  type ReplacementPlan,
+} from "@/actions/replacementOrder";
 import { isInternationalOrder } from "@/actions/amphoraReturn";
 import { normalizeCountry } from "@/lib/countries";
 import { issueOrderAccess } from "@/lib/orderAccess";
@@ -92,8 +96,16 @@ export async function getOrder(
     redirect(`/${order.id}`);
   }
 
-  // 5. Save order to database
-  await saveOrderToDatabase(order);
+  // 5. Save order to database. A replacement order is only saved once every
+  // line can be valued from the original — see actions/replacementOrder.ts.
+  const replacement = await planReplacementOrder(order);
+  if (replacement.kind === "refused") {
+    return {
+      message:
+        "Please contact hello@shamelesscollective.com with your order number to return items from this order",
+    };
+  }
+  await saveOrderToDatabase(order, replacement);
 
   // 6. Same as the exists branch above: issue the session before redirecting,
   // and String() the Shopify-supplied id for the same reason.
@@ -196,17 +208,23 @@ function validateOrderDetails(
  *
  * @param order Order data to save
  */
-async function saveOrderToDatabase(order: OrderData): Promise<void> {
+async function saveOrderToDatabase(
+  order: OrderData,
+  replacement: ReplacementPlan
+): Promise<void> {
   try {
     // 1. Extract exchanged/returned products from order note
     const { exchanges, returns } = extractOrderNoteInfo(order.note || "");
 
     // 2. Insert order into database
-    await saveOrderDetails(order);
+    await saveOrderDetails(
+      order,
+      replacement.kind === "replacement" ? replacement.exchangeOf : null
+    );
 
     // 3. Process and insert order items
     const orderItems = order.line_items.filter((item) => item.quantity > 0);
-    await insertOrderItems(orderItems, order.id, exchanges, returns);
+    await insertOrderItems(orderItems, order.id, exchanges, returns, replacement);
   } catch (error) {
     console.error("Error saving order to database:", error);
     throw new Error("Failed to save order data");
@@ -225,7 +243,8 @@ async function insertOrderItems(
   items: OrderLineItem[],
   orderId: string,
   exchanges: string[],
-  returns: string[]
+  returns: string[],
+  replacement: ReplacementPlan
 ): Promise<void> {
   await Promise.all(
     items.map(async (item) => {
@@ -234,8 +253,13 @@ async function insertOrderItems(
       const wasReturned = wasItemReturned(item, returns);
       const wasChanged = wasExchanged || wasReturned;
 
-      // Calculate price with discount
-      const priceWithDiscount = calculatePriceWithDiscount(item);
+      // A replacement order's own prices are list prices; the customer paid
+      // what the original's exchange row says. planReplacementOrder already
+      // guaranteed every line has one, so there is no fallback here.
+      const priceWithDiscount =
+        replacement.kind === "replacement"
+          ? Number(replacement.priceByVariant[String(item.variant_id)])
+          : calculatePriceWithDiscount(item);
 
       // Insert item into database
       return saveOrderItem(item, orderId, wasChanged, priceWithDiscount);

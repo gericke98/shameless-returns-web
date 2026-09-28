@@ -24,8 +24,13 @@ export async function orderExists(orderId: string): Promise<boolean> {
  * Saves order details to the database
  *
  * @param order Order data to save
+ * @param exchangeOf Id of the original order this one replaces, or null when
+ *   this is an ordinary order. See lib/replacementOrigin.ts.
  */
-export async function saveOrderDetails(order: OrderData): Promise<void> {
+export async function saveOrderDetails(
+  order: OrderData,
+  exchangeOf: string | null = null
+): Promise<void> {
   await db.insert(orders).values({
     id: formatOrderId(order.id),
     orderNumber: order.name,
@@ -41,6 +46,7 @@ export async function saveOrderDetails(order: OrderData): Promise<void> {
     shippingProvince: order.shipping_address.province || "",
     shippingCountry: order.shipping_address.country,
     shippingPhone: order.shipping_address.phone || "",
+    exchangeOf,
   });
 }
 

@@ -19,17 +19,22 @@ import {
   createStoreCreditRefund,
   noteStoreCreditOnOrder,
   getOrderById,
+  getOrderByIdFresh,
+  getOrderRefundNotes,
   getOrderTotal,
   processGiftCardReturn,
+  refundOnOrder,
 } from "@/db/queries";
 import { productsOrder } from "@/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { getFeeTable } from "@/db/fees";
 import { resolveZone } from "@/lib/zones";
 import { centsToEuros, feesForCountry, feesForWeight } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import { releaseExchangeReservation } from "@/actions/exchangeReservation";
 import { alertOps } from "@/actions/opsAlert";
+import { rootOrderIdOf } from "@/actions/replacementOrder";
+import { hasUnmarkedRefundFor, wasProductSwap } from "@/lib/replacementOrigin";
 
 export type SettleOutcome =
   | {
@@ -56,6 +61,38 @@ export type SettleOutcome =
  */
 const isSelfBooked = (row: { returnMethod?: string | null } | null | undefined) =>
   row?.returnMethod === "SELF";
+
+/**
+ * Tell ops when a returned replacement may have cost the customer more than
+ * the original line price we pay back: a swap to a DIFFERENT product can carry
+ * a Stripe top-up, and that money is on Stripe, not on the Shopify order.
+ * Informational only — never blocks settlement. It runs AFTER money has moved
+ * and the row is marked, so it must never throw: a throw here would surface as
+ * a failed settlement for a customer who was in fact paid.
+ */
+/** Appended to every replacement-lane alert: the rule that keeps #312061 from recurring. */
+const NEVER_BY_HAND =
+  "Returns from replacement orders must be settled through the dashboard — never refund them by hand on the original order.";
+
+async function alertPossibleTopUp(line: any, order: any, lane: string) {
+  try {
+    if (!order?.exchangeOf) return;
+    const original = await getOrderByIdFresh(String(order.exchangeOf));
+    const pi = (original as any)?.stripePaymentIntent;
+    if (!pi) return;
+    if (!wasProductSwap((original as any)?.products ?? [], String(line.variant_id), String(line.productId))) return;
+    await alertOps(
+      `[returns] POSSIBLE TOP-UP OWED — ${order.orderNumber}`,
+      `${order.orderNumber} is a replacement for ${original?.orderNumber}. The customer swapped to a different product and paid through Stripe (${pi}).\n` +
+        `The ${lane} paid only the original line price (${line.price} EUR). Check whether part of ${pi} was a top-up for this garment and refund it from Stripe if so.`
+    );
+  } catch (error) {
+    console.error(
+      `alertPossibleTopUp: could not check order ${order?.id} (line ${line?.id}) for a top-up`,
+      error
+    );
+  }
+}
 
 export async function settleReturnLine(product: any, order: any): Promise<SettleOutcome> {
   // Reload the line from the database instead of trusting what the caller sent.
@@ -179,6 +216,7 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
           refunded: true,
         })
         .where(eq(productsOrder.id, trustedLine.id));
+      await alertPossibleTopUp(trustedLine, dbOrder, "store credit");
       return { settled: true, lane: "credit", lineIds: [String(trustedLine.id)] };
     }
     return { settled: false, reason: "gift-card-failed" };
@@ -269,6 +307,166 @@ export async function settleReturnLine(product: any, order: any): Promise<Settle
       // Same €5 rule, same self-booked zeroing; only the source changed.
       let amountToRefund =
         Number(trustedLine.price) - (isSelfBooked(settlementOrder) ? 0 : 5);
+      if (settlementOrder?.exchangeOf) {
+        // A replacement order's payment is a €0.01 placeholder: the money goes
+        // back on the ROOT order, the goods come back on this one. Order
+        // matters: refuse → CLAIM the row → money → book the goods.
+        //
+        // Why claim before paying: two settlements of the same line can overlap
+        // (a dashboard double-submit, or a click while the cron runs). Both
+        // would pass the plain `refunded` read above, and both would pass
+        // refundOnOrder's note check, which is read-then-write. The ordinary
+        // lane has a Shopify backstop (returnRefund rejects a second refund of
+        // the same return line item); a root-order refundCreate does NOT — it
+        // is capped only by the remaining refundable amount, so a second
+        // payout would succeed. The atomic claim lets exactly one caller in.
+        //
+        // 0. Find the root BEFORE any money moves. The walk throws on an
+        // exchange_of cycle; nothing has been paid yet, so refusing is safe.
+        let rootId: string;
+        try {
+          rootId = await rootOrderIdOf(String(settlementOrder.id));
+        } catch (error) {
+          console.error(
+            `settleReturnLine: cannot resolve the root order of replacement ${settlementOrder.id} (${settlementOrder.orderNumber}) — nothing refunded`,
+            error
+          );
+          return { settled: false, reason: "refund-failed" };
+        }
+        const marker = String(trustedLine.return_line_item_id ?? "").trim();
+        if (!marker) {
+          // The marker is what makes a replayed refund a no-op. Without it the
+          // next cron run could pay again, so refuse while nothing has moved.
+          console.error(
+            `settleReturnLine: line ${trustedLine.id} on replacement ${settlementOrder.orderNumber} has no return line item — nothing refunded`
+          );
+          return { settled: false, reason: "refund-failed" };
+        }
+        // 0b. Was the customer already paid BY HAND on the root? A manual refund
+        // there is invisible to everything else: the auto-approve gate reads
+        // the Return on the REPLACEMENT (still OPEN), `refunded` is still NULL,
+        // and refundOnOrder only recognises its own bracketed marker — so it
+        // would pay a second time. Checked before the claim and before any
+        // money; an unreadable root refuses rather than proceeding blind.
+        const rootNotes = await getOrderRefundNotes(rootId);
+        if (!rootNotes.success) {
+          console.error(
+            `settleReturnLine: cannot read refunds on root ${rootId} for replacement ${settlementOrder.orderNumber} — nothing refunded`
+          );
+          return { settled: false, reason: "refund-failed" };
+        }
+        if (hasUnmarkedRefundFor(rootNotes.notes, String(settlementOrder.orderNumber ?? ""), marker)) {
+          try {
+            await alertOps(
+              `[returns] REPLACEMENT RETURN MAY ALREADY BE PAID — ${settlementOrder.orderNumber}`,
+              [
+                `Root order ${rootId} already has a refund whose note mentions ${settlementOrder.orderNumber}, but it was not made by settlement (no [${marker}] marker).`,
+                `Verify by hand whether the customer was already paid for productsorder row ${trustedLine.id}. If they were, mark the line refunded; do NOT settle it again.`,
+                `Nothing was claimed and no money moved.`,
+                NEVER_BY_HAND,
+              ].join("\n")
+            );
+          } catch (error) {
+            console.error(`settleReturnLine: unmarked-refund alert failed for line ${trustedLine.id}`, error);
+          }
+          return { settled: false, reason: "root-has-unmarked-refund" };
+        }
+        // 1. Claim the row atomically. `refunded` is NULL on most live rows,
+        // not false, so the condition must accept NULL.
+        const claimed = await db
+          .update(productsOrder)
+          .set({ refunded: true })
+          .where(
+            and(
+              eq(productsOrder.id, trustedLine.id),
+              or(isNull(productsOrder.refunded), eq(productsOrder.refunded, false))
+            )
+          )
+          .returning({ id: productsOrder.id });
+        if (claimed.length === 0) {
+          console.error(
+            `settleReturnLine: line ${trustedLine.id} was claimed by a concurrent settlement — not paying`
+          );
+          return { settled: false, reason: "already-refunded" };
+        }
+        // 2. Money, also idempotent on the return line item id (a retry after
+        // a crash between Shopify accepting and us returning pays nothing).
+        const money = await refundOnOrder(
+          rootId,
+          refundTransactionId,
+          amountToRefund,
+          marker,
+          `Return from replacement order ${settlementOrder.orderNumber}`
+        );
+        if (!money.success) {
+          // Nothing was paid: release the claim so a later run can retry. If
+          // the release itself fails the row stays claimed — marked refunded
+          // with the customer NOT paid, which no later run will touch — so it
+          // gets its own reason and alert and a human clears it.
+          try {
+            await db
+              .update(productsOrder)
+              .set({ refunded: false })
+              .where(eq(productsOrder.id, trustedLine.id));
+          } catch (error) {
+            console.error(
+              `settleReturnLine: root refund failed for line ${trustedLine.id} and releasing its claim failed too — row stays marked refunded, customer NOT paid`,
+              error
+            );
+            try {
+              await alertOps(
+                `[returns] CLAIM STUCK — ${settlementOrder.orderNumber}`,
+                [
+                  `The root refund for ${settlementOrder.orderNumber} failed, and releasing the settlement claim failed too.`,
+                  `Row marked refunded but customer NOT paid — clear \`refunded\` on productsorder row ${trustedLine.id} by hand so the next run retries.`,
+                  NEVER_BY_HAND,
+                ].join("\n")
+              );
+            } catch (alertError) {
+              console.error(`settleReturnLine: claim-stuck alert failed for line ${trustedLine.id}`, alertError);
+            }
+            return { settled: false, reason: "claim-stuck" };
+          }
+          return { settled: false, reason: "refund-failed" };
+        }
+        // 3. Paid. The row was already marked by the claim, so no later run
+        // can pay again, whatever fails below.
+        // 4. Goods. Accounting only; a failure here is cleanup, not a debt.
+        // Caught as well as checked: a THROW from here must not escape as a
+        // failed settlement either — the customer has been paid.
+        let bookingFailure: unknown = null;
+        try {
+          const booked = await createStoreCreditRefund(
+            String(trustedLine.return_id ?? ""),
+            marker
+          );
+          const closedReturn = booked.success
+            ? await closeReturn(String(trustedLine.return_id ?? ""))
+            : booked;
+          if (!booked.success || !closedReturn.success) {
+            bookingFailure = (closedReturn as any).errors ?? (closedReturn as any).error ?? "unknown";
+          }
+        } catch (error) {
+          bookingFailure = error instanceof Error ? error.message : error;
+        }
+        if (bookingFailure !== null) {
+          try {
+            await alertOps(
+              `[returns] REPLACEMENT RETURN PAID, NOT BOOKED — ${settlementOrder.orderNumber}`,
+              `The customer WAS refunded ${amountToRefund.toFixed(2)} EUR on the root order. Booking the goods back on ${settlementOrder.orderNumber} (${trustedLine.return_id}) failed — record the return and close it by hand. Do NOT refund again.\n` +
+                `Error: ${JSON.stringify(bookingFailure)}\n` +
+                NEVER_BY_HAND
+            );
+          } catch (error) {
+            console.error(
+              `settleReturnLine: line ${trustedLine.id} paid but not booked, and the alert failed`,
+              error
+            );
+          }
+        }
+        await alertPossibleTopUp(trustedLine, settlementOrder, "refund");
+        return { settled: true, lane: "refund", lineIds: [String(trustedLine.id)] };
+      }
       result = await createRefund(
         String(trustedLine.return_id ?? ""),
         String(trustedLine.return_line_item_id ?? ""),

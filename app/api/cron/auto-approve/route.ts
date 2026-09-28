@@ -10,6 +10,9 @@ import { decideAutoApprove, type GateLine } from "@/lib/autoApproveGate";
 import { settleReturnLine } from "@/lib/settleReturn";
 import { alertOps } from "@/actions/opsAlert";
 
+// Settlement refusals that already sent their own, more specific alert.
+const SELF_EXPLAINED_REFUSALS = new Set(["claim-stuck", "root-has-unmarked-refund"]);
+
 /**
  * Settle the returns that are already sitting in the warehouse.
  *
@@ -219,8 +222,16 @@ export async function GET(req: Request) {
             [
               `The daily auto-approve run judged ${label} eligible and then could not pay it.`,
               `Reason: ${outcome.reason}`,
-              `NO money moved — the payout was refused before it completed, so there is nothing to reverse.`,
-              `The customer is still owed. This will keep failing every run until someone looks.`,
+              // These two send their own specific alert, and the generic
+              // lines below would contradict it: a stuck claim will NOT be
+              // retried by later runs, and an unmarked root refund means the
+              // customer may already have been paid by hand.
+              ...(SELF_EXPLAINED_REFUSALS.has(outcome.reason)
+                ? [`A separate alert for this order says exactly what to check — follow that one.`]
+                : [
+                    `NO money moved — the payout was refused before it completed, so there is nothing to reverse.`,
+                    `The customer is still owed. This will keep failing every run until someone looks.`,
+                  ]),
             ].join("\n")
           );
         }

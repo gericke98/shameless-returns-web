@@ -8,8 +8,9 @@
 // phishing message arriving from us, in the exact format ops is trained to act
 // on — and enough of them buries the real ones.
 //
-// Verified before removing: the only importer is `actions/cancelReturn.ts`
-// (a server module).
+// Importers must be server-side modules only (actions, lib, API routes) —
+// never a client component. The list of importers is deliberately not
+// maintained here; check with grep before relying on it.
 
 import axios from "axios";
 

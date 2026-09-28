@@ -92,6 +92,8 @@ export type OrderData = {
   }>;
   line_items: OrderLineItem[];
   note?: string;
+  /** Comma-separated, as Shopify REST returns it. */
+  tags?: string;
   name: string;
   contact_email: string;
   subtotal_price: string;

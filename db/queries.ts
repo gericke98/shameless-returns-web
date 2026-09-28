@@ -483,13 +483,16 @@ export async function createRefund(
  * `transactionId` isn't among the order's transactions, this refuses rather
  * than guessing a gateway.
  *
- * `amount` is sent in the shop's currency, not converted to presentment:
- * `RefundInput.transactions[].amount` (`OrderTransactionInput.amount`) is a
- * bare `Money` scalar with no accompanying `currency` field, unlike e.g.
- * `OrderCaptureInput` (which has one, and documents its plain `amount` as
- * shop currency unless that field names presentment). There is no way to
- * declare this amount as presentment currency, so Shopify takes it as shop
- * currency — and `amountEuros` already IS shop currency here (the shop is EUR).
+ * `amount` IS the presentment-currency amount, and `RefundInput.currency` must
+ * declare which currency that is. Confirmed by live introspection of the Admin
+ * API 2025-01 schema: `RefundInput.currency` reads "The currency that is used
+ * to refund the order. This must be the presentment currency, which is the
+ * currency used by the customer. This is a required field for orders where
+ * the currency and presentment currency differ." — i.e. Shopify does not infer
+ * presentment from the order; the caller must both convert `amount` AND name
+ * the currency it converted to. `OrderTransactionInput.amount` itself is only
+ * documented as "The amount of money for this transaction," with no currency
+ * of its own — `RefundInput.currency` is what pins it down.
  */
 export async function refundOnOrder(
   orderId: string,
@@ -519,6 +522,10 @@ export async function refundOnOrder(
         order(id: $id) {
           refunds { note }
           transactions { id gateway kind status }
+          totalPriceSet {
+            shopMoney { amount currencyCode }
+            presentmentMoney { amount currencyCode }
+          }
         }
       }`,
       { id: gid }
@@ -546,6 +553,18 @@ export async function refundOnOrder(
       return { success: false, errors: "parent-transaction-not-found" };
     }
 
+    const set = order.totalPriceSet;
+    const money = refundTransactionAmount(amountEuros, {
+      shop_money: {
+        amount: set?.shopMoney?.amount,
+        currency_code: set?.shopMoney?.currencyCode,
+      },
+      presentment_money: {
+        amount: set?.presentmentMoney?.amount,
+        currency_code: set?.presentmentMoney?.currencyCode,
+      },
+    } as any);
+
     const written = await post(
       `mutation rootRefund($input: RefundInput!) {
         refundCreate(input: $input) {
@@ -558,11 +577,12 @@ export async function refundOnOrder(
           orderId: gid,
           notify: true,
           note: `${note} [${marker}]`,
+          currency: money.currencyCode,
           transactions: [
             {
               orderId: gid,
               parentId: transactionId,
-              amount: amountEuros.toFixed(2),
+              amount: money.amount,
               gateway: parent.gateway,
               kind: "REFUND",
             },

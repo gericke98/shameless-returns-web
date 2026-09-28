@@ -50,6 +50,7 @@ describe("refundOnOrder", () => {
       kind: "REFUND",
       gateway: "shopify_payments",
     });
+    expect(write.variables.input.currency).toBe("EUR");
     expect(write.variables.input.note).toContain("rli-MARK");
   });
 
@@ -66,11 +67,12 @@ describe("refundOnOrder", () => {
     expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(false);
   });
 
-  it("does not convert to presentment currency — RefundInput.transactions[].amount is shop currency", async () => {
+  it("converts to the root order's presentment currency and declares it on RefundInput.currency", async () => {
     READ.data.order.totalPriceSet.presentmentMoney = { amount: "80.00", currencyCode: "GBP" };
     await refund();
     const write = bodies.find((b) => b.query.includes("refundCreate"));
-    expect(write.variables.input.transactions[0].amount).toBe((42.03).toFixed(2));
+    expect(write.variables.input.transactions[0].amount).toBe((42.03 * (80 / 93.28)).toFixed(2));
+    expect(write.variables.input.currency).toBe("GBP");
   });
 
   it("reports Shopify userErrors as a failure", async () => {

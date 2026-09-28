@@ -36,8 +36,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 async function refund() {
+  return refundWithMarker("rli-MARK");
+}
+
+async function refundWithMarker(marker: string) {
   const { refundOnOrder } = await import("@/db/queries");
-  return refundOnOrder("13282550841670", "gid://shopify/OrderTransaction/9", 42.03, "rli-MARK", "note");
+  return refundOnOrder("13282550841670", "gid://shopify/OrderTransaction/9", 42.03, marker, "note");
 }
 
 describe("refundOnOrder", () => {
@@ -52,12 +56,25 @@ describe("refundOnOrder", () => {
     });
     expect(write.variables.input.currency).toBe("EUR");
     expect(write.variables.input.note).toContain("rli-MARK");
+    expect(write.variables.input.note.startsWith("[rli-MARK]")).toBe(true);
   });
 
-  it("does not refund again when a refund already carries the marker", async () => {
-    READ.data.order.refunds = [{ note: "... rli-MARK ..." }];
+  it("does not refund again when a refund already carries the exact bracketed marker", async () => {
+    READ.data.order.refunds = [{ note: "[rli-MARK] some earlier note" }];
     await expect(refund()).resolves.toEqual({ success: true, alreadyRefunded: true });
     expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(false);
+  });
+
+  it("does not false-positive on a marker that is a prefix of an existing bracketed marker", async () => {
+    // A root order can accumulate one refund per replacement order. A bare
+    // substring match would let "gid://.../9167" match inside the bracketed
+    // "[gid://.../91677131078]" note and wrongly skip a real refund.
+    READ.data.order.refunds = [
+      { note: "[gid://shopify/ReturnLineItem/91677131078] earlier refund" },
+    ];
+    const out = await refundWithMarker("gid://shopify/ReturnLineItem/9167");
+    expect(out).toEqual({ success: true, alreadyRefunded: false });
+    expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(true);
   });
 
   it("refuses to move money when the order cannot be read", async () => {

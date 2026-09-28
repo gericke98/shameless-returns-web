@@ -473,8 +473,17 @@ export async function createRefund(
  * No line items — the goods are booked back on the replacement order by the
  * caller, and restocking here would count the garment twice.
  *
- * Idempotent on `marker` (the return line item id): a refund whose note already
- * contains it means the money moved on an earlier run, so nothing is sent.
+ * Idempotent on `marker` (the return line item id, a full GID such as
+ * `gid://shopify/ReturnLineItem/91677131078`): a refund whose note already
+ * contains the exact bracketed token `[${marker}]` means the money moved on
+ * an earlier run, so nothing is sent. The note is written with the bracketed
+ * marker FIRST (`[${marker}] ${note}`) and matched as that exact bracketed
+ * token, not a bare substring — a root order can accumulate one refund per
+ * replacement order, and a bare-substring match would let a shorter marker
+ * (e.g. `.../9167`) false-positive against a longer one that merely starts
+ * with it (`.../91677131078`), silently skipping a real refund. Bracketing
+ * and placing the marker first also means any future note-length cap
+ * truncates the free-text tail, never the marker itself.
  * An unreadable order refuses — it never refunds blind.
  *
  * The parent transaction's `gateway` is read off the order rather than
@@ -535,8 +544,11 @@ export async function refundOnOrder(
       console.error("refundOnOrder: cannot read order", orderId, read.errors);
       return { success: false, errors: read.errors ?? "order-not-found" };
     }
+    const bracketedMarker = `[${marker}]`;
     if (
-      (order.refunds ?? []).some((r: any) => String(r?.note ?? "").includes(marker))
+      (order.refunds ?? []).some((r: any) =>
+        String(r?.note ?? "").includes(bracketedMarker)
+      )
     ) {
       return { success: true, alreadyRefunded: true };
     }
@@ -576,7 +588,7 @@ export async function refundOnOrder(
         input: {
           orderId: gid,
           notify: true,
-          note: `${note} [${marker}]`,
+          note: `${bracketedMarker} ${note}`,
           currency: money.currencyCode,
           transactions: [
             {

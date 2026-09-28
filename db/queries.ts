@@ -466,6 +466,123 @@ export async function createRefund(
 }
 
 /**
+ * Refund money on an order that is NOT the one the return lives on.
+ *
+ * Used for returns from our replacement orders, whose own payment is a €0.01
+ * placeholder: the money goes back against the root order's real payment.
+ * No line items — the goods are booked back on the replacement order by the
+ * caller, and restocking here would count the garment twice.
+ *
+ * Idempotent on `marker` (the return line item id): a refund whose note already
+ * contains it means the money moved on an earlier run, so nothing is sent.
+ * An unreadable order refuses — it never refunds blind.
+ *
+ * The parent transaction's `gateway` is read off the order rather than
+ * hardcoded to "shopify_payments": a replacement order's root payment could
+ * have gone through any gateway the shop has enabled. If the passed-in
+ * `transactionId` isn't among the order's transactions, this refuses rather
+ * than guessing a gateway.
+ *
+ * `amount` is sent in the shop's currency, not converted to presentment:
+ * `RefundInput.transactions[].amount` (`OrderTransactionInput.amount`) is a
+ * bare `Money` scalar with no accompanying `currency` field, unlike e.g.
+ * `OrderCaptureInput` (which has one, and documents its plain `amount` as
+ * shop currency unless that field names presentment). There is no way to
+ * declare this amount as presentment currency, so Shopify takes it as shop
+ * currency — and `amountEuros` already IS shop currency here (the shop is EUR).
+ */
+export async function refundOnOrder(
+  orderId: string,
+  transactionId: string,
+  amountEuros: number,
+  marker: string,
+  note: string
+): Promise<
+  | { success: true; alreadyRefunded: boolean }
+  | { success: false; errors: unknown }
+> {
+  const session = createSession();
+  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const gid = `gid://shopify/Order/${orderId}`;
+  const post = async (query: string, variables: Record<string, unknown>) =>
+    (
+      await fetch(url, {
+        method: "POST",
+        headers: session.headers,
+        body: JSON.stringify({ query, variables }),
+      })
+    ).json();
+
+  try {
+    const read = await post(
+      `query rootRefunds($id: ID!) {
+        order(id: $id) {
+          refunds { note }
+          transactions { id gateway kind status }
+        }
+      }`,
+      { id: gid }
+    );
+    const order = read?.data?.order;
+    if (read.errors || !order) {
+      console.error("refundOnOrder: cannot read order", orderId, read.errors);
+      return { success: false, errors: read.errors ?? "order-not-found" };
+    }
+    if (
+      (order.refunds ?? []).some((r: any) => String(r?.note ?? "").includes(marker))
+    ) {
+      return { success: true, alreadyRefunded: true };
+    }
+
+    const parent = (order.transactions ?? []).find(
+      (t: any) => t?.id === transactionId
+    );
+    if (!parent) {
+      console.error(
+        "refundOnOrder: parent transaction not found on order",
+        orderId,
+        transactionId
+      );
+      return { success: false, errors: "parent-transaction-not-found" };
+    }
+
+    const written = await post(
+      `mutation rootRefund($input: RefundInput!) {
+        refundCreate(input: $input) {
+          refund { id }
+          userErrors { field message }
+        }
+      }`,
+      {
+        input: {
+          orderId: gid,
+          notify: true,
+          note: `${note} [${marker}]`,
+          transactions: [
+            {
+              orderId: gid,
+              parentId: transactionId,
+              amount: amountEuros.toFixed(2),
+              gateway: parent.gateway,
+              kind: "REFUND",
+            },
+          ],
+        },
+      }
+    );
+    const errors = written.errors ?? written?.data?.refundCreate?.userErrors ?? [];
+    if (errors.length > 0 || !written?.data?.refundCreate?.refund) {
+      console.error("refundOnOrder failed:", errors);
+      return { success: false, errors };
+    }
+    return { success: true, alreadyRefunded: false };
+  } catch (error) {
+    console.error("refundOnOrder fetch error:", error);
+    return { success: false, errors: error };
+  }
+}
+
+/**
  * Record a store-credit return as refunded on Shopify, moving no money.
  *
  * The credit lane pays the customer with `giftCardCreate` and used to stop

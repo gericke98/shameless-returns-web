@@ -49,6 +49,14 @@ describe("planReplacementPricing", () => {
     );
     expect(plan.ok).toBe(false);
   });
+  it("does not match a non-numeric line id against a malformed new_variant_id", () => {
+    // variantGid returns null for both; null === null must not count as a match.
+    const plan = planReplacementPricing(
+      [{ variant_id: "not-a-number", product_id: "1" }],
+      [row({ new_variant_id: "garbage" })]
+    );
+    expect(plan).toEqual({ ok: false, reason: "no-original-line:not-a-number" });
+  });
   it("fails closed when a line has no match", () => {
     const plan = planReplacementPricing([{ variant_id: "999", product_id: "1" }], [row()]);
     expect(plan).toEqual({ ok: false, reason: "no-original-line:999" });

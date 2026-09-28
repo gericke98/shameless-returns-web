@@ -45,6 +45,9 @@ export function originalOrderNumberFromTags(
 
 function exchangeRowsFor(originalRows: OriginalRow[], variantId: string) {
   const target = variantGid(String(variantId));
+  // variantGid returns null for a non-numeric id, and null === null would
+  // match every row whose new_variant_id is equally malformed.
+  if (!target) return [];
   return originalRows.filter(
     (r) =>
       r.action === "CAMBIO" &&

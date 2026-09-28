@@ -54,6 +54,9 @@ async function main() {
       AND (p.refunded IS NULL OR p.refunded = false)
       AND p.credit = false
       AND p.action = 'DEVOLUCIÓN'
+      -- Replacement orders store the ROOT order's transaction on purpose; this
+      -- script would "repair" it back to the replacement's own €0.01 sale.
+      AND o.exchange_of IS NULL
       AND p.transaction_id IS NOT NULL AND p.transaction_id <> ''
     ORDER BY o.id`);
   const lines = (rows.rows ?? rows) as any[];

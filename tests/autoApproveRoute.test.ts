@@ -60,6 +60,16 @@ vi.mock("@/lib/settleReturn", () => ({
     };
   },
 }));
+// The outbox is tested on its own in tests/opsAlertOutbox.test.ts; here it
+// only records what the route queued.
+const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
+vi.mock("@/actions/opsAlertOutbox", () => ({
+  enqueueOpsAlerts: async (list: any[]) => {
+    queued.push(...list);
+    return { failed: 0 };
+  },
+}));
+
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push(subject);
@@ -79,7 +89,7 @@ function order(id: string, variantIds: string[]) {
 }
 function amphoraReturn(orderId: string, skus: string[], over: any = {}) {
   return {
-    id: `SHP ${orderId}`, name: `#${orderId}`, external_id: orderId,
+    id: `SHP ${orderId}`, order_id: `SHP ${orderId}`, name: `#${orderId}`, external_id: orderId,
     internal_status: "RECEIVED", time_received: RECEIVED_LONG_AGO,
     items: skus.map((sku) => ({ sku, quantity: "1", quantity_received: "1" })),
     ...over,
@@ -94,6 +104,7 @@ async function call(headers: Record<string, string> = {}, query = "") {
 beforeEach(() => {
   settled.length = 0;
   alerts.length = 0;
+  queued.length = 0;
   alertBodies.length = 0;
   state.lineIdsFor = {};
   state.msPerSettle = 0;
@@ -440,5 +451,35 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
     await call({ authorization: "Bearer s3cret" });
 
     expect(alerts).toHaveLength(0);
+  });
+});
+
+describe("auto-approve cron — which Amphora record the gate reads", () => {
+  it("holds an order with two records we created, and queues the conflict", async () => {
+    state.returns = [
+      amphoraReturn("1001", ["SKU1"]),
+      amphoraReturn("1001", ["SKU1"], { id: "RET 179000000000000001" }),
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(settled).toEqual([]);
+    expect(body.held).toContainEqual({ order: "#1001", reason: "no-amphora-record" });
+    expect(body.conflicts).toBe(1);
+    expect(queued[0].dedupeKey).toBe("match-conflict:SHP 1001");
+  });
+
+  it("reads OUR record, not the PENDING shadow beside it (#311886's shape)", async () => {
+    // With the shadow picked, the gate would hold on PENDING forever and never
+    // see the warehouse count at all.
+    state.returns = [
+      amphoraReturn("1001", ["SKU1"], { id: "SHP 1001", external_id: null, internal_status: "PENDING" }),
+      amphoraReturn("1001", ["SKU1"], { id: "RET 179000000000000001" }),
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(settled).toEqual(["v1"]);
+    expect(body.conflicts).toBe(0);
   });
 });

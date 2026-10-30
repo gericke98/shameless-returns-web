@@ -153,7 +153,13 @@ async function main() {
 
   // Everything that refers to one of our orders, whether we created it or
   // Amphora re-created it in their UI (which nulls `external_id`).
-  const matched = matchReturnsToOrderIds(all);
+  // A conflicted record (two under one id, or an external_id that disagrees with
+  // the id) is matched to nothing, exactly as in the crons; print it so it is
+  // not silently missing from the sections below.
+  const { matches: matched, conflicts } = matchReturnsToOrderIds(all);
+  for (const c of conflicts) {
+    console.log(`⚠️  ${c.amphoraId} not matched (${c.kind}): ${c.detail}`);
+  }
   const orders = await ordersById(matched.map((m) => m.orderId));
 
   // A match with no order row is dropped from every section below, and for one

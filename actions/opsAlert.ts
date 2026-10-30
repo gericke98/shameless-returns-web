@@ -26,16 +26,36 @@ const OPS_ADDRESS = "hello@shamelesscollective.com";
  * row is cleared moments later, which drops it out of the dashboard too, so
  * the inbox becomes the only place the problem still exists.
  *
- * Best effort and silent on failure. It is already the fallback path.
+ * Best effort and silent on failure. It is already the fallback path. For an
+ * alert that must not be lost, enqueue it with `enqueueOpsAlert`
+ * (actions/opsAlertOutbox.ts) instead.
  */
 export async function alertOps(subject: string, body: string): Promise<void> {
   console.error(`[ops] ${subject}: ${body}`);
 
+  if (!process.env.POSTMARK_SERVER_TOKEN) return;
+
+  const result = await sendOpsAlert(subject, body);
+  if (!result.ok) console.error("Could not send ops alert:", result.error);
+}
+
+/**
+ * Send one ops email and say whether Postmark accepted it. Same transport as
+ * `alertOps`, but the caller learns the outcome, which the outbox needs to
+ * decide whether a row is delivered. Never throws.
+ *
+ * Accepted means HTTP 2xx AND `ErrorCode: 0` in the body: Postmark reports some
+ * rejections with a non-zero ErrorCode, and a 200 is not, on its own, proof.
+ */
+export async function sendOpsAlert(
+  subject: string,
+  body: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return;
+  if (!token) return { ok: false, error: "POSTMARK_SERVER_TOKEN is not set" };
 
   try {
-    await axios.post(
+    const response = await axios.post(
       POSTMARK_API_URL,
       {
         From: OPS_ADDRESS,
@@ -59,7 +79,12 @@ export async function alertOps(subject: string, body: string): Promise<void> {
         timeout: 5000,
       }
     );
+    if (response.data?.ErrorCode !== 0) {
+      return { ok: false, error: `Postmark ErrorCode ${response.data?.ErrorCode}: ${response.data?.Message ?? ""}` };
+    }
+    return { ok: true };
   } catch (error: any) {
-    console.error("Could not send ops alert:", error?.response?.data || error?.message);
+    const detail = error?.response?.data || error?.message || error;
+    return { ok: false, error: typeof detail === "string" ? detail : JSON.stringify(detail) };
   }
 }

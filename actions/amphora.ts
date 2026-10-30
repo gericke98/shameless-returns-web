@@ -66,6 +66,9 @@ export type AmphoraLineItem = { sku: string; quantity: number };
 
 export type AmphoraReturn = {
   id: string;
+  /** Amphora's order reference, `SHP <shopify order id>`: the order link. The
+   *  return `id` is NOT one (API-created returns are `RET <n>`). */
+  order_id?: string | null;
   external_id: string | null;
   internal_status: string;
   name: string | null;
@@ -74,12 +77,19 @@ export type AmphoraReturn = {
   carrier?: string | null;
   carrier_number?: string | null;
   carrier_url?: string | null;
-  /** Creation stamp. `lib/amphoraReturnMatch` sorts on it to pick the newest of
-   *  two Amphora-created returns for one order; without it declared here, any
-   *  normalisation of this response would silently degrade that tie-break to
-   *  first-wins with every test still green. */
+  /** Creation stamp. */
   time?: string | null;
-  items?: Array<{ sku: string | null; quantity: number; product_id?: string }>;
+  /** Set when the parcel reaches the warehouse / when the count is finished.
+   *  Bare local stamps or offset-aware; read with `parseAmphoraStamp`. */
+  time_received?: string | null;
+  time_processed?: string | null;
+  /** Counts arrive as STRINGS ("0" is truthy); read with `amphoraCount`. */
+  items?: Array<{
+    sku: string | null;
+    quantity: number | string;
+    quantity_received?: number | string;
+    product_id?: string;
+  }>;
   exchange_items?: Array<{ sku: string | null; quantity: number; product_id?: string }>;
   shipping_address_country_code?: string | null;
 };

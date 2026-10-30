@@ -181,3 +181,60 @@ describe("decideAutoApprove — nothing to do", () => {
     expect(v).toEqual({ settle: false, reason: "nothing-to-settle" });
   });
 });
+
+describe("decideAutoApprove — the receipt pool nets out settled lines", () => {
+  const twoSameSku = (firstRefunded: boolean) =>
+    input({
+      lines: [
+        { id: "l1", variant_id: "v1", quantity: 1, return_id: "gid://shopify/Return/1",
+          refunded: firstRefunded, confirmed: true, sku: "20240800" },
+        { id: "l2", variant_id: "v1", quantity: 1, return_id: "gid://shopify/Return/1",
+          refunded: false, confirmed: true, sku: "20240800" },
+      ],
+      amphora: {
+        internal_status: "RECEIVED",
+        time_received: "2026-08-17T12:56:05",
+        items: [{ sku: "20240800", quantity: "2", quantity_received: "1" }],
+      },
+    });
+
+  it("holds a pending line whose only received unit already paid its settled sibling", () => {
+    // Before: the paid line's unit stayed in the pool and settled this one too —
+    // paying for a garment the customer kept. Safe direction only: holds more.
+    expect(decideAutoApprove(twoSameSku(true))).toEqual({
+      settle: false, reason: "short-receipt:20240800",
+    });
+  });
+
+  it("holds when a settled line's SKU is unresolved, rather than ignoring it", () => {
+    const v = twoSameSku(true);
+    v.lines[0].sku = null;
+
+    expect(decideAutoApprove(v)).toEqual({ settle: false, reason: "unresolved-sku:v1" });
+  });
+
+  it("holds on an unreadable (NaN) count", () => {
+    const v = decideAutoApprove(input({
+      amphora: { ...input().amphora!, items: [{ sku: "20250503", quantity: "1", quantity_received: "n/a" }] },
+    }));
+
+    expect(v.settle).toBe(false);
+  });
+
+  it("never settles a zero-quantity line on an unreadable count (Codex repro)", () => {
+    const v = input({
+      amphora: { ...input().amphora!, items: [{ sku: "20250503", quantity: "1", quantity_received: "n/a" }] },
+    });
+    v.lines[0].quantity = 0;
+
+    expect(decideAutoApprove(v).settle).toBe(false);
+  });
+
+  it("never settles on a missing quantity_received", () => {
+    const v = decideAutoApprove(input({
+      amphora: { ...input().amphora!, items: [{ sku: "20250503", quantity: "1", quantity_received: null as any }] },
+    }));
+
+    expect(v.settle).toBe(false);
+  });
+});

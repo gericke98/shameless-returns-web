@@ -16,7 +16,6 @@ import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import {
   buildCollectionScheduledEmail,
-  buildReturnReceivedEmail,
   buildTrackingUpdateEmail,
 } from "@/lib/emails";
 import { exchangeFromProducts } from "@/lib/exchange";
@@ -112,7 +111,11 @@ export async function applyReturnStatus(
           ? buildTrackingUpdateEmail("in_transit", order.shippingName, locale)
           : email === "trackingProblem"
             ? buildTrackingUpdateEmail("problem", order.shippingName, locale)
-            : buildReturnReceivedEmail(order.shippingName, locale, exchange);
+            : // Arrival only: "it's here, we're checking it". No refund or
+              // replacement promise, because the count is not done yet and may
+              // come up short (#312246 was promised two replacements for one
+              // garment). The outcome is told by settlement's own emails.
+              buildTrackingUpdateEmail("received", order.shippingName, locale);
 
     const status = await sendEmail({
       ...built,

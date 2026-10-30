@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { getAmphoraReturns } from "@/actions/amphora";
 import { applyReturnStatus } from "@/actions/amphoraStatusSync";
-import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
-import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
+import { getOrderByIdFresh } from "@/db/queries";
+import {
+  matchConflictAlert,
+  matchReturnsToOrderIds,
+  unknownOrderAlert,
+} from "@/lib/amphoraReturnMatch";
 import { isInternationalOrder } from "@/lib/countries";
 import { sweepSelfReturns } from "@/actions/selfReturnSweep";
 import { alertOps } from "@/actions/opsAlert";
+import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -54,6 +59,31 @@ function hasConfirmedReturn(order: { products?: Array<{ confirmed?: boolean | nu
   return (order.products ?? []).some((p) => p.confirmed === true);
 }
 
+/**
+ * The conflicts worth a human: any involving a record we created, and one
+ * among Amphora's own records only when the order is ours — in our table with
+ * a confirmed line. Amphora's own records for orders we never managed conflict
+ * too, and are none of our business. If ownership cannot be read, report.
+ */
+async function conflictsOnOurOrders(
+  conflicts: ReturnType<typeof matchReturnsToOrderIds>["conflicts"]
+) {
+  const ours = [];
+  for (const conflict of conflicts) {
+    if (conflict.createdByUs || !conflict.orderId) {
+      ours.push(conflict);
+      continue;
+    }
+    try {
+      const order = await getOrderByIdFresh(conflict.orderId);
+      if (order && hasConfirmedReturn(order)) ours.push(conflict);
+    } catch {
+      ours.push(conflict);
+    }
+  }
+  return ours;
+}
+
 export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -70,8 +100,13 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Amphora unreachable" }, { status: 502 });
   }
 
-  // Which order does each return refer to, at most one return per order?
-  const matches = matchReturnsToOrderIds(returns);
+  // Which order does each return refer to? Keyed on Amphora's return id alone;
+  // a record that contradicts itself or shares its id with another is refused
+  // and reported, never guessed at.
+  // The dedupe key is the Amphora return id, so a conflict that persists is
+  // one email, and a failed enqueue is retried by the next run.
+  const { matches, conflicts } = matchReturnsToOrderIds(returns);
+  const alertsToQueue = (await conflictsOnOurOrders(conflicts)).map(matchConflictAlert);
 
   const changed: Array<Record<string, unknown>> = [];
   // Carries the order's lane alongside the return, because the stranded check
@@ -89,14 +124,16 @@ export async function GET(req: Request) {
   for (const match of matches) {
     const ret = match.ret;
     try {
-      const order =
-        (await getOrderByIdFresh(match.orderId)) ??
-        (match.viaExternalId && ret.name ? await getOrderByNumberFresh(ret.name) : null);
+      // By id only. The order number is a display name, not identity: there is
+      // no fallback to it, and no order for this id means nothing to apply.
+      const order = await getOrderByIdFresh(match.orderId);
 
       if (!order) {
-        // No local order at all for this id — expected and common (Amphora's
-        // Shopify-channel returns and arrival records for orders we don't
-        // recognise). Nothing to warn about.
+        // No local order at all for this id — expected and common for records
+        // Amphora created (their Shopify-channel returns and arrival records
+        // for orders we don't recognise). One that carries OUR external_id is
+        // different: we booked it, and we have lost the order it belongs to.
+        if (match.viaExternalId) alertsToQueue.push(unknownOrderAlert(match.amphoraReturnId, ret.name));
         skipped += 1;
         continue;
       }
@@ -280,6 +317,9 @@ export async function GET(req: Request) {
     );
   }
 
+  // Durable; /api/cron/ops-alerts delivers them.
+  const { failed: alertsNotQueued } = await enqueueOpsAlerts(alertsToQueue);
+
   return NextResponse.json({
     scanned,
     changed,
@@ -288,5 +328,9 @@ export async function GET(req: Request) {
     skippedUnknownCountry,
     skippedNoReturn,
     selfReturns,
+    conflicts: conflicts.length,
+    alertsQueued: alertsToQueue.length - alertsNotQueued,
+    alertsNotQueued,
   });
 }
+

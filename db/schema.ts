@@ -9,6 +9,9 @@ import {
   timestamp,
   index,
   primaryKey,
+  uuid,
+  jsonb,
+  unique,
 } from "drizzle-orm/pg-core";
 
 // Creo una tabla que contenga las orders que han sido editadas
@@ -242,6 +245,53 @@ export const lookupAttempts = pgTable(
       table.ip,
       table.attemptedAt
     ),
+  })
+);
+
+/**
+ * Durable ops-alert outbox (drizzle/0004_ops_alerts.sql).
+ *
+ * `alertOps` is best effort; a row here is retried until Postmark accepts it.
+ * `dedupe_key` is the producer's explicit identity for the condition, so a
+ * condition seen on every cron run is one alert. `accepted_at` is set only on
+ * a Postmark 200; `last_attempt_at` doubles as the dispatch lease.
+ */
+export const opsAlerts = pgTable("ops_alerts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  dedupeKey: text("dedupe_key").notNull().unique(),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  lastError: text("last_error"),
+});
+
+/**
+ * Short receipts (drizzle/0005_receipt_shortfalls.sql): one row per
+ * (Amphora return, SKU) the warehouse counted short. Opened, resolved and
+ * reopened by actions/receiptShortfallSweep.ts; alerts go through ops_alerts
+ * under `shortfall:<id>:open<reopenCount>:stage1|stage2`.
+ */
+export const receiptShortfalls = pgTable(
+  "receipt_shortfalls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    amphoraReturnId: text("amphora_return_id").notNull(),
+    orderId: text("order_id").notNull(),
+    sku: text("sku").notNull(),
+    shopifyReturnIds: jsonb("shopify_return_ids").$type<string[]>().notNull().default([]),
+    declaredQty: integer("declared_qty").notNull(),
+    receivedQty: integer("received_qty").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    alertStage: smallint("alert_stage").notNull().default(0),
+    firstAlertAcceptedAt: timestamp("first_alert_accepted_at", { withTimezone: true }),
+    reopenCount: integer("reopen_count").notNull().default(0),
+  },
+  (table) => ({
+    returnSku: unique("receipt_shortfalls_return_sku_key").on(table.amphoraReturnId, table.sku),
   })
 );
 

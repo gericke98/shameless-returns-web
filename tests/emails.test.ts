@@ -3,7 +3,6 @@ import {
   buildAmphoraEmail,
   buildCollectionScheduledEmail,
   buildCorreosEmail,
-  buildReturnReceivedEmail,
 } from "@/lib/emails";
 
 // Marker phrases that must appear in one language and never in the other.
@@ -254,36 +253,3 @@ describe("buildCollectionScheduledEmail", () => {
   });
 });
 
-describe("buildReturnReceivedEmail", () => {
-  it("localizes the subject", () => {
-    expect(buildReturnReceivedEmail("Ana", "es").Subject).toBe(
-      "Hemos recibido tu devolución"
-    );
-    expect(buildReturnReceivedEmail("Ana", "en").Subject).toBe(
-      "We've received your return"
-    );
-  });
-
-  it("promises a refund on a plain return", () => {
-    expect(buildReturnReceivedEmail("Ana", "en").HtmlBody).toContain(
-      "process your refund"
-    );
-  });
-
-  it("tells an exchange customer their replacement is next, not a refund", () => {
-    const { HtmlBody } = buildReturnReceivedEmail("Ana", "en", {
-      replacements: ["STAR AMALFI PANTS — Medium (40)"],
-    });
-    expect(HtmlBody).toContain("STAR AMALFI PANTS — Medium (40)");
-    expect(HtmlBody).not.toContain("process your refund");
-  });
-
-  it("stays single-language", () => {
-    expect(buildReturnReceivedEmail("Ana", "en").HtmlBody).not.toContain(
-      "Hemos recibido"
-    );
-    expect(buildReturnReceivedEmail("Ana", "es").HtmlBody).not.toContain(
-      "We've received"
-    );
-  });
-});

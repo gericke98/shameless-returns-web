@@ -186,6 +186,49 @@ The script prints each one with its Shopify return state, refunds and exchange o
   takes it: R1 records nothing for it, an approval and the legacy recorder refuse it (`not-confirmed`), D3
   refuses it, and admission holds `no-return`.
 
+## Codex code review fixes (30 Oct) — binding
+
+Codex's single code review (NOT AGREE, 7 MUST + 1 SHOULD) changed these mechanisms. Migration **0011**
+(additive, three tables) carries the new identity data.
+
+1. **No attributable payment ≠ no payment.** A refund that moved money (SUCCESS or pending) on the line's
+   return or, for a replacement-order line, on the root, and that no identity attributes to any line — not
+   naming a line item, not carrying a known `[<return line item>]` marker, not recorded as a done
+   operation's effect — keeps every line it could have paid `ambiguous`, listing its id. Only a recorded
+   human decision on that id clears it: `scripts/decide-effect.ts` writes
+   `reconciliation_effect_decisions` (`binds` to one line, or `excludes`), once per effect. An operator's
+   "no payment" on the line's record never clears an unattributed refund. Notes are never read for words.
+2. **Every historical writer, whatever the action.** Each row is read for every effect it could have:
+   refunds on its return, root refunds (replacement order), its stored gift card, and — when it names a
+   new variant — exchange orders and native exchange lines. The lane follows the old writer (`credit`
+   before CAMBIO). A cash CAMBIO expects one delivery; a money row expects one refund (cash) or gift card
+   (credit). A credit row with no stored card, a delivery on a money row, money on an undelivered CAMBIO,
+   or a tender mismatch is `ambiguous`.
+3. **Replacement identity independent of funding.** `legacy_replacement_orders` names every pre-S2
+   exchange order by id: written by the census (`--census`: every `Change`-tagged order, all pages or
+   nothing, source = the one order of ours whose `Order <number>` equals a tag exactly), by R1 for every
+   exchange order it finds paid, and by an operator's done on a legacy exchange. `orders.exchange_of` is
+   identity too. A known replacement with no `replacement_lines` **refuses** valuation; with no identity
+   record the order is ordinary only once a census row exists — before that, every lookup refuses
+   (`replacement-census-missing`). Cutover coverage = a completed census.
+4. **Delivery and the difference are separate.** A delivered cash exchange also lists every money effect
+   found for the line (`moneyEffects`); any one makes the swap not approvable. An unattributed refund
+   makes it ambiguous.
+5. **Funding only from the real Stripe payments.** Reconciled submissions record no historical figures
+   (`recordedTerms`: returned total only; replacement, fee, pay and funding 0). An exchange line's
+   `replacement_lines.stripe_funded_cents` comes only from a complete read of Stripe checkout sessions:
+   no paid pre-S1 session names the order and none is unattributed → 0; otherwise unfunded (the order is
+   still a replacement, refused online) and an alert. Pre-S1 sessions carry no per-line split, so a paid
+   one is never allocated. Today's fee is a CSV reference only.
+6. **Resumable approvals.** An identical approval re-run returns its recorded submission (no second
+   approval or payment); a different one is refused (`approval-differs`). The recovery cron admits every
+   approval whose line no operation covers yet (`approvalsAwaitingAdmission`) and alerts once per held
+   reason.
+7. **Line totals round once:** `lineTotalCents(price, quantity)` (lib/basket.ts, also `valueLine`) for
+   the CSV, the cap and approved terms.
+8. **Pending NULL-action lines** are listed read-only in `<out>.pending-null-action.csv` with their
+   Shopify refunds, exchange orders and native lines — outside R1's classification and writes.
+
 ## Tests
 
 - **R1 classifier, pure:** each lane × {evidence 0/1/2, recipient mismatch, wrong currency, unreadable,
@@ -207,8 +250,8 @@ The script prints each one with its Shopify return state, refunds and exchange o
 
 ## Rollout
 
-1. Deploy the R3/R4 code only after R1 `--write` has run, so the R4 refusal never meets an un-backfilled
-   order.
+1. Apply 0010 and 0011. Run `--census` (dry, then `--write`) — the R4 code refuses every order until a
+   census exists. Deploy the R3/R4 code only after the census and R1 `--write` have run.
 2. Run R1 dry-run. Santi reviews the CSV, then R1 `--write`.
 3. Apply migration 0010 (DDL before deploy). Santi writes the approval file; run
    `--approve-file <csv>` dry, then with `--write`: it records and admits the approved lines, and the

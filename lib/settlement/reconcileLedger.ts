@@ -28,6 +28,7 @@ import { finalizeStatements } from "./ledger";
 import type { Classification, LineFacts, PaidEvidence } from "./reconcile";
 import type { OpKind, ReconciliationRequest } from "./types";
 import { variantGid } from "@/lib/shopifyIds";
+import { fundingCommand } from "./fundingCommand";
 
 type Order = typeof orders.$inferSelect;
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -182,6 +183,8 @@ export function reconciliationRecord(
               `Its Stripe funding could not be allocated to the line: ${f.reason}.`,
               `It is recorded as a replacement order, so a return on it is refused online (never priced at list)`,
               `until its funding is recorded. Nothing was paid or computed.`,
+              `To record it from the customer's pre-S1 Stripe payment:`,
+              fundingCommand(orderId, line.productsorderId),
             ].join("\n"),
           });
         }

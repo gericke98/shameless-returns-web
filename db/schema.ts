@@ -458,6 +458,18 @@ export const legacyReplacementOrders = pgTable("legacy_replacement_orders", {
   recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const replacementFundingDecisions = pgTable("replacement_funding_decisions", {
+  id: serial("id").primaryKey(),
+  orderId: text("order_id").notNull(),
+  sourceProductsorderId: integer("source_productsorder_id").notNull(),
+  stripeSessionId: text("stripe_session_id").notNull(),
+  sessionAmountCents: integer("session_amount_cents").notNull(),
+  fundedCents: integer("funded_cents").notNull(),
+  decidedBy: text("decided_by").notNull(),
+  evidence: text("evidence").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const legacyReplacementCensus = pgTable("legacy_replacement_census", {
   id: serial("id").primaryKey(),
   ordersFound: integer("orders_found").notNull(),

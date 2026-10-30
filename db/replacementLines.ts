@@ -45,7 +45,14 @@ export type FundingLookup =
   | { kind: "funded"; funding: ReplacementFunding }
   /** Settlement created this order but its records are missing or disagree:
    *  never valued by any other means. */
-  | { kind: "unfunded"; sourceOrderId: string | null; reason: string };
+  | {
+      kind: "unfunded";
+      sourceOrderId: string | null;
+      reason: string;
+      /** A known pre-S2 replacement: the source lines its reconciled exchange
+       *  records name — what scripts/fund-replacement-line.ts takes as --line. */
+      sourceLines?: number[];
+    };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 
@@ -103,10 +110,20 @@ export async function replacementFundingOf(order: {
     `)
   );
   if (known) {
+    const lines = rowsOf(
+      await db.execute(sql`
+        SELECT DISTINCT m.po FROM settlement_operations o
+          JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'
+          CROSS JOIN LATERAL unnest(o.members) AS m(po)
+         WHERE o.kind = 'exchange_order' AND o.state = 'done'
+           AND o.effect_ref = ${`gid://shopify/Order/${String(order.id)}`}
+         ORDER BY m.po`)
+    );
     return {
       kind: "unfunded",
       sourceOrderId: known.source_order_id ? String(known.source_order_id) : null,
       reason: "replacement-without-funding",
+      sourceLines: lines.map((r) => Number(r.po)),
     };
   }
   const [census] = rowsOf(await db.execute(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));

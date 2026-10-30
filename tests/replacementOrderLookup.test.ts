@@ -13,8 +13,9 @@ vi.mock("@/db/replacementLines", async (importOriginal) => ({
   replacementFundingOf: async () => FUNDING,
 }));
 const alerts: string[] = [];
+const bodies: string[] = [];
 vi.mock("@/actions/opsAlert", () => ({
-  alertOps: async (subject: string) => { alerts.push(subject); },
+  alertOps: async (subject: string, body: string) => { alerts.push(subject); bodies.push(body); },
 }));
 
 const replacement = (tags: string) => ({
@@ -26,6 +27,7 @@ const replacement = (tags: string) => ({
 
 beforeEach(() => {
   alerts.length = 0;
+  bodies.length = 0;
   FUNDING = { kind: "not-settlement" };
 });
 
@@ -44,12 +46,22 @@ describe("planReplacementOrder", () => {
     // Before S3 these tags + the original's CAMBIO row priced the line at
     // 47.03. Now the census / reconciliation name it a replacement by id, and
     // with no replacement_lines it is not returnable online: never list price.
-    FUNDING = { kind: "unfunded", sourceOrderId: "13282550841670", reason: "replacement-without-funding" };
+    FUNDING = { kind: "unfunded", sourceOrderId: "13282550841670", reason: "replacement-without-funding", sourceLines: [41, 42] };
     await expect(plan(replacement("Change, Order #311749"))).resolves.toEqual({
       kind: "refused",
       reason: "settlement-order-unfunded:replacement-without-funding",
     });
     expect(alerts).toHaveLength(1);
+    // The alert names the funding script with this order and each source line (Santi 30 Oct, A).
+    expect(bodies[0]).toContain("scripts/fund-replacement-line.ts --order 13327059452230 --line 41 ");
+    expect(bodies[0]).toContain("scripts/fund-replacement-line.ts --order 13327059452230 --line 42 ");
+  });
+
+  it("a known replacement no reconciled exchange names yet: the alert says to resolve that first", async () => {
+    FUNDING = { kind: "unfunded", sourceOrderId: "13282550841670", reason: "replacement-without-funding", sourceLines: [] };
+    await plan(replacement("Change"));
+    expect(bodies[0]).toContain("resolve-operation.ts --op <its operation id> --done --order gid://shopify/Order/13327059452230");
+    expect(bodies[0]).toContain("fund-replacement-line.ts --order 13327059452230 --line <source productsorder id>");
   });
 
   it("before the census has run, no order can be shown ordinary: refused, never list-priced (cutover coverage)", async () => {

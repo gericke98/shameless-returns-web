@@ -22,7 +22,7 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
     shopifyGraphQL: async (query: string, variables: any) => {
       const name = /(?:query|mutation) (\w+)/.exec(query)![1];
       const answer = answers[name];
-      return answer ? { kind: "answer", body: answer(variables) } : { kind: "no-answer", error: "timeout" };
+      return answer ? { kind: "answer", body: await answer(variables) } : { kind: "no-answer", error: "timeout" };
     },
   };
 });
@@ -216,6 +216,7 @@ describe("R1 --write", () => {
       kind: "unfunded",
       sourceOrderId: "100",
       reason: "replacement-without-funding",
+      sourceLines: [4],
     });
     // Not even a census makes a known replacement ordinary.
     await q(`INSERT INTO legacy_replacement_census (orders_found, run_by) VALUES (1, 'test')`);
@@ -716,6 +717,7 @@ describe("the census: every pre-S2 exchange order, by id (Codex #3)", () => {
       kind: "unfunded",
       sourceOrderId: null,
       reason: "replacement-without-funding",
+      sourceLines: [],
     });
     expect(await replacementFundingOf({ id: "777", sourceIdentifier: null })).toEqual({ kind: "not-settlement" });
   });
@@ -837,5 +839,174 @@ describe("census sources are exact", () => {
       { order_id: "2", source_order_id: null },
       { order_id: "3", source_order_id: null },
     ]);
+  });
+});
+
+describe("an operator funds one legacy exchange line from its pre-S1 session (Santi 30 Oct, A)", () => {
+  const exchangeTo = (id: number, order: string) => ({
+    productsorderId: id,
+    lane: "exchange",
+    cls: "paid",
+    reason: `exchange order #${order}`,
+    returnStatus: "CLOSED",
+    evidence: {
+      lane: "exchange",
+      orderGid: `gid://shopify/Order/${order}`,
+      orderName: `#${order}`,
+      lineItemId: `gid://shopify/LineItem/${order}9`,
+      variantGid: "gid://shopify/ProductVariant/42",
+      quantity: 1,
+      unitCents: 6200,
+      currency: "EUR",
+    },
+  });
+  const shopifyOrder = (gid: string) => ({
+    data: {
+      order: {
+        id: gid,
+        name: `#${gid.split("/").pop()}`,
+        tags: ["Change", "Order #100"],
+        customer: { id: CUSTOMER },
+        lineItems: {
+          nodes: [{ id: `${gid.replace("Order", "LineItem")}9`, quantity: 1, variant: { id: "gid://shopify/ProductVariant/42" }, originalUnitPriceSet: { shopMoney: { amount: "62.00", currencyCode: "EUR" } } }],
+        },
+      },
+    },
+  });
+  const session = (over: any = {}) => async (id: string) => ({
+    ok: true as const,
+    session: { id, payment_status: "paid", amount_total: 1000, metadata: { id: "100" }, ...over },
+  });
+  const input = (over: any = {}) => ({ orderId: "500", productsorderId: 4, stripeSessionId: "cs_old", fundedCents: 600, by: "santi", evidence: "email 12 Jul", ...over });
+
+  /** Lines 4 → order 500 and 5 → order 501: done reconciled exchanges Stripe could not allocate. */
+  async function unfundedExchanges() {
+    await seedRow(4, { action: "CAMBIO", newVariant: "42" });
+    await seedRow(5, { action: "CAMBIO", newVariant: "42" });
+    const noSplit = { ok: false, reason: "paid Stripe session cs_old for order 100 carries no split" };
+    await write(
+      [
+        { id: 4, c: exchangeTo(4, "500"), over: { action: "CAMBIO", newVariantId: "42" } },
+        { id: 5, c: exchangeTo(5, "501"), over: { action: "CAMBIO", newVariantId: "42" } },
+      ],
+      "CAMBIO",
+      new Map([[4, noSplit], [5, noSplit]])
+    );
+    answers.ReconcileOrderById = (v: any) => shopifyOrder(v.id);
+  }
+
+  it("the refusal names the script with this order and its line", async () => {
+    await unfundedExchanges();
+    const { replacementFundingOf } = await import("@/db/replacementLines");
+    expect(await replacementFundingOf({ id: "500", sourceIdentifier: null })).toEqual({
+      kind: "unfunded",
+      sourceOrderId: "100",
+      reason: "replacement-without-funding",
+      sourceLines: [4],
+    });
+    const [alert] = await q(`SELECT body FROM ops_alerts WHERE dedupe_key = 'replacement-unfunded:500'`);
+    expect(alert.body).toContain("scripts/fund-replacement-line.ts --order 500 --line 4 ");
+  });
+
+  it("--write records who and why with the line in one statement; the order is valued from then on", async () => {
+    await unfundedExchanges();
+    const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
+    const out = await fundReplacementLine(input(), session(), { write: true });
+    expect(out).toMatchObject({ ok: true, written: true });
+    expect(await q(`SELECT order_id, source_productsorder_id, stripe_session_id, session_amount_cents, funded_cents, decided_by, evidence FROM replacement_funding_decisions`)).toEqual([
+      { order_id: "500", source_productsorder_id: 4, stripe_session_id: "cs_old", session_amount_cents: 1000, funded_cents: 600, decided_by: "santi", evidence: "email 12 Jul" },
+    ]);
+    expect(await q(`SELECT order_id, line_item_id, variant_id, source_productsorder_id, stripe_funded_cents FROM replacement_lines`)).toEqual([
+      { order_id: "500", line_item_id: "gid://shopify/LineItem/5009", variant_id: "gid://shopify/ProductVariant/42", source_productsorder_id: 4, stripe_funded_cents: 600 },
+    ]);
+    const { replacementFundingOf } = await import("@/db/replacementLines");
+    const funding = await replacementFundingOf({ id: "500", sourceIdentifier: null });
+    expect(funding).toMatchObject({ kind: "funded", funding: { sourceOrderId: "100" } });
+    expect((funding as any).funding.lineByLineItem.get("gid://shopify/LineItem/5009")).toEqual({ totalCents: 5600, quantity: 1 });
+    // A second time: already funded.
+    expect(await fundReplacementLine(input({ fundedCents: 1 }), session(), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("already funded") });
+  });
+
+  it("dry-run writes nothing", async () => {
+    await unfundedExchanges();
+    const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
+    expect(await fundReplacementLine(input(), session(), { write: false })).toMatchObject({ ok: true, written: false });
+    expect(await q(`SELECT * FROM replacement_funding_decisions`)).toEqual([]);
+    expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
+  });
+
+  it("a session's amount is spent once across lines", async () => {
+    await unfundedExchanges();
+    const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
+    expect(await fundReplacementLine(input(), session(), { write: true })).toMatchObject({ ok: true, written: true });
+    expect(await fundReplacementLine(input({ orderId: "501", productsorderId: 5, fundedCents: 401 }), session(), { write: true })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("has left: 400 of 1000"),
+    });
+    expect(await fundReplacementLine(input({ orderId: "501", productsorderId: 5, fundedCents: 400 }), session(), { write: true })).toMatchObject({ ok: true, written: true });
+    expect((await q(`SELECT count(*)::int AS n FROM replacement_lines`))[0].n).toBe(2);
+  });
+
+  it("the statement re-checks the budget: a decision written after the read wins", async () => {
+    await unfundedExchanges();
+    const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
+    // Another operator spends the whole session after this run read its budget
+    // (the Shopify read comes after it), before this run's statement.
+    answers.ReconcileOrderById = async (v: any) => {
+      await q(
+        `INSERT INTO replacement_funding_decisions (order_id, source_productsorder_id, stripe_session_id, session_amount_cents, funded_cents, decided_by, evidence)
+         VALUES ('999', 99, 'cs_old', 1000, 1000, 'other', 'x')`
+      );
+      return shopifyOrder(v.id);
+    };
+    const out = await fundReplacementLine(input(), session(), { write: true });
+    expect(out).toMatchObject({ ok: false, reason: expect.stringContaining("meanwhile") });
+    expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
+    expect((await q(`SELECT count(*)::int AS n FROM replacement_funding_decisions`))[0].n).toBe(1);
+  });
+
+  it("refuses an unpaid session, another order's, an S1 session, and missing or wrong input", async () => {
+    await unfundedExchanges();
+    const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
+    const refused = async (d: any, s: any, text: string) =>
+      expect(await fundReplacementLine(input(d), s, { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining(text) });
+    await refused({}, session({ payment_status: "unpaid" }), "is not paid");
+    await refused({}, session({ metadata: { id: "101" } }), "names order 101, not the source order 100");
+    await refused({}, session({ metadata: { id: "100", submission_id: "7" } }), "not a pre-S1 payment");
+    await refused({}, async () => ({ ok: true as const, session: null }), "no Stripe session");
+    await refused({ fundedCents: 1001 }, session(), "has left: 1000 of 1000");
+    await refused({ fundedCents: 0 }, session(), "--cents must be an integer > 0");
+    await refused({ evidence: " " }, session(), "--evidence");
+    await refused({ by: "" }, session(), "--by");
+    await refused({ orderId: "777" }, session(), "0 done reconciled exchange records name order 777");
+    await refused({ productsorderId: 5 }, session(), "0 done reconciled exchange records name order 500 for line 5");
+    answers.ReconcileOrderById = () => ({ data: { order: { ...shopifyOrder("gid://shopify/Order/500").data.order, tags: ["Change", "Order #101"] } } });
+    await refused({}, session(), "is not this line's exchange");
+    // Only a DONE record identifies the order: one that is not done names nothing yet.
+    await q(`UPDATE settlement_operations SET state = 'unresolved' WHERE kind = 'exchange_order' AND 5 = ANY (members)`);
+    answers.ReconcileOrderById = (v: any) => shopifyOrder(v.id);
+    await refused({ orderId: "501", productsorderId: 5, fundedCents: 1 }, session(), "0 done reconciled exchange records name order 501");
+    // An S2 submission's exchange is funded at submission, never by this path.
+    await q(`UPDATE settlement_operations SET state = 'done' WHERE kind = 'exchange_order' AND 5 = ANY (members)`);
+    await q(`UPDATE return_submissions SET state = 'accepted'`);
+    await refused({ orderId: "501", productsorderId: 5, fundedCents: 1 }, session(), "0 done reconciled exchange records name order 501");
+    expect(await q(`SELECT * FROM replacement_funding_decisions`)).toEqual([]);
+    expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
+  });
+});
+
+describe("0011 holds a funding decision to its session", () => {
+  it("funded ≤ the session total, > 0, with who and why; one decision per line", async () => {
+    const defs = (await q(`SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'replacement_funding_decisions'::regclass AND contype = 'c'`)).map((r: any) => r.def);
+    expect(defs).toEqual(expect.arrayContaining([
+      "CHECK ((funded_cents <= session_amount_cents))",
+      "CHECK ((funded_cents > 0))",
+      "CHECK ((session_amount_cents > 0))",
+      "CHECK ((length(TRIM(BOTH FROM decided_by)) > 0))",
+      "CHECK ((length(TRIM(BOTH FROM evidence)) > 0))",
+    ]));
+    const [idx] = await q(`SELECT indexdef FROM pg_indexes WHERE indexname = 'replacement_funding_decisions_line_idx'`);
+    expect(idx.indexdef).toContain("UNIQUE INDEX");
+    expect(idx.indexdef).toContain("(order_id, source_productsorder_id)");
   });
 });

@@ -6,6 +6,7 @@ import { alertOps } from "@/actions/opsAlert";
 import { resolveRootOrderId } from "@/lib/replacementOrigin";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
 import { replacementFundingOf, unitPriceOf } from "@/db/replacementLines";
+import { fundingCommand } from "@/lib/settlement/fundingCommand";
 import type { OrderData } from "@/types";
 
 export type ReplacementPlan =
@@ -41,7 +42,12 @@ export async function planReplacementOrder(order: OrderData): Promise<Replacemen
     return { kind: "refused", reason: found.reason };
   }
   if (found.kind === "unfunded") {
-    return refuseWith(order, found.sourceOrderId ?? "(unknown)", `settlement-order-unfunded:${found.reason}`);
+    return refuseWith(
+      order,
+      found.sourceOrderId ?? "(unknown)",
+      `settlement-order-unfunded:${found.reason}`,
+      found.reason === "replacement-without-funding" ? fundingInstructions(String(order.id), found.sourceLines ?? []) : ""
+    );
   }
   const { funding } = found;
   const priceByLineItem: Record<string, string> = {};
@@ -56,12 +62,28 @@ export async function planReplacementOrder(order: OrderData): Promise<Replacemen
   return { kind: "replacement", exchangeOf: funding.sourceOrderId, priceByLineItem };
 }
 
-async function refuseWith(order: OrderData, original: string, reason: string): Promise<ReplacementPlan> {
+/** What the operator runs to record the missing funding (Santi, 30 Oct: A). */
+function fundingInstructions(orderId: string, sourceLines: number[]): string {
+  if (sourceLines.length === 0) {
+    return (
+      `\nNo reconciled exchange record names this order yet: resolve its line's unresolved reconciliation ` +
+      `operation (scripts/resolve-operation.ts --op <its operation id> --done --order gid://shopify/Order/${orderId} --evidence "<why>" --write) first, then fund it with:\n` +
+      fundingCommand(orderId, "<source productsorder id>")
+    );
+  }
+  return (
+    `\nRecord the funding from the customer's pre-S1 Stripe payment, once per line:\n` +
+    sourceLines.map((po) => fundingCommand(orderId, po)).join("\n")
+  );
+}
+
+async function refuseWith(order: OrderData, original: string, reason: string, instructions = ""): Promise<ReplacementPlan> {
   await alertOps(
     `[returns] REPLACEMENT ORDER NOT RETURNABLE ONLINE — ${order.name}`,
     `${order.name} is one of our exchange orders (original ${original}) and the portal could not value its lines.\n` +
       `Reason: ${reason}\n` +
-      `The customer was told to contact us. Nothing was saved, so nothing was priced at list.`
+      `The customer was told to contact us. Nothing was saved, so nothing was priced at list.` +
+      instructions
   );
   return { kind: "refused", reason };
 }

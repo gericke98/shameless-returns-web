@@ -1,6 +1,6 @@
 # Settlement foundation S2: an operations ledger, and settlement executes the agreement
 
-Status: PLAN v1. Tier: **HEAVY** (money, Shopify returns/orders/gift cards, migration). Base: `main` at `354963c`
+Status: PLAN v1 — APPROVED decisions D1=A, D2=A. Tier: **HEAVY** (money, Shopify returns/orders/gift cards, migration). Base: `main` at `354963c`
 (S1 deployed 2026-10-30, migration 0006 applied).
 
 Parent: `2026-10-30-settlement-ownership-plan.md`. Its "Santi's decisions after Codex r2" bind this plan: no
@@ -298,7 +298,7 @@ The transition to `unresolved` and its alert `settlement-unresolved:<op id>` are
   submission for CAMBIO lines, which keeps today's one-parcel behaviour.
 - **Lines confirmed before S1** have no accepted submission. → **D1.**
 
-## Decisions for Santi (my recommendation first)
+## Decisions (Santi, 30 Oct: D1 = A, D2 = A)
 
 - **D1 — lines confirmed before S1** (the pending backlog) in the S2→S3 window.
   - **A (rec.):** at admission, record a `provenance='legacy'` submission from the current rows with

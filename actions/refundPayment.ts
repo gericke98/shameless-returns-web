@@ -80,22 +80,25 @@ async function resolvePaymentIntentId(order: RefundableOrder): Promise<string | 
  * and — for Spain — the label is dead, so the caller must be able to finish the
  * cancellation and raise an alert rather than die here.
  *
- * The idempotency key is the order id AND the payment intent, so a double
- * click, a retry or a resubmitted action all collapse onto one refund — but a
- * genuinely different payment on the same order (a customer who cancels, then
- * starts and pays for a fresh return, then cancels that too) still gets its
- * own key. Keying on the order id alone made the second cancellation reuse
- * the first one's key against a different `payment_intent`, which Stripe
- * rejects outright and turns into a false `reason: "error"`.
+ * The idempotency key is the cancelled submission's id (S2 plan L2): a double
+ * click or a retry collapse onto one refund, and a customer who cancels, pays
+ * for a fresh return and cancels that too is cancelling a NEW submission, so
+ * it gets its own key. Keying on the order id alone made the second
+ * cancellation reuse the first one's key against a different `payment_intent`,
+ * which Stripe rejects outright and turns into a false `reason: "error"`.
  */
-export async function refundOrderPayment(order: RefundableOrder): Promise<RefundOutcome> {
+export async function refundOrderPayment(
+  order: RefundableOrder,
+  /** The cancelled submission (S2 plan L2): the key is `cancel:<submission>`. */
+  submissionId: string
+): Promise<RefundOutcome> {
   try {
     const paymentIntent = await resolvePaymentIntentId(order);
     if (!paymentIntent) return { refunded: false, reason: "not-found" };
 
     await stripe.refunds.create(
       { payment_intent: paymentIntent },
-      { idempotencyKey: `cancel:${order.id}:${paymentIntent}` }
+      { idempotencyKey: `cancel:${submissionId}` }
     );
     return { refunded: true };
   } catch (error) {

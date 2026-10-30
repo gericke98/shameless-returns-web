@@ -1,7 +1,13 @@
 "use server";
 
 import axios from "axios";
-import { getOrderByIdFresh, cancelShopifyReturn, resetOrderReturn } from "@/db/queries";
+import { getOrderByIdFresh } from "@/db/queries";
+import {
+  cancelShopifyReturn,
+  claimOrderForCancellation,
+  finishCancellation,
+  releaseCancellation,
+} from "@/lib/submissionCancellation";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { cancelEligibility, type CancelBlockedReason } from "@/lib/cancelEligibility";
 import { readCarrierMovement } from "./shipping";
@@ -23,11 +29,12 @@ export type CancelResult =
  * The order of reversals is the whole design, and it changes meaning halfway
  * through:
  *
+ *   0. Claim        — take the submission(s) from settlement (S2 plan L2).
  *   1. Amphora cancel  — FATAL. The only booking either lane lets us release.
  *   2. Shopify cancel  — continue on failure, alert a human.
  *   3. Release hold    — never throws; continue on failure, alert a human.
  *   4. Stripe refund   — continue on failure, alert a human.
- *   5. Reset our rows.
+ *   5. One transaction: submissions `cancelled`, then our rows reset.
  *   6. Email the customer.
  *
  * Past step 1 the customer's return no longer exists and, for Spain, their
@@ -61,6 +68,15 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
   const decision = cancelEligibility(order as any, movement);
   if (!decision.cancellable) return { ok: false, reason: decision.reason };
 
+  // 0. Ownership, BEFORE the first external effect. Settlement that has
+  //    admitted anything owns the submission; then this return is settling.
+  const claim = await claimOrderForCancellation(((order as any)?.products ?? []) as any[]);
+  if (!claim.ok) return { ok: false, reason: claim.reason };
+  const submissionIds = claim.submissionIds;
+  const giveBack = async () => {
+    for (const id of submissionIds) await releaseCancellation(id);
+  };
+
   // 1. FATAL. Nothing below runs if the warehouse still expects the parcel.
   try {
     await cancelAmphoraReturn(amphoraOrderIdFromShopifyId(orderId));
@@ -76,6 +92,8 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
         `Cancel aborted for ${orderId}: Amphora would not cancel the return:`,
         error?.message || error
       );
+      // Nothing moved: settlement may have it back.
+      await giveBack();
       return { ok: false, reason: "carrier-cancel-failed" };
     }
     console.warn(
@@ -127,11 +145,17 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
 
   // 4. `not-found` is not a failure: a free return had nothing to refund.
   const paymentIntent = (order as any).stripePaymentIntent;
-  const refund = await refundOrderPayment({
-    id: orderId,
-    email: (order as any).email,
-    stripePaymentIntent: paymentIntent,
-  });
+  const refund = await refundOrderPayment(
+    {
+      id: orderId,
+      email: (order as any).email,
+      stripePaymentIntent: paymentIntent,
+    },
+    // One submission in every real case; several only when two unsettled
+    // returns on one order are cancelled together — sorted, so a retry of the
+    // same cancellation reuses the same key.
+    [...submissionIds].sort().join("+")
+  );
   if (!refund.refunded && refund.reason === "error") {
     await alertOps(
       `Refund FAILED after cancelling ${(order as any).orderNumber}`,
@@ -152,15 +176,16 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
   // return that no longer exists — a phantom live return on the dashboard that
   // an admin would settle, refunding the garment on top of the fee.
   try {
-    await resetOrderReturn(orderId);
+    await finishCancellation(orderId, submissionIds);
   } catch (error: any) {
     await alertOps(
-      `Order rows only half-reset after cancelling ${(order as any).orderNumber}`,
+      `Order rows NOT reset after cancelling ${(order as any).orderNumber}`,
       `Order ${orderId} was cancelled at the customer's request and refunded, but ` +
-        `resetOrderReturn threw:\n${error?.message || error}\n\n` +
+        `finishCancellation threw:\n${error?.message || error}\n\n` +
         `The order and/or its lines may still carry confirmed = true and a return_id for a ` +
         `Shopify return that is already cancelled, so the dashboard may show a PHANTOM live ` +
-        `return. Do not validate it — clear the rows by hand.`
+        `return. Its submission stays held by cancellation, so settlement will not pay it; ` +
+        `the recovery cron alerts on it after an hour. Clear the rows by hand.`
     );
   }
 

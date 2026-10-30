@@ -5,7 +5,8 @@ import { orders, productsOrder } from "@/db/schema";
 import { parseDeliveryInput } from "@/lib/deliveryAddressInput";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { ACTIONS } from "@/placeholder";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { rowNotHeldBySettlement } from "@/lib/submissionCancellation";
 import { revalidatePath } from "next/cache";
 
 type FormDataFields = {
@@ -97,7 +98,9 @@ async function updateProductOrder(
       .where(
         and(
           eq(productsOrder.variant_id, data.oldVariantId!),
-          eq(productsOrder.id, parseInt(data.orderId!))
+          eq(productsOrder.id, parseInt(data.orderId!)),
+          // A row inside an accepted submission is settlement's (S2 plan L2).
+          rowNotHeldBySettlement(sql`productsorder`)
         )
       );
   } catch (error) {
@@ -159,7 +162,12 @@ export async function anularOrder(productOrderId: number, orderId: string) {
     // Scoped by BOTH: a row id alone must not suffice even with a valid session
     // for a different order.
     .where(
-      and(eq(productsOrder.id, productOrderId), eq(productsOrder.orderId, orderId))
+      and(
+        eq(productsOrder.id, productOrderId),
+        eq(productsOrder.orderId, orderId),
+        // A row inside an accepted submission is settlement's (S2 plan L2).
+        rowNotHeldBySettlement(sql`productsorder`)
+      )
     );
 
   revalidatePath("/", "layout");

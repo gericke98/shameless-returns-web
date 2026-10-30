@@ -42,39 +42,41 @@ beforeEach(() => {
 });
 
 const ORDER = { id: "13217168851270", email: "customer@example.com" };
+const SUB = "11111111-1111-4111-8111-111111111111";
 
 describe("refundOrderPayment", () => {
   it("refunds the stored payment intent without touching the session list", async () => {
     const { refundOrderPayment } = await import("@/actions/refundPayment");
 
-    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" });
+    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
 
     expect(result).toEqual({ refunded: true });
     expect(refunds[0].args.payment_intent).toBe("pi_stored");
     expect(listCalls).toHaveLength(0);
   });
 
-  it("keys the refund so a double submit cannot refund twice", async () => {
+  it("keys the refund on the cancelled submission, so a double submit cannot refund twice", async () => {
     const { refundOrderPayment } = await import("@/actions/refundPayment");
 
-    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" });
+    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
+    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
 
-    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${ORDER.id}:pi_stored`);
+    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${SUB}`);
+    expect(refunds[1].options.idempotencyKey).toBe(`cancel:${SUB}`);
   });
 
-  it("keys a second, different payment on the same order separately", async () => {
+  it("keys a later cancellation of a NEW submission on the same order separately", async () => {
     // A customer can cancel, start a fresh return, pay again, and cancel that
-    // one too. Keying on the order id alone would reuse the first refund's
-    // idempotency key against a different payment_intent, which Stripe
-    // rejects.
+    // one too. That is a new submission (S2 plan L2), so a new key — reusing
+    // the first key against a different payment_intent is what Stripe rejects.
     const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const NEXT = "22222222-2222-4222-8222-222222222222";
 
-    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_first" });
-    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_second" });
+    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_first" }, SUB);
+    await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_second" }, NEXT);
 
-    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${ORDER.id}:pi_first`);
-    expect(refunds[1].options.idempotencyKey).toBe(`cancel:${ORDER.id}:pi_second`);
-    expect(refunds[0].options.idempotencyKey).not.toBe(refunds[1].options.idempotencyKey);
+    expect(refunds[0].options.idempotencyKey).toBe(`cancel:${SUB}`);
+    expect(refunds[1].options.idempotencyKey).toBe(`cancel:${NEXT}`);
   });
 
   it("recovers the payment for a return booked before the column existed", async () => {
@@ -84,7 +86,7 @@ describe("refundOrderPayment", () => {
     ];
     const { refundOrderPayment } = await import("@/actions/refundPayment");
 
-    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: null });
+    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: null }, SUB);
 
     expect(result).toEqual({ refunded: true });
     expect(refunds[0].args.payment_intent).toBe("pi_found");
@@ -97,7 +99,7 @@ describe("refundOrderPayment", () => {
     sessions = [];
     const { refundOrderPayment } = await import("@/actions/refundPayment");
 
-    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: null });
+    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: null }, SUB);
 
     expect(result).toEqual({ refunded: false, reason: "not-found" });
     expect(refunds).toHaveLength(0);
@@ -109,7 +111,7 @@ describe("refundOrderPayment", () => {
     refundThrows = true;
     const { refundOrderPayment } = await import("@/actions/refundPayment");
 
-    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" });
+    const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
 
     expect(result).toEqual({ refunded: false, reason: "error" });
   });

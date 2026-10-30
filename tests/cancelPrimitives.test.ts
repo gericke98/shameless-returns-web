@@ -1,40 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
-import { orders, productsOrder } from "@/db/schema";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { settlementDatabase } from "./support/settlementDb";
 
-// The two reversals against our own records.
+// The cancellation primitives, moved out of the "use server" db/queries.ts into
+// lib/submissionCancellation.ts (S2 plan L2). The reset now runs as SQL inside
+// the cancellation's final transaction, so it is tested against the real
+// migrations in PGlite rather than against a mocked query builder.
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
-// Every `.set()` the reset performs, in order. Which table each one targeted is
-// deliberately NOT recorded: the assertions identify updates by the columns
-// they write, which is the behaviour under test, and reaching into Drizzle's
-// internal table symbols to learn the name would couple the test to the ORM's
-// private shape for no gain.
-const setCalls: Array<Record<string, any>> = [];
-// The argument each `.set()` call's matching `.where()` was scoped by, in the
-// same order as setCalls. If a regression drops the `.where()` or scopes it by
-// the wrong column, this is where that would show up — the values above would
-// still look right even as every row in the table got wiped.
-const whereCalls: Array<any> = [];
-
-vi.mock("@/db/drizzle", () => {
-  const chain: any = {
-    update: () => chain,
-    set: (values: Record<string, any>) => {
-      setCalls.push(values);
-      return chain;
-    },
-    where: (condition: any) => {
-      whereCalls.push(condition);
-      return Promise.resolve();
-    },
-  };
-  return { default: chain };
-});
+const env = settlementDatabase();
+vi.mock("@/db/drizzle", () => ({ default: env.db, transact: env.transact }));
 
 let shopifyBody = "";
 const shopifyResponse = { value: { data: { returnCancel: { return: { id: "gid://x" }, userErrors: [] } } } };
@@ -44,9 +22,10 @@ global.fetch = (async (_url: string, init: any) => {
   return { json: async () => shopifyResponse.value };
 }) as any;
 
-beforeEach(() => {
-  setCalls.length = 0;
-  whereCalls.length = 0;
+beforeAll(() => env.ready);
+
+beforeEach(async () => {
+  await env.reset();
   shopifyBody = "";
   shopifyResponse.value = { data: { returnCancel: { return: { id: "gid://x" }, userErrors: [] } } };
   process.env.NEXT_PUBLIC_ACCESS_TOKEN = "token";
@@ -55,7 +34,7 @@ beforeEach(() => {
 
 describe("cancelShopifyReturn", () => {
   it("sends returnCancel for that return id", async () => {
-    const { cancelShopifyReturn } = await import("@/db/queries");
+    const { cancelShopifyReturn } = await import("@/lib/submissionCancellation");
 
     const result = await cancelShopifyReturn("gid://shopify/Return/1");
 
@@ -69,7 +48,7 @@ describe("cancelShopifyReturn", () => {
     // injection pattern `createReturn`'s comment warns against — a document
     // that cancels a return being built from unescaped customer-reachable
     // input. `variables.id` is the only place it's allowed to appear.
-    const { cancelShopifyReturn } = await import("@/db/queries");
+    const { cancelShopifyReturn } = await import("@/lib/submissionCancellation");
 
     await cancelShopifyReturn("gid://shopify/Return/1");
 
@@ -84,7 +63,7 @@ describe("cancelShopifyReturn", () => {
     shopifyResponse.value = {
       data: { returnCancel: { return: null, userErrors: [{ field: "id", message: "nope" }] } },
     } as any;
-    const { cancelShopifyReturn } = await import("@/db/queries");
+    const { cancelShopifyReturn } = await import("@/lib/submissionCancellation");
 
     const result = await cancelShopifyReturn("gid://shopify/Return/1");
 
@@ -98,7 +77,7 @@ describe("cancelShopifyReturn", () => {
     // no return and no refund, instead of a failure a caller can act on.
     delete process.env.NEXT_PUBLIC_ACCESS_TOKEN;
     delete process.env.NEXT_PUBLIC_SHOP_URL;
-    const { cancelShopifyReturn } = await import("@/db/queries");
+    const { cancelShopifyReturn } = await import("@/lib/submissionCancellation");
 
     await expect(cancelShopifyReturn("gid://shopify/Return/1")).resolves.toMatchObject({
       success: false,
@@ -106,153 +85,117 @@ describe("cancelShopifyReturn", () => {
   });
 });
 
+const lib = () => import("@/lib/submissionCancellation");
+
+async function seed() {
+  await env.pg.exec(`
+    INSERT INTO orders (id, order_number, locator, carrier, carrier_url, return_status,
+      stripe_payment_intent, return_method, return_submitted_at, tracking_submitted_at,
+      tracking_nudge_stage)
+    VALUES ('1', '#1', 'PK1', 'UPS', 'https://t', 'APROVED', 'pi_1', 'SELF',
+            '2026-08-18T09:00:00Z', NULL, 1),
+           ('2', '#2', 'PK2', 'UPS', 'https://t2', 'APROVED', 'pi_2', 'SELF',
+            '2026-08-18T09:00:00Z', NULL, 1);
+    INSERT INTO productsorder (id, order_id, line_item, product_id, title, variant_title, variant_id,
+      price, quantity, changed, action, reason, notes, new_variant_title, new_variant_id,
+      confirmed, return_id, return_line_item_id, refunded)
+    VALUES (1, '1', 'li1', 'p', 't', 'M', 'v1', '50.00', 1, true, 'CAMBIO', 'size', 'n', 'L',
+            'gid://shopify/ProductVariant/9', true, 'gid://shopify/Return/1',
+            'gid://shopify/ReturnLineItem/1', NULL),
+           (2, '1', 'li2', 'p', 't', 'M', 'v2', '50.00', 1, false, 'DEVOLUCIÓN', 'fit', NULL, NULL,
+            NULL, true, 'gid://shopify/Return/1', 'gid://shopify/ReturnLineItem/2', true),
+           (3, '2', 'li3', 'p', 't', 'M', 'v1', '50.00', 1, true, 'CAMBIO', 'size', 'n', 'L',
+            'gid://shopify/ProductVariant/9', true, 'gid://shopify/Return/2',
+            'gid://shopify/ReturnLineItem/3', NULL);`);
+}
+
+const order = async (id: string) =>
+  (await env.pg.query<any>("SELECT * FROM orders WHERE id = $1", [id])).rows[0];
+const row = async (id: number) =>
+  (await env.pg.query<any>("SELECT * FROM productsorder WHERE id = $1", [id])).rows[0];
+
 describe("resetOrderReturn", () => {
   it("clears the tracking the cancelled return carried", async () => {
-    const { resetOrderReturn } = await import("@/db/queries");
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
-
-    const orderUpdate = setCalls.find((c) => "locator" in c);
-    expect(orderUpdate).toMatchObject({
-      locator: null,
-      carrier: null,
-      carrierUrl: null,
-      returnStatus: null,
+    expect(await order("1")).toMatchObject({
+      locator: null, carrier: null, carrier_url: null, return_status: null,
     });
   });
 
   it("clears the Stripe payment intent, so the NEXT return cannot reuse it", async () => {
-    // Leaving `pi_1` behind poisons the next cancellation two different ways.
-    // If the second return is FREE, `refundOrderPayment` is handed the old
-    // intent and either replays the first refund (Stripe's idempotency makes
-    // that look like success) or errors and tells ops to refund by hand for a
-    // return that cost nothing. And if the second return IS paid but the
-    // webhook's intent write fails — it is swallowed — the stale value
-    // short-circuits `resolvePaymentIntentId`'s session-lookup fallback, so
-    // the customer is never refunded for what they actually paid.
-    const { resetOrderReturn } = await import("@/db/queries");
+    // Leaving `pi_1` behind poisons the next cancellation: a FREE second
+    // return would be handed the old intent, and a paid one whose intent write
+    // failed would never reach the session-lookup fallback.
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
-
-    const orderUpdate = setCalls.find((c) => "locator" in c);
-    expect(orderUpdate).toMatchObject({ stripePaymentIntent: null });
+    expect((await order("1")).stripe_payment_intent).toBeNull();
   });
 
   it("clears the self-booked columns, so the cancelled return is neither chased nor blocking", async () => {
-    // Cancel-before-posting is the PRIMARY self-booked cancel path, so these
-    // four surviving the reset is not a corner case. Two things go wrong:
-    //
-    //  (a) `getSelfReturnsAwaitingTracking` still matches the row, so at day 3
-    //      the customer is emailed "Have you sent your return yet?" about a
-    //      return we cancelled and refunded, and at day 10 ops is told the
-    //      Shopify return is live and the Amphora ticket still PENDING — both
-    //      false.
-    //  (b) `createSelfBookedReturn` treats a non-null `returnSubmittedAt` as a
-    //      duplicate submit and returns 200, so a SECOND self-booked return is
-    //      swallowed whole: no Amphora ticket, no instructions email, no
-    //      tracking link, no revert and no alert.
-    const { resetOrderReturn } = await import("@/db/queries");
+    // Cancel-before-posting is the PRIMARY self-booked cancel path. A
+    // surviving `return_submitted_at` swallows the next self-booked return
+    // (`if (order.returnSubmittedAt) return 200;`), and a surviving null
+    // `tracking_submitted_at` gets the customer nudged about a cancelled one.
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
-
-    const orderUpdate = setCalls.find((c) => "locator" in c);
-    expect(orderUpdate).toMatchObject({
-      returnMethod: null,
-      returnSubmittedAt: null,
-      trackingSubmittedAt: null,
-      trackingNudgeStage: 0,
+    const o = await order("1");
+    expect(o).toMatchObject({
+      return_method: null, return_submitted_at: null, tracking_submitted_at: null,
+      tracking_nudge_stage: 0,
     });
-
-    // And the consequences those values exist to prevent, stated against the
-    // row the reset actually produces. The two predicates below MIRROR
-    // `getSelfReturnsAwaitingTracking`'s WHERE clause and
-    // `createSelfBookedReturn`'s duplicate guard — there is no test database
-    // here, so a mirror is the only way to state them; each is quoted next to
-    // its assertion so a drift is visible.
-    const afterReset = {
-      returnMethod: "SELF",
-      returnSubmittedAt: new Date("2026-08-18T09:00:00Z"),
-      trackingSubmittedAt: null,
-      trackingNudgeStage: 1,
-      ...orderUpdate,
-    };
-
-    // returnMethod = 'SELF' AND return_submitted_at IS NOT NULL
-    //   AND tracking_submitted_at IS NULL AND tracking_nudge_stage < 2
-    const sweepWouldChaseIt =
-      afterReset.returnMethod === "SELF" &&
-      afterReset.returnSubmittedAt !== null &&
-      afterReset.trackingSubmittedAt === null &&
-      afterReset.trackingNudgeStage < 2;
-    expect(sweepWouldChaseIt).toBe(false);
-
-    // `if (order.returnSubmittedAt) return 200;`
-    const secondReturnWouldBeSwallowed = Boolean(afterReset.returnSubmittedAt);
-    expect(secondReturnWouldBeSwallowed).toBe(false);
+    // The sweep's own predicate, evaluated by Postgres on the reset row.
+    const chased = await env.pg.query<any>(
+      `SELECT 1 FROM orders WHERE id = '1' AND return_method = 'SELF'
+         AND return_submitted_at IS NOT NULL AND tracking_submitted_at IS NULL
+         AND tracking_nudge_stage < 2`
+    );
+    expect(chased.rows).toHaveLength(0);
   });
 
-  it("scopes each update to the one order, not the whole table", async () => {
-    // A regression that dropped the `.where()` or scoped it by the wrong
-    // column would still pass every assertion above — it would just also
-    // wipe the tracking and line selections of every other order in the
-    // table. This is the only test that would catch that.
-    const { resetOrderReturn } = await import("@/db/queries");
+  it("touches only the one order, not the whole table", async () => {
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
-
-    const orderUpdateIndex = setCalls.findIndex((c) => "locator" in c);
-    const lineUpdateIndex = setCalls.findIndex((c) => "confirmed" in c);
-
-    expect(whereCalls[orderUpdateIndex]).toEqual(eq(orders.id, "1"));
-    expect(whereCalls[lineUpdateIndex]).toEqual(eq(productsOrder.orderId, "1"));
-    // The two scopes must be genuinely different conditions (different
-    // columns), not the same `where` reused for both updates.
-    expect(whereCalls[orderUpdateIndex]).not.toEqual(whereCalls[lineUpdateIndex]);
+    expect((await order("2")).locator).toBe("PK2");
+    expect((await row(3)).confirmed).toBe(true);
+    expect((await row(3)).return_id).toBe("gid://shopify/Return/2");
   });
 
   it("clears the confirmation and the Shopify return ids from every line", async () => {
-    const { resetOrderReturn } = await import("@/db/queries");
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
+    for (const id of [1, 2]) {
+      expect(await row(id)).toMatchObject({ confirmed: false, return_id: null, return_line_item_id: null });
+    }
+  });
 
-    const lineUpdate = setCalls.find((c) => "confirmed" in c);
-    expect(lineUpdate).toMatchObject({
-      confirmed: false,
-      return_id: null,
-      return_line_item_id: null,
-    });
+  it("keeps `refunded` — the permanent record that a garment was settled", async () => {
+    await seed();
+    await (await lib()).resetOrderReturn("1");
+
+    expect((await row(2)).refunded).toBe(true);
   });
 
   it("clears the exchange flag, not just the exchange data", async () => {
-    // `changed` is the ONLY selection column this reset used to leave behind,
-    // and it is the one the portal renders from: `productLineClient` strikes
-    // the size through whenever `changed` is true, and shows the replacement
-    // beside it only when `new_variant_title` is also set. Clearing the latter
-    // without the former left a cancelled line struck through with nothing
-    // next to it — the customer's garment displayed as an exchange for
-    // nothing, on a return they had just cancelled.
-    //
-    // Order #311258 (elvidibu, cancelled 2026-08-13) is the row that showed it.
-    const { resetOrderReturn } = await import("@/db/queries");
+    // `changed` alone left a cancelled line struck through next to nothing
+    // (#311258, cancelled 2026-08-13).
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
-
-    const lineUpdate = setCalls.find((c) => "confirmed" in c);
-    expect(lineUpdate).toMatchObject({ changed: false });
+    expect((await row(1)).changed).toBe(false);
   });
 
   it("clears the customer's selections so they get a clean wizard", async () => {
-    const { resetOrderReturn } = await import("@/db/queries");
+    await seed();
+    await (await lib()).resetOrderReturn("1");
 
-    await resetOrderReturn("1");
-
-    const lineUpdate = setCalls.find((c) => "confirmed" in c);
-    expect(lineUpdate).toMatchObject({
-      action: null,
-      reason: null,
-      notes: null,
-      new_variant_id: null,
-      new_variant_title: null,
+    expect(await row(1)).toMatchObject({
+      action: null, reason: null, notes: null, new_variant_id: null, new_variant_title: null,
     });
   });
 });

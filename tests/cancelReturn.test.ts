@@ -30,6 +30,9 @@ const calls = {
   releaseHold: [] as string[],
   refund: [] as string[],
   reset: [] as string[],
+  claim: [] as string[],
+  release: [] as string[],
+  refundKey: [] as string[],
   customerEmail: [] as string[],
   opsAlert: [] as string[],
   // One shared log every mocked primitive pushes its own name onto, so the
@@ -50,6 +53,8 @@ const behaviour = {
   refundOutcome: { refunded: true } as any,
   resetFails: false,
   emailFails: false,
+  // What the ownership claim answers (S2 plan L2): settlement may hold it.
+  claim: { ok: true, submissionIds: ["sub-1"] } as any,
 };
 
 const ORDER: Record<string, any> = {};
@@ -83,16 +88,27 @@ vi.mock("@/db/queries", () => ({
     calls.orderRead.push(id);
     return ORDER;
   },
+}));
+vi.mock("@/lib/submissionCancellation", () => ({
+  claimOrderForCancellation: async () => {
+    calls.claim.push(ORDER.id);
+    calls.sequence.push("claim");
+    return behaviour.claim;
+  },
+  releaseCancellation: async (id: string) => {
+    calls.release.push(id);
+    calls.sequence.push("release-claim");
+  },
   cancelShopifyReturn: async (id: string) => {
     calls.shopifyCancel.push(id);
     calls.sequence.push("shopify");
     return behaviour.shopifyFails ? { success: false, errors: "nope" } : { success: true };
   },
-  // Mirrors the real reset (db/queries.ts) against the in-memory row, so a
-  // SECOND cancellation of the same order sees what the first one left behind
-  // rather than a pristine snapshot. `refunded` is left alone on purpose —
-  // that is what the real one does.
-  resetOrderReturn: async (id: string) => {
+  // Mirrors the real final transaction (lib/submissionCancellation.ts) against
+  // the in-memory row, so a SECOND cancellation of the same order sees what the
+  // first one left behind. `refunded` is left alone on purpose — that is what
+  // the real one does.
+  finishCancellation: async (id: string) => {
     calls.reset.push(id);
     calls.sequence.push("reset");
     if (behaviour.resetFails) throw new Error("neon: connection terminated");
@@ -138,8 +154,9 @@ vi.mock("@/actions/exchangeReservation", () => ({
   },
 }));
 vi.mock("@/actions/refundPayment", () => ({
-  refundOrderPayment: async (order: any) => {
+  refundOrderPayment: async (order: any, submissionKey: string) => {
     calls.refund.push(order.id);
+    calls.refundKey.push(submissionKey);
     calls.sequence.push("refund");
     return behaviour.refundOutcome;
   },
@@ -178,6 +195,7 @@ beforeEach(() => {
   behaviour.refundOutcome = { refunded: true };
   behaviour.resetFails = false;
   behaviour.emailFails = false;
+  behaviour.claim = { ok: true, submissionIds: ["sub-1"] };
   for (const key of Object.keys(ORDER)) delete ORDER[key];
   Object.assign(ORDER, freshOrder());
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
@@ -227,6 +245,7 @@ describe("cancelling an eligible return", () => {
   it("runs the reversal chain in the exact documented order", async () => {
     await cancel();
     expect(calls.sequence).toEqual([
+      "claim",
       "amphora",
       "shopify",
       "release",
@@ -268,6 +287,41 @@ describe("when the return may not be cancelled", () => {
     ORDER.products = [{ confirmed: true, refunded: true, return_id: "gid://shopify/Return/1" }];
     expect(await cancel()).toEqual({ ok: false, reason: "already-settled" });
     expect(calls.refund).toHaveLength(0);
+  });
+});
+
+describe("ownership of the submission (S2 plan L2)", () => {
+  it("is taken BEFORE the first external effect", async () => {
+    await cancel();
+    expect(calls.sequence.indexOf("claim")).toBe(0);
+    expect(calls.sequence.indexOf("claim")).toBeLessThan(calls.sequence.indexOf("amphora"));
+  });
+
+  it("refuses as already-settled when settlement holds it, and touches nothing external", async () => {
+    behaviour.claim = { ok: false, reason: "already-settled" };
+    expect(await cancel()).toEqual({ ok: false, reason: "already-settled" });
+    expect(calls.amphoraCancel).toHaveLength(0);
+    expect(calls.shopifyCancel).toHaveLength(0);
+    expect(calls.releaseHold).toHaveLength(0);
+    expect(calls.refund).toHaveLength(0);
+    expect(calls.reset).toHaveLength(0);
+  });
+
+  it("gives the submission back when Amphora refuses — nothing moved", async () => {
+    behaviour.amphoraFails = true;
+    expect(await cancel()).toEqual({ ok: false, reason: "carrier-cancel-failed" });
+    expect(calls.release).toEqual(["sub-1"]);
+  });
+
+  it("keeps the submission once Amphora has cancelled, whatever fails after", async () => {
+    behaviour.resetFails = true;
+    await cancel();
+    expect(calls.release).toHaveLength(0);
+  });
+
+  it("keys the Stripe refund on the cancelled submission", async () => {
+    await cancel();
+    expect(calls.refundKey).toEqual(["sub-1"]);
   });
 });
 
@@ -441,6 +495,7 @@ describe("cancelling the same return twice", () => {
     await cancel();
 
     expect(calls.sequence).toEqual([
+      "claim",
       "amphora",
       "shopify",
       "release",

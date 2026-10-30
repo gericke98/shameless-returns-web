@@ -109,15 +109,17 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Shopify unreachable" }, { status: 502 });
   }
 
-  // Likewise ONE read for every pending line in the sweep. This used to sit
+  // Likewise ONE read for every confirmed line in the sweep. This used to sit
   // inside the loop — one Shopify round trip per scanned order, which on the
   // current backlog is on its own most of a minute before a single euro moves.
-  const allPendingVariantIds = orders.flatMap((o: any) =>
-    o.products.filter((p: any) => !p.refunded).map((p: any) => String(p.variant_id))
+  // Settled lines too: the receipt pool nets out what they already used, so
+  // their SKU is needed as much as a pending line's.
+  const allVariantIds = orders.flatMap((o: any) =>
+    o.products.map((p: any) => String(p.variant_id))
   );
   let skusById: Record<string, string>;
   try {
-    skusById = await getVariantSkusByIds(allPendingVariantIds);
+    skusById = await getVariantSkusByIds(allVariantIds);
   } catch (error: any) {
     // An unresolved SKU is never eligible, so a failure here would hold every
     // order for a reason that says nothing. Refuse the run instead.

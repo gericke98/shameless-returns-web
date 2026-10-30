@@ -309,62 +309,6 @@ export function buildCollectionScheduledEmail(
   };
 }
 
-const RECEIVED_COPY = {
-  es: {
-    subject: "Hemos recibido tu devolución",
-    text: "Hemos recibido tu devolución.",
-    greeting: (name: string) => `Hola <strong>${name}</strong>,`,
-    intro:
-      "Tu devolución ya ha llegado a nuestro almacén y la estamos revisando.",
-    outcomeReturn:
-      "En cuanto termine la revisión procesaremos tu reembolso. Te avisaremos.",
-    contact: `Si tienes alguna pregunta, escríbenos a ${MAILTO}.`,
-    signoff: "Saludos,<br/><strong>El equipo de Shameless Collective</strong>",
-  },
-  en: {
-    subject: "We've received your return",
-    text: "We've received your return.",
-    greeting: (name: string) => `Hello <strong>${name}</strong>,`,
-    intro:
-      "Your return has arrived at our warehouse and we're checking it now.",
-    outcomeReturn:
-      "As soon as the check is complete we'll process your refund. We'll let you know.",
-    contact: `If you have any questions, contact us at ${MAILTO}.`,
-    signoff: "Best regards,<br/><strong>The Shameless Collective Team</strong>",
-  },
-} as const;
-
-export function buildReturnReceivedEmail(
-  name: string,
-  locale: Locale,
-  exchange?: ExchangeInfo | null
-): EmailPayload {
-  const c = RECEIVED_COPY[locale];
-  const p = 'style="font-size:16px;color:#555;"';
-  // An exchange customer is owed their replacement, not a refund — the two
-  // outcomes are mutually exclusive.
-  const outcome = exchange
-    ? exchangeLine(locale, exchange, p)
-    : `<p ${p}>${c.outcomeReturn}</p>`;
-
-  return {
-    From: FROM,
-    To: "",
-    Subject: c.subject,
-    TextBody: c.text,
-    HtmlBody: `
-      <div style="font-family: Arial, sans-serif; line-height:1.6; color:#333; background:#f9f9f9; padding:20px; border:1px solid #ddd; border-radius:8px; max-width:600px; margin:20px auto;">
-        <div>
-          <p ${p}>${c.greeting(name)}</p>
-          <p ${p}>${c.intro}</p>
-          ${outcome}
-          <p ${p}>${c.contact}</p>
-          <p ${p}>${c.signoff}</p>
-        </div>
-      </div>`,
-  };
-}
-
 /**
  * Where the customer's return has got to.
  *

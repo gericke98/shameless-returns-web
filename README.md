@@ -375,6 +375,23 @@ Delivery runs from its own cron, `/api/cron/ops-alerts` (every 15 min,
 
 **Status: not yet applied.**
 
+### Applying the short-receipt migration
+
+`drizzle/0005_receipt_shortfalls.sql` creates `receipt_shortfalls` (one row
+per Amphora return + SKU the warehouse counted short). Additive. Apply **after
+0004** and **before deploying** — `/api/cron/receipt-shortfalls` writes to it
+every 15 minutes:
+
+```sh
+psql "$DATABASE_URL" -f drizzle/0005_receipt_shortfalls.sql
+```
+
+Verify: `SELECT count(*) FROM information_schema.columns WHERE table_name =
+'receipt_shortfalls';` → 13. The first run alerts ops once for every short
+receipt open today (expected: #311208, and #312246 if still unsettled).
+
+**Status: not yet applied.**
+
 ## Deploy prerequisites for this branch
 
 This branch requires a database migration and a one-time data seed before

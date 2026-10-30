@@ -10,6 +10,8 @@ import {
   index,
   primaryKey,
   uuid,
+  jsonb,
+  unique,
 } from "drizzle-orm/pg-core";
 
 // Creo una tabla que contenga las orders que han sido editadas
@@ -264,6 +266,34 @@ export const opsAlerts = pgTable("ops_alerts", {
   lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
   lastError: text("last_error"),
 });
+
+/**
+ * Short receipts (drizzle/0005_receipt_shortfalls.sql): one row per
+ * (Amphora return, SKU) the warehouse counted short. Opened, resolved and
+ * reopened by actions/receiptShortfallSweep.ts; alerts go through ops_alerts
+ * under `shortfall:<id>:open<reopenCount>:stage1|stage2`.
+ */
+export const receiptShortfalls = pgTable(
+  "receipt_shortfalls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    amphoraReturnId: text("amphora_return_id").notNull(),
+    orderId: text("order_id").notNull(),
+    sku: text("sku").notNull(),
+    shopifyReturnIds: jsonb("shopify_return_ids").$type<string[]>().notNull().default([]),
+    declaredQty: integer("declared_qty").notNull(),
+    receivedQty: integer("received_qty").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    alertStage: smallint("alert_stage").notNull().default(0),
+    firstAlertAcceptedAt: timestamp("first_alert_accepted_at", { withTimezone: true }),
+    reopenCount: integer("reopen_count").notNull().default(0),
+  },
+  (table) => ({
+    returnSku: unique("receipt_shortfalls_return_sku_key").on(table.amphoraReturnId, table.sku),
+  })
+);
 
 // APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
 //

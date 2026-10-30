@@ -151,6 +151,18 @@ describe("applyReturnStatus — the poll must not re-notify", () => {
     expect(emails[0].Subject).toBe("We've received your return");
   });
 
+  it("the arrival email promises nothing: the count may still come up short", async () => {
+    // #312246: the old copy promised both replacements; the customer had sent
+    // one garment of two. Arrival is "we're checking it", nothing more.
+    await apply(CARRIER_ASSIGNED);
+    emails.length = 0;
+
+    await apply({ ...CARRIER_ASSIGNED, internal_status: "RECEIVED" });
+
+    expect(emails[0].HtmlBody).toContain("we're checking it now");
+    expect(emails[0].HtmlBody).not.toMatch(/refund|replacement/i);
+  });
+
   it("never wipes tracking we already hold when a later event omits it", async () => {
     await apply(CARRIER_ASSIGNED);
 

@@ -415,7 +415,7 @@ stand — but first records that agreement as an `accepted` submission bound to
 the session, so a redelivery is a no-op. It does not touch any newer checkout
 on the order. This path goes in S3, once no such session can still be paid.
 
-**Status: not yet applied.**
+**Status: applied 2026-10-30** (verified: 34 columns, `return_submissions_one_awaiting_per_order` present).
 
 ## Deploy prerequisites for this branch
 

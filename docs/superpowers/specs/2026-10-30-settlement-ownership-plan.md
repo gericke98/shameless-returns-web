@@ -1,6 +1,6 @@
 # Settlement ownership: obligations fixed at submit, executed exactly once
 
-Status: DRAFT v2. Tier: **HEAVY** (money, Shopify returns/orders, migration). Base sha: `87d3337`.
+Status: DRAFT v2 — SUPERSEDED by the phase split below (Codex r2, final round: NOT AGREE; Santi 30 Oct). Tier: **HEAVY** (money, Shopify returns/orders, migration). Base sha: `87d3337`.
 
 History:
 - Codex r1 (1 of 2): NOT AGREE, 12 findings, in `…-codex-r1.md`.
@@ -8,6 +8,29 @@ History:
 - v2 answers every r1 finding; the finding numbers appear in brackets, for example [F3].
 
 Unblocks: the short-receipt Phase 2 redraft, where withdrawal cancels an obligation.
+
+## Santi's decisions after Codex r2 (30 Oct) — binding on S1–S3
+
+- **Split into three phases**, each with a ~1-page plan carrying its exact algorithms and ONE Codex
+  code review. No more Codex plan rounds on this foundation. The open items from Codex r2 are
+  assigned:
+  - **S1 — agreement before checkout.** An immutable submission/agreement is saved BEFORE the
+    Stripe session or the free confirm, and the session is bound to it. Line totals,
+    replacement funding and offsets become explicit obligations. Settlement is unchanged.
+    [r2 #4, #6, #7, #11]
+  - **S2 — operations ledger.** Claims, the dispatch transition, recovery, finalization across all
+    required effects, the money boundary with no admin-guard alternative, and cancellation
+    sharing the same ownership claim. Settlement then executes obligations.
+    [r2 #2, #3, #5, #9, #10, #12]
+  - **S3 — legacy reconciliation and cutover.** The full population, evidence predicates, the
+    writer drain, and rollback. [r2 #1, #8]
+- **Cheaper swap: owed, paid in tender.** A positive exchange balance is its own money obligation,
+  paid by refund, or by credit at ×1.15 when credit was chosen, exactly like a return. Past cheaper
+  swaps get audited in S3.
+- **Residual cents: one submission-level obligation.** Lines receive the floor of their
+  proportional share. The leftover (< €1) is a separate obligation on the submission, paid with
+  its last settlement. No row ordering decides money.
+- v2 D1 (proportional allocation) is implied by the above. v2 D2 (legacy amounts) moves to S3.
 
 ## Rules (verbatim, Santi)
 

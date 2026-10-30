@@ -65,7 +65,7 @@ export type PresentmentRate = {
 };
 
 /** The shape Shopify uses for every dual-currency amount on an order. */
-type MoneySet = {
+export type MoneySet = {
   shop_money?: { amount?: string | null; currency_code?: string | null } | null;
   presentment_money?: { amount?: string | null; currency_code?: string | null } | null;
 };

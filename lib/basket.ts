@@ -88,7 +88,25 @@ export function valueBasket(
   grams: number;
   degraded: boolean;
 } {
-  const active = items.filter((item) => item.action && !item.confirmed);
+  return valueSelection(
+    items.filter((item) => item.action && !item.confirmed),
+    items,
+    catalogue
+  );
+}
+
+/**
+ * Value exactly the lines in `active` — the same arithmetic as `valueBasket`,
+ * for a selection that is not "what the customer is choosing now". Settlement
+ * uses it for rows confirmed before submissions existed (S2 plan, D1): the
+ * customer's basket is the rows of one Shopify return, already confirmed.
+ * `items` is every line of the order, for the replacement-price fallback.
+ */
+export function valueSelection(
+  active: OrderItem[],
+  items: OrderItem[],
+  catalogue: Product[]
+): ReturnType<typeof valueBasket> {
   const index = indexCatalogue(catalogue);
   const fallbackRatio = orderRatio(items as unknown as PricedLine[], index);
 

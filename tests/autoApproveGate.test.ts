@@ -220,4 +220,21 @@ describe("decideAutoApprove — the receipt pool nets out settled lines", () => 
 
     expect(v.settle).toBe(false);
   });
+
+  it("never settles a zero-quantity line on an unreadable count (Codex repro)", () => {
+    const v = input({
+      amphora: { ...input().amphora!, items: [{ sku: "20250503", quantity: "1", quantity_received: "n/a" }] },
+    });
+    v.lines[0].quantity = 0;
+
+    expect(decideAutoApprove(v).settle).toBe(false);
+  });
+
+  it("never settles on a missing quantity_received", () => {
+    const v = decideAutoApprove(input({
+      amphora: { ...input().amphora!, items: [{ sku: "20250503", quantity: "1", quantity_received: null as any }] },
+    }));
+
+    expect(v.settle).toBe(false);
+  });
 });

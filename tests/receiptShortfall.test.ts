@@ -85,4 +85,34 @@ describe("shortfallsBySku", () => {
   it("is unknown on an unreadable line quantity", () => {
     expect(shortfallsBySku([line({ quantity: NaN })], [item("A", "1")]).status).toBe("unknown");
   });
+
+  it("is unknown on a confirmed quantity of 0 — zero demand must not skip the count check", () => {
+    // Codex repro: qty-0 line + "n/a" received. The old gate held; zero demand
+    // skipped validation and settled.
+    expect(shortfallsBySku([line({ quantity: 0 })], [item("A", "n/a")])).toEqual({
+      status: "unknown", reason: "unreadable-quantity:v1",
+    });
+  });
+
+  it("is unknown on a fractional quantity", () => {
+    expect(shortfallsBySku([line({ quantity: 1.5 })], [item("A", "2")]).status).toBe("unknown");
+  });
+
+  it("treats a missing, null or blank count as unreadable, never as an explicit 0", () => {
+    for (const blank of [null, undefined, "", "  "]) {
+      expect(shortfallsBySku([line()], [{ sku: "A", quantity_received: blank as any }]).status).toBe(
+        "unknown"
+      );
+    }
+  });
+
+  it("a missing count beside a real one cannot read as ok (Codex repro)", () => {
+    expect(
+      shortfallsBySku([line({ quantity: 2 })], [item("A", "1"), { sku: "A", quantity_received: null as any }])
+    ).toEqual({ status: "unknown", reason: "unreadable-count:A" });
+  });
+
+  it("an explicit \"0\" is still a real count", () => {
+    expect(shortfallsBySku([line()], [item("A", "0")]).status).toBe("short");
+  });
 });

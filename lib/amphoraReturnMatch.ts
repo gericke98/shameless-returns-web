@@ -18,7 +18,8 @@
 //                                   their UI, the 2026-08-05 case).
 //   · none of ours, several       → refused and reported.
 // An `external_id` that disagrees with the record's `order_id` is refused and
-// reported. Nothing here breaks a tie on carrier, time or position.
+// reported, and so is every order it names (both ids), whatever else is listed
+// for them. Nothing here breaks a tie on carrier, time or position.
 //
 // Deciding ownership is NOT this module's job: a match only says which record
 // an order id refers to. The caller still checks the order is ours (and, for
@@ -73,6 +74,10 @@ export function matchReturnsToOrderIds<T extends MatchableReturn>(
 ): MatchResult<T> {
   const byOrderId = new Map<string, T[]>();
   const conflicts: MatchConflict[] = [];
+  // Orders named by a self-contradictory record. Its evidence is not dropped:
+  // every order it names is refused, so a sibling record cannot quietly match
+  // (and be settled against) while the contradiction stands.
+  const contradicted = new Set<string>();
 
   for (const ret of returns) {
     const orderId = orderIdOf(ret);
@@ -83,6 +88,8 @@ export function matchReturnsToOrderIds<T extends MatchableReturn>(
       // business (manual orders, `MNL …`). One WE created that we cannot place
       // is ours to look at.
       if (external) {
+        if (orderId) contradicted.add(orderId);
+        contradicted.add(external);
         conflicts.push({
           kind: "external-id-mismatch",
           amphoraId: ret.id?.trim() || `(no id, external_id ${external})`,
@@ -104,6 +111,8 @@ export function matchReturnsToOrderIds<T extends MatchableReturn>(
   // ES5 and refuses to iterate a Map iterator. `next build` catches it; vitest
   // does not — which is how this reached main and failed two prod deploys.
   for (const [orderId, group] of Array.from(byOrderId.entries())) {
+    // Already reported as the mismatch that names it.
+    if (contradicted.has(orderId)) continue;
     const ours = group.filter((r) => r.external_id?.trim() === orderId);
     const chosen = ours.length === 1 ? ours[0] : ours.length === 0 && group.length === 1 ? group[0] : null;
 

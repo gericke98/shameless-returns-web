@@ -44,9 +44,11 @@ export type ShortfallVerdict =
   | { status: "unknown"; reason: string };
 
 /** Amphora sends counts as strings — `"0"` is truthy, so never test one for
- *  truthiness. NaN for anything unparseable. */
+ *  truthiness. NaN for anything unparseable, AND for a missing or blank value:
+ *  `Number("")` is 0, and an absent count is not evidence that nothing came. */
 export function amphoraCount(value: unknown): number {
-  return Number(String(value ?? "").trim());
+  const text = String(value ?? "").trim();
+  return text === "" ? NaN : Number(text);
 }
 
 /**
@@ -65,7 +67,10 @@ export function shortfallsBySku(
   for (const line of confirmed) {
     const sku = String(line.sku ?? "").trim();
     if (!sku) return { status: "unknown", reason: `unresolved-sku:${line.variant_id}` };
-    if (!Number.isFinite(line.quantity) || line.quantity < 0) {
+    // A confirmed line declares at least one unit. Zero or fractional is not a
+    // quantity we can pool, and a zero-demand line would skip count validation
+    // entirely and be settled on unreadable evidence.
+    if (!Number.isInteger(line.quantity) || line.quantity <= 0) {
       return { status: "unknown", reason: `unreadable-quantity:${line.variant_id}` };
     }
     const bucket = line.refunded ? settled : pending;
@@ -82,7 +87,6 @@ export function shortfallsBySku(
   const short: SkuShortfall[] = [];
   // Array.from: this tsconfig targets ES5, which cannot iterate a Map directly.
   for (const [sku, demand] of Array.from(pending.entries())) {
-    if (demand === 0) continue;
     const got = received.get(sku) ?? 0;
     // A NaN anywhere in this SKU's count makes it unknowable, not short.
     if (!Number.isFinite(got)) return { status: "unknown", reason: `unreadable-count:${sku}` };

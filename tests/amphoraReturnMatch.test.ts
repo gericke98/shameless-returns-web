@@ -90,6 +90,27 @@ describe("matchReturnsToOrderIds", () => {
     ]);
   });
 
+  it("a contradictory record refuses EVERY order it names, siblings included", () => {
+    // Codex repro: order_id SHP 1001 / external_id 1002, plus a lone warehouse
+    // record for 1001. Dropping the contradiction first let the sibling match,
+    // and auto-approve settle 1001 on it.
+    const contradictory = { id: "RET 9", order_id: "SHP 1001", external_id: "1002" };
+    const sibling1001 = { id: "SHP 1001", order_id: "SHP 1001", external_id: null };
+    const sibling1002 = { id: "SHP 1002", order_id: "SHP 1002", external_id: null };
+
+    for (const listing of [
+      [contradictory, sibling1001, sibling1002],
+      [sibling1001, sibling1002, contradictory],
+    ]) {
+      const { matches, conflicts } = matchReturnsToOrderIds(listing);
+
+      expect(matches).toEqual([]);
+      expect(conflicts).toEqual([
+        expect.objectContaining({ kind: "external-id-mismatch", amphoraId: "RET 9" }),
+      ]);
+    }
+  });
+
   it("refuses an order with two records we created", () => {
     const second = { ...ours, id: "RET 179000000000000002" };
 

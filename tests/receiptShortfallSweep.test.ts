@@ -164,6 +164,54 @@ describe("receipt-shortfall sweep", () => {
     expect((await cases())[0].alert_stage).toBe(2);
   });
 
+  it("anchors escalation on the outbox acceptance time, and never moves it", async () => {
+    await sweep();
+    await dispatch();
+    // Postmark accepted the stage-1 alert 10 days ago (seeded), so the anchor
+    // must be THAT time, not the moment the sweep noticed.
+    await pg.exec(
+      `UPDATE ops_alerts SET accepted_at = now() - interval '10 days' WHERE dedupe_key LIKE '%:stage1'`
+    );
+    await sweep();
+    const anchor = (await cases())[0].first_alert_accepted_at;
+    const accepted = (await pg.query<any>(`SELECT accepted_at FROM ops_alerts WHERE dedupe_key LIKE '%:stage1'`))
+      .rows[0].accepted_at;
+    expect(anchor).toEqual(accepted);
+
+    // More runs and upserts (the count re-observed short) leave it untouched…
+    await sweep();
+    await sweep();
+    expect((await cases())[0].first_alert_accepted_at).toEqual(anchor);
+
+    // …and 10 days > 7, so escalation is due on the real clock.
+    await sweep();
+    await dispatch();
+    expect(sent.at(-1)).toContain("UNRESOLVED 7 DAYS");
+  });
+
+  it("a reopened case starts a NEW 7-day window from its new stage-1 acceptance", async () => {
+    await sweep();
+    await dispatch();
+    await pg.exec(`UPDATE ops_alerts SET accepted_at = now() - interval '30 days'`);
+    await sweep(); // stage 1, anchor 30 days ago
+    world.returns = [amphora({ a: "1", b: "1" })];
+    await sweep(); // resolved
+    world.returns = [amphora({ a: "0", b: "1" })];
+    await sweep(); // reopened: stage 0, no anchor
+    await dispatch(); // open1 stage-1 alert accepted now
+    await sweep(); // new anchor = now
+    sent.length = 0;
+
+    await sweep(new Date(Date.now() + 6 * DAY));
+    await dispatch();
+    expect(sent).toEqual([]); // old 30-day-old anchor must not count
+
+    await sweep(new Date(Date.now() + 8 * DAY));
+    await dispatch();
+    expect(sent).toEqual(["[returns] SHORT RECEIPT UNRESOLVED 7 DAYS — #312246 (20240800)"]);
+    expect((await cases())[0]).toMatchObject({ reopen_count: 1, alert_stage: 1 });
+  });
+
   it("does not escalate before 7 days", async () => {
     await sweep();
     await dispatch();

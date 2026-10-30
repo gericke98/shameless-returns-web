@@ -321,6 +321,14 @@ export const returnSubmissions = pgTable("return_submissions", {
   stripePaymentIntent: text("stripe_payment_intent"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  // S2 (drizzle/0007): who owns the submission's external effects — the
+  // settlement ledger or a customer cancellation. Taken by conditional UPDATE.
+  holder: text("holder"),
+  holderSince: timestamp("holder_since", { withTimezone: true }),
+  // 'legacy': recorded at admission from rows confirmed before S1 (D1).
+  provenance: text("provenance").notNull().default("agreed"),
+  // Bumped by every admission; the compare-and-set that serialises them.
+  admissionSeq: integer("admission_seq").notNull().default(0),
 });
 
 export const submissionLines = pgTable(
@@ -340,9 +348,62 @@ export const submissionLines = pgTable(
     stripeFundedCents: integer("stripe_funded_cents").notNull(),
     fulfillmentLineItemId: text("fulfillment_line_item_id"),
     returnLineItemId: text("return_line_item_id"),
+    // S2: every effect this line needs is done.
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    // S2: read from the Shopify return at admission and frozen.
+    reverseFulfillmentLineItemId: text("reverse_fulfillment_line_item_id"),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.submissionId, table.productsorderId] }),
+  })
+);
+
+/**
+ * One row per external effect of settling a submission (drizzle/0007). Written
+ * by lib/settlement/ledger.ts only; see the S2 plan for the lifecycle.
+ */
+export const settlementOperations = pgTable("settlement_operations", {
+  id: uuid("id").primaryKey(),
+  submissionId: uuid("submission_id").notNull(),
+  kind: text("kind").notNull(),
+  scopeKey: text("scope_key").notNull().unique(),
+  members: integer("members").array().notNull().default([]),
+  after: uuid("after"),
+  request: jsonb("request").notNull(),
+  amountCents: integer("amount_cents").notNull().default(0),
+  currency: text("currency").notNull().default("EUR"),
+  state: text("state").notNull().default("pending"),
+  attempt: integer("attempt").notNull().default(0),
+  owner: uuid("owner"),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),
+  effectRef: text("effect_ref"),
+  evidence: jsonb("evidence"),
+  error: text("error"),
+  resolvedBy: text("resolved_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * How each line of an exchange order WE created was funded (drizzle/0007).
+ * Written in the same statement that marks its `exchange_order` op done.
+ */
+export const replacementLines = pgTable(
+  "replacement_lines",
+  {
+    exchangeOperationId: uuid("exchange_operation_id").notNull(),
+    sourceSubmissionId: uuid("source_submission_id").notNull(),
+    sourceProductsorderId: integer("source_productsorder_id").notNull(),
+    orderId: text("order_id").notNull(),
+    lineItemId: text("line_item_id").notNull().unique(),
+    variantId: text("variant_id").notNull(),
+    quantity: integer("quantity").notNull(),
+    stripeFundedCents: integer("stripe_funded_cents").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.exchangeOperationId, table.sourceProductsorderId] }),
   })
 );
 

@@ -74,6 +74,7 @@ async function checkout() {
 
 beforeAll(async () => {
   await pg.exec(readFileSync("drizzle/0006_return_submissions.sql", "utf8"));
+  await pg.exec(readFileSync("drizzle/0007_settlement_operations.sql", "utf8"));
 });
 
 beforeEach(async () => {

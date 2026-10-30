@@ -66,6 +66,10 @@ beforeAll(async () => {
   await pg.exec(migration);
   // Applied by hand, so applying it twice must be harmless.
   await pg.exec(migration);
+  // 0007 (S2) adds columns db/schema.ts now selects.
+  const s2 = readFileSync("drizzle/0007_settlement_operations.sql", "utf8");
+  await pg.exec(s2);
+  await pg.exec(s2);
 });
 
 beforeEach(async () => {

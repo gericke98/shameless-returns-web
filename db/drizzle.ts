@@ -1,5 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 import * as schema from "./schema";
 
@@ -29,3 +31,30 @@ const sql = neon(process.env.DATABASE_URL!, {
 const db = drizzle(sql, { schema });
 
 export default db;
+
+const dialect = new PgDialect();
+
+/**
+ * Run `statements` as ONE non-interactive Postgres transaction and return each
+ * statement's rows.
+ *
+ * neon-http cannot hold a transaction open across round trips, so there is no
+ * interactive `db.transaction(async tx => …)` here, ever. What it can do is
+ * send a fixed list of statements that commit or roll back together, under
+ * READ COMMITTED: every statement takes a FRESH snapshot when it starts. That
+ * is what the settlement ledger relies on — a first `SELECT … FOR UPDATE`
+ * serialises callers on one row, and every later statement then sees whatever
+ * the previous lock holder committed (docs/superpowers/specs/
+ * 2026-10-30-settlement-S2-ledger-plan.md, L4).
+ */
+export async function transact(statements: SQL[]): Promise<any[][]> {
+  const queries = statements.map((statement) => {
+    const query = dialect.sqlToQuery(statement);
+    return sql(query.sql, query.params);
+  });
+  const results: any[] = await sql.transaction(queries, {
+    fullResults: true,
+    isolationLevel: "ReadCommitted",
+  });
+  return results.map((result) => result?.rows ?? []);
+}

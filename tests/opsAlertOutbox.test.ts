@@ -40,7 +40,11 @@ vi.mock("@/db/opsAlerts", () => ({
   },
 }));
 
+const direct: string[] = [];
 vi.mock("@/actions/opsAlert", () => ({
+  alertOps: async (subject: string, body: string) => {
+    direct.push(`${subject}|${body}`);
+  },
   sendOpsAlert: async (subject: string) => {
     sends.push(subject);
     return postmark.ok ? { ok: true } : { ok: false, error: postmark.error };
@@ -56,6 +60,7 @@ beforeEach(() => {
   postmark.ok = true;
   postmark.error = "";
   insertFailsFor.clear();
+  direct.length = 0;
 });
 
 describe("ops-alert outbox", () => {
@@ -109,12 +114,16 @@ describe("ops-alert outbox", () => {
     expect(sends).toHaveLength(OPS_ALERT_DISPATCH_LIMIT + 2);
   });
 
-  it("enqueueOpsAlerts never throws and queues the rest when one insert fails", async () => {
+  it("enqueueOpsAlerts never throws, queues the rest, and sends a failed one directly", async () => {
     const { enqueueOpsAlerts } = await outbox();
     insertFailsFor.add("a");
 
-    await expect(enqueueOpsAlerts([alert("a"), alert("b")])).resolves.toBeUndefined();
+    await expect(enqueueOpsAlerts([alert("a"), alert("b")])).resolves.toEqual({ failed: 1 });
 
     expect(rows.map((r) => r.dedupeKey)).toEqual(["b"]);
+    // Not durable, so not silent: the lost one went out best effort at once.
+    expect(direct).toHaveLength(1);
+    expect(direct[0]).toContain("subject a|");
+    expect(direct[0]).toContain("neon 402");
   });
 });

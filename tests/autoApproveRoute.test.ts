@@ -66,8 +66,8 @@ const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
 vi.mock("@/actions/opsAlertOutbox", () => ({
   enqueueOpsAlerts: async (list: any[]) => {
     queued.push(...list);
+    return { failed: 0 };
   },
-  dispatchOpsAlerts: async () => ({ sent: 0, failed: 0 }),
 }));
 
 vi.mock("@/actions/opsAlert", () => ({

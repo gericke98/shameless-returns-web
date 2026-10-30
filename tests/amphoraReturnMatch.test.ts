@@ -22,7 +22,12 @@ describe("matchReturnsToOrderIds", () => {
     const { matches, conflicts } = matchReturnsToOrderIds([withExternal]);
 
     expect(matches).toEqual([
-      { orderId: "13192219558214", ret: withExternal, viaExternalId: true },
+      {
+        amphoraReturnId: "SHP 13192219558214",
+        orderId: "13192219558214",
+        ret: withExternal,
+        viaExternalId: true,
+      },
     ]);
     expect(conflicts).toEqual([]);
   });
@@ -33,7 +38,12 @@ describe("matchReturnsToOrderIds", () => {
     const { matches, conflicts } = matchReturnsToOrderIds([orphan]);
 
     expect(matches).toEqual([
-      { orderId: "13161916465478", ret: orphan, viaExternalId: false },
+      {
+        amphoraReturnId: "SHP 13161916465478",
+        orderId: "13161916465478",
+        ret: orphan,
+        viaExternalId: false,
+      },
     ]);
     expect(conflicts).toEqual([]);
   });

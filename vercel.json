@@ -5,6 +5,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/ops-alerts",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/auto-approve",
       "schedule": "0 7 * * *"
     },

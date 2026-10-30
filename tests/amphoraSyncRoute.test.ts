@@ -239,8 +239,8 @@ const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
 vi.mock("@/actions/opsAlertOutbox", () => ({
   enqueueOpsAlerts: async (list: any[]) => {
     queued.push(...list);
+    return { failed: 0 };
   },
-  dispatchOpsAlerts: async () => ({ sent: 0, failed: 0 }),
 }));
 
 const alerts: Array<{ subject: string; body: string }> = [];
@@ -569,6 +569,19 @@ describe("amphora-sync cron — identity is the Amphora return id", () => {
 
     expect(applied).toHaveLength(0);
     expect(body.skipped).toBe(1);
+    // We booked it (external_id) and lost its order: that is reported.
+    expect(queued).toEqual([
+      expect.objectContaining({ dedupeKey: "match-no-order:SHP 13100000000001" }),
+    ]);
+  });
+
+  it("does not report an Amphora-created record with no order — those are normal", async () => {
+    // UNKNOWN is one of Amphora's own Shopify-channel records (external_id null).
+    state.returns = [UNKNOWN];
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(queued).toEqual([]);
   });
 
   it("refuses an order with two records under one return id and queues ONE alert", async () => {

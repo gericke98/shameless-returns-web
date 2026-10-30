@@ -89,9 +89,9 @@ export async function GET(req: Request) {
   }
 
   // A conflicted Amphora record is refused by the matcher, so its order finds no
-  // record here and is held. The alert is queued; amphora-sync delivers it.
+  // record here and is held. The alert is queued; /api/cron/ops-alerts delivers it.
   const { matches, conflicts } = matchReturnsToOrderIds(returns);
-  await enqueueOpsAlerts(conflicts.map(matchConflictAlert));
+  const { failed: alertsNotQueued } = await enqueueOpsAlerts(conflicts.map(matchConflictAlert));
   const amphoraByOrderId = new Map(matches.map((m) => [m.orderId, m.ret]));
   const orders = await getOrdersWithUnsettledReturns();
 
@@ -290,5 +290,6 @@ export async function GET(req: Request) {
     budgetExhausted,
     dry,
     conflicts: conflicts.length,
+    alertsNotQueued,
   });
 }

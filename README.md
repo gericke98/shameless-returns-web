@@ -370,6 +370,9 @@ Verify with `SELECT column_name FROM information_schema.columns WHERE
 table_name = 'ops_alerts';` (8 columns). A green build is not evidence that it
 ran: nothing in the deploy runs migrations.
 
+Delivery runs from its own cron, `/api/cron/ops-alerts` (every 15 min,
+`vercel.json`), independent of amphora-sync and auto-approve, which only queue.
+
 **Status: not yet applied.**
 
 ## Deploy prerequisites for this branch

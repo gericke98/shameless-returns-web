@@ -28,6 +28,8 @@ export type MatchableReturn = {
 };
 
 export type ReturnMatch<T> = {
+  /** Amphora's key for this return, `SHP <orderId>`. */
+  amphoraReturnId: string;
   orderId: string;
   ret: T;
   /** True when we created it. The caller relaxes its checks for these. */
@@ -111,10 +113,33 @@ export function matchReturnsToOrderIds<T extends MatchableReturn>(
       continue;
     }
 
-    matches.push({ orderId, ret, viaExternalId: Boolean(external) });
+    matches.push({ amphoraReturnId, orderId, ret, viaExternalId: Boolean(external) });
   }
 
   return { matches, conflicts };
+}
+
+/**
+ * The ops alert for a return WE created (it carries our `external_id`) whose
+ * order we do not hold. An Amphora-created record with no order is normal (their
+ * Shopify-channel returns) and is not reported.
+ */
+export function unknownOrderAlert(amphoraReturnId: string, name?: string | null): {
+  dedupeKey: string;
+  subject: string;
+  body: string;
+} {
+  return {
+    dedupeKey: `match-no-order:${amphoraReturnId}`,
+    subject: `[returns] AMPHORA RETURN WITH NO ORDER — ${amphoraReturnId}`,
+    body: [
+      `Amphora return ${amphoraReturnId}${name ? ` (${name})` : ""} carries our external_id,`,
+      `so we booked it, but no order with that id is in our database.`,
+      ``,
+      `Nothing is synced for it: no customer notification. Find the order in Shopify and`,
+      `check why its row is missing before the customer chases it.`,
+    ].join("\n"),
+  };
 }
 
 /** The ops alert for one conflict. The dedupe key is the Amphora return id, so

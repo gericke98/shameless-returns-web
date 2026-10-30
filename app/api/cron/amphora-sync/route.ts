@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { getAmphoraReturns } from "@/actions/amphora";
 import { applyReturnStatus } from "@/actions/amphoraStatusSync";
 import { getOrderByIdFresh } from "@/db/queries";
-import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
+import {
+  matchConflictAlert,
+  matchReturnsToOrderIds,
+  unknownOrderAlert,
+} from "@/lib/amphoraReturnMatch";
 import { isInternationalOrder } from "@/lib/countries";
 import { sweepSelfReturns } from "@/actions/selfReturnSweep";
 import { alertOps } from "@/actions/opsAlert";
-import { dispatchOpsAlerts, enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -77,7 +81,7 @@ export async function GET(req: Request) {
   // The dedupe key is the Amphora return id, so a conflict that persists is
   // one email, and a failed enqueue is retried by the next run.
   const { matches, conflicts } = matchReturnsToOrderIds(returns);
-  await enqueueOpsAlerts(conflicts.map(matchConflictAlert));
+  const alertsToQueue = conflicts.map(matchConflictAlert);
 
   const changed: Array<Record<string, unknown>> = [];
   // Carries the order's lane alongside the return, because the stranded check
@@ -100,9 +104,11 @@ export async function GET(req: Request) {
       const order = await getOrderByIdFresh(match.orderId);
 
       if (!order) {
-        // No local order at all for this id — expected and common (Amphora's
-        // Shopify-channel returns and arrival records for orders we don't
-        // recognise). Nothing to warn about.
+        // No local order at all for this id — expected and common for records
+        // Amphora created (their Shopify-channel returns and arrival records
+        // for orders we don't recognise). One that carries OUR external_id is
+        // different: we booked it, and we have lost the order it belongs to.
+        if (match.viaExternalId) alertsToQueue.push(unknownOrderAlert(match.amphoraReturnId, ret.name));
         skipped += 1;
         continue;
       }
@@ -286,14 +292,8 @@ export async function GET(req: Request) {
     );
   }
 
-  // Last, so this run's own conflicts are delivered on this run.
-  let opsAlerts = { sent: 0, failed: 0 };
-  try {
-    opsAlerts = await dispatchOpsAlerts();
-  } catch (error: any) {
-    // The rows stay pending; the next run retries them.
-    console.error("[amphora-sync] ops-alert dispatch failed:", error?.message || error);
-  }
+  // Durable; /api/cron/ops-alerts delivers them.
+  const { failed: alertsNotQueued } = await enqueueOpsAlerts(alertsToQueue);
 
   return NextResponse.json({
     scanned,
@@ -304,7 +304,8 @@ export async function GET(req: Request) {
     skippedNoReturn,
     selfReturns,
     conflicts: conflicts.length,
-    opsAlerts,
+    alertsQueued: alertsToQueue.length - alertsNotQueued,
+    alertsNotQueued,
   });
 }
 

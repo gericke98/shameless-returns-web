@@ -13,7 +13,7 @@ import db from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { rootOrderIdOf } from "@/actions/replacementOrder";
 import { readDraftExists, readPayingOrder, readReturnFacts } from "./facts";
-import { insertAdmission, loadSubmission, operationsOf } from "./ledger";
+import { insertAdmission, loadSubmission, operationsOf, standingReconciliations } from "./ledger";
 import { planAdmission, type PayingOrder, type ReturnFacts } from "./plan";
 
 export type AdmitOutcome =
@@ -52,6 +52,13 @@ export async function admit(submissionId: string, requested: readonly number[]):
     if (submission.holder === "cancellation") return { ok: false, held: "cancelling" };
 
     const admitIds = expandAdmission(lines, requested);
+    // S3: the reconciliation found this line paid before the ledger, or left
+    // it for a human. Either way no new obligation may be planned for it.
+    const reconciled = await standingReconciliations(admitIds);
+    if (reconciled.size > 0) {
+      const [po, rec] = Array.from(reconciled)[0];
+      return { ok: false, held: `reconciliation-${rec.state}:${po}` };
+    }
     const existing = await operationsOf(submissionId);
 
     const [order] = await db.select().from(orders).where(eq(orders.id, submission.orderId));

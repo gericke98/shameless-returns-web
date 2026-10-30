@@ -125,7 +125,10 @@ export const productsOrder = pgTable("productsorder", {
   return_id: text("return_id"),
   refunded: boolean("refunded"),
   credit: boolean("credit"),
-  gift_card_id: text("gift_card_id"),
+  // `gift_card_id` stays in the table for history and is deliberately not
+  // modelled (S3 R4): it was write-only and, until 2026-08-24, stamped across
+  // orders by variant (see memory "gift card stamp"). Only the one-shot
+  // reconciliation reads it, by name (scripts/reconcile-legacy.ts).
   return_line_item_id: text("return_line_item_id"),
   transaction_id: text("transaction_id"),
   transaction_amount: text("transaction_amount"),
@@ -409,6 +412,21 @@ export const replacementLines = pgTable(
     pk: primaryKey({ columns: [table.exchangeOperationId, table.sourceProductsorderId] }),
   })
 );
+
+/**
+ * D3 (S3, drizzle/0009): a human's decision of the action on a line whose
+ * action was NULL, written in the same statement that sets it
+ * (scripts/set-line-action.ts). One per line.
+ */
+export const lineActionDecisions = pgTable("line_action_decisions", {
+  id: serial("id").primaryKey(),
+  productsorderId: integer("productsorder_id").notNull().unique(),
+  action: text("action").notNull(),
+  newVariantId: text("new_variant_id"),
+  decidedBy: text("decided_by").notNull(),
+  evidence: text("evidence").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
 //

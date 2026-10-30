@@ -49,6 +49,16 @@ function toOperation(row: any): Operation {
 }
 
 const lease = sql.raw(`interval '${LEASE_MINUTES} minutes'`);
+
+/**
+ * S3 (drizzle/0009): an operation of a `reconciled` submission RECORDS a
+ * payment made before the ledger existed (scripts/reconcile-legacy.ts). It is
+ * never claimed and never recovered, so no state an operator gives it — not
+ * even `rejected`, "no payment happened" — can turn the record into a send.
+ * `o` is the settlement_operations alias of every statement that uses it.
+ */
+const notReconciliation = sql`NOT EXISTS (SELECT 1 FROM return_submissions rs
+                                           WHERE rs.id = o.submission_id AND rs.state = 'reconciled')`;
 const replayWindow = sql.raw(`interval '${ROOT_REFUND_REPLAY_HOURS} hours'`);
 
 // ── reads ──────────────────────────────────────────────────────────────────
@@ -179,6 +189,30 @@ export async function submissionsOfRows(productsorderIds: readonly number[]): Pr
   return new Map(rows.map((r) => [Number(r.productsorder_id), String(r.submission_id)]));
 }
 
+/**
+ * S3: the reconciliation records (drizzle/0009) that still stand on these
+ * rows — an operation of a `reconciled` submission that is done (the line was
+ * paid before the ledger) or unresolved (a human has not decided). Nothing
+ * may record or admit a new payment for such a row; one an operator marked
+ * `rejected` ("no payment happened") no longer stands.
+ */
+export async function standingReconciliations(
+  productsorderIds: readonly number[]
+): Promise<Map<number, { opId: string; state: string }>> {
+  if (productsorderIds.length === 0) return new Map();
+  const rows = rowsOf(
+    await db.execute(sql`
+      SELECT m.po, o.id, o.state
+        FROM settlement_operations o
+        JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'
+        CROSS JOIN LATERAL unnest(o.members) AS m(po)
+       WHERE o.state <> 'rejected'
+         AND m.po IN (SELECT (jsonb_array_elements_text(${JSON.stringify(productsorderIds)}::jsonb))::int)
+    `)
+  );
+  return new Map(rows.map((r) => [Number(r.po), { opId: String(r.id), state: String(r.state) }]));
+}
+
 // ── L3: admission, one statement ───────────────────────────────────────────
 
 export type NewOperation = {
@@ -265,6 +299,7 @@ export async function claim(opId: string, me: string): Promise<Operation | null>
        WHERE o.id = ${opId}
          AND (o.state IN ('pending', 'rejected')
               OR (o.state = 'claimed' AND o.lease_until < now() AND o.dispatched_at IS NULL))
+         AND ${notReconciliation}
          AND (o.after IS NULL
               OR EXISTS (SELECT 1 FROM settlement_operations d
                           WHERE d.id = o.after AND d.state = 'done'))
@@ -298,6 +333,7 @@ export async function takeOver(op: Operation, me: string): Promise<Operation | n
               OR (o.state = 'claimed' AND o.lease_until < now()))
          AND o.kind <> 'exchange_order'
          AND (o.kind <> 'root_refund' OR o.dispatched_at > now() - ${replayWindow})
+         AND ${notReconciliation}
       RETURNING o.*
     `)
   );
@@ -457,7 +493,7 @@ function assertCompletionRecords(op: Operation, extras: DoneExtras): void {
 }
 
 /** Statements 3 and 4 of finalization: settle every line whose every op is done. */
-function finalizeStatements(submissionId: string): SQL[] {
+export function finalizeStatements(submissionId: string): SQL[] {
   return [
     sql`
       UPDATE submission_lines sl
@@ -575,12 +611,13 @@ export async function recoverableOperations(limit: number): Promise<Operation[]>
   const rows = rowsOf(
     await db.execute(sql`
       SELECT o.* FROM settlement_operations o
-       WHERE (o.state IN ('pending', 'rejected')
-              AND (o.after IS NULL
-                   OR EXISTS (SELECT 1 FROM settlement_operations d
-                               WHERE d.id = o.after AND d.state = 'done')))
-          OR (o.state = 'claimed' AND o.lease_until < now())
-          OR (o.state = 'dispatched' AND o.updated_at < now() - ${lease})
+       WHERE ((o.state IN ('pending', 'rejected')
+               AND (o.after IS NULL
+                    OR EXISTS (SELECT 1 FROM settlement_operations d
+                                WHERE d.id = o.after AND d.state = 'done')))
+           OR (o.state = 'claimed' AND o.lease_until < now())
+           OR (o.state = 'dispatched' AND o.updated_at < now() - ${lease}))
+         AND ${notReconciliation}
        ORDER BY o.created_at, o.scope_key
        LIMIT ${limit}
     `)
@@ -617,4 +654,25 @@ export async function stuckCancellations(): Promise<Array<{ id: string; orderId:
     `)
   );
   return rows.map((r) => ({ id: String(r.id), orderId: String(r.order_id) }));
+}
+
+/**
+ * An operator's "no payment happened" on an unresolved reconciliation record.
+ * Fenced on `unresolved` and on the submission being `reconciled`; no alert —
+ * nothing was refused by Shopify. The line then reads as unpaid to the next
+ * reconciliation run, and is paid only once Santi approves it.
+ */
+export async function recordReconciliationRejected(opId: string, evidence: string, by: string): Promise<boolean> {
+  const rows = rowsOf(
+    await db.execute(sql`
+      UPDATE settlement_operations o
+         SET state = 'rejected', error = ${evidence.slice(0, 2000)}, resolved_by = ${by},
+             evidence = ${JSON.stringify({ operator: evidence })}::jsonb, updated_at = now()
+       WHERE o.id = ${opId}
+         AND o.state = 'unresolved'
+         AND EXISTS (SELECT 1 FROM return_submissions s WHERE s.id = o.submission_id AND s.state = 'reconciled')
+      RETURNING o.id
+    `)
+  );
+  return rows.length === 1;
 }

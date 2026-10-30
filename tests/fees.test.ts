@@ -348,7 +348,7 @@ const line = (over: Record<string, unknown>) => ({
   variant_title: "M", variant_id: "v1", price: "30.00", quantity: 1,
   changed: false, action: null, reason: null, notes: null,
   new_variant_title: null, new_variant_id: null, confirmed: false,
-  return_id: null, refunded: null, credit: null, gift_card_id: null,
+  return_id: null, refunded: null, credit: null,
   return_line_item_id: null, transaction_id: null, transaction_amount: null,
   ...over,
 }) as any;

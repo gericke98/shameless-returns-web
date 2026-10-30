@@ -76,7 +76,6 @@ export async function saveOrderItem(
     changed: false,
     confirmed: wasChanged,
     credit: false,
-    gift_card_id: null,
   });
 }
 

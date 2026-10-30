@@ -91,7 +91,6 @@ function line(overrides: Partial<typeof productsOrder.$inferSelect>) {
     return_id: null,
     refunded: null,
     credit: null,
-    gift_card_id: null,
     return_line_item_id: null,
     transaction_id: null,
     transaction_amount: null,

@@ -10,6 +10,30 @@ import type { FeeBand, FeeTable } from "@/lib/fees";
 export const SHIPPING_FEES_TAG = "shipping-fees";
 
 /**
+ * The fee table, uncached. `getFeeTable` below is this behind Next's cache;
+ * a script outside a Next request (scripts/reconcile-legacy.ts) cannot use
+ * `unstable_cache` and reads it here, through the same grouping and sort.
+ */
+export async function readFeeTable(): Promise<FeeTable> {
+  const rows = await db.select().from(shippingFees);
+  const table: Record<string, FeeBand[]> = {};
+  for (const row of rows) {
+    (table[row.countryCode] ??= []).push({
+      maxGrams: row.maxGrams,
+      returnFeeCents: row.returnFeeCents,
+      exchangeFeeCents: row.exchangeFeeCents,
+    });
+  }
+  // feesForWeight returns the first band a parcel fits, so ascending order
+  // is a precondition rather than a nicety. Sorting here means neither the
+  // query nor any caller has to remember it.
+  for (const bands of Object.values(table)) {
+    bands.sort((a, b) => a.maxGrams - b.maxGrams);
+  }
+  return table;
+}
+
+/**
  * Read every fee row into a lookup keyed by country code (plus the '*'
  * default). Cached and tagged so rendering does not hit the DB per request.
  *
@@ -27,24 +51,7 @@ export const SHIPPING_FEES_TAG = "shipping-fees";
  *    safety net, not the normal update path — it does not replace the tag.
  */
 export const getFeeTable = unstable_cache(
-  async (): Promise<FeeTable> => {
-    const rows = await db.select().from(shippingFees);
-    const table: Record<string, FeeBand[]> = {};
-    for (const row of rows) {
-      (table[row.countryCode] ??= []).push({
-        maxGrams: row.maxGrams,
-        returnFeeCents: row.returnFeeCents,
-        exchangeFeeCents: row.exchangeFeeCents,
-      });
-    }
-    // feesForWeight returns the first band a parcel fits, so ascending order
-    // is a precondition rather than a nicety. Sorting here means neither the
-    // query nor any caller has to remember it.
-    for (const bands of Object.values(table)) {
-      bands.sort((a, b) => a.maxGrams - b.maxGrams);
-    }
-    return table;
-  },
+  readFeeTable,
   ["shipping-fees-table"],
   { tags: [SHIPPING_FEES_TAG], revalidate: 300 }
 );

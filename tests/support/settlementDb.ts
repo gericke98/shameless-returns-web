@@ -28,6 +28,7 @@ export const MIGRATIONS = [
   "drizzle/0006_return_submissions.sql",
   "drizzle/0007_settlement_operations.sql",
   "drizzle/0008_settlement_lease_generation.sql",
+  "drizzle/0009_settlement_reconciliation.sql",
 ];
 
 /**
@@ -39,6 +40,9 @@ export function settlementDatabase() {
   const ready = (async () => {
     await pg.exec(createTableFromSchema(schema.orders));
     await pg.exec(createTableFromSchema(schema.productsOrder));
+    // Production keeps `gift_card_id` for history; db/schema.ts no longer
+    // models it (S3 R4), and only the reconciliation reads it, by name.
+    await pg.exec(`ALTER TABLE "productsorder" ADD COLUMN IF NOT EXISTS "gift_card_id" text`);
     for (const file of MIGRATIONS) await pg.exec(readFileSync(file, "utf8"));
   })();
   const db = drizzle(pg, { schema });
@@ -58,6 +62,7 @@ export function settlementDatabase() {
 
   async function reset() {
     await pg.exec(`
+      DELETE FROM line_action_decisions;
       DELETE FROM replacement_lines; DELETE FROM settlement_operations;
       DELETE FROM submission_lines; DELETE FROM return_submissions;
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);

@@ -14,9 +14,11 @@
 //
 // Reads only. NOT "use server"; imports nothing that can move money.
 import { judgeDraftOrderGone, judgeExchangeOrder } from "./evidence";
-import { recordDone, recordRejected, type DoneExtras } from "./ledger";
+import { loadSubmission, recordDone, recordReconciliationRejected, recordRejected, type DoneExtras } from "./ledger";
 import { DRAFT_ORDER_QUERY, ORDER_BY_ID_QUERY, read } from "./reads";
-import type { Operation } from "./types";
+import { judgeLegacyExchangeOrder } from "./reconcile";
+import { RECONCILE_ORDER_QUERY } from "./reconcileReads";
+import { reconciliationRequestOf, type Operation } from "./types";
 
 export type OperatorDecision = {
   verdict: "done" | "rejected";
@@ -37,6 +39,43 @@ async function doneRecords(
   op: Operation,
   decision: OperatorDecision
 ): Promise<{ ok: true; effectRef: string; extras: DoneExtras } | { ok: false; reason: string }> {
+  // S3: a reconciliation record of a pre-ledger exchange order. That order
+  // never carried an operation id, so it is judged by what the pre-S2 code
+  // wrote — its two tags, the customer, the one line of the new variant — and
+  // its replacement line is recorded with the done state, as the runner's is.
+  const reconciliation = reconciliationRequestOf(op.request);
+  if (reconciliation?.lane === "exchange") {
+    if (!decision.orderGid) return { ok: false, reason: "a legacy exchange needs --order <gid of the order you found>" };
+    const r = await read(RECONCILE_ORDER_QUERY, { id: decision.orderGid }, (d) => d?.order ?? null);
+    if (!r.ok) return { ok: false, reason: `Shopify unreadable: ${r.error}` };
+    const judged = judgeLegacyExchangeOrder(reconciliation.check, r.value);
+    if (!judged.ok) return { ok: false, reason: `order ${decision.orderGid} is not this line's exchange: ${judged.reason}` };
+    // Funding as the reconciliation records it for a paid line: the line's
+    // legacy agreement, frozen on the reconciled submission.
+    const loaded = await loadSubmission(op.submissionId);
+    const frozen = loaded?.lines.find((l) => l.productsorderId === op.members[0]);
+    if (!frozen) return { ok: false, reason: `line ${op.members[0]} is not on submission ${op.submissionId}` };
+    return {
+      ok: true,
+      effectRef: judged.orderGid,
+      extras: {
+        replacementLines: {
+          orderId: judged.orderGid.replace(/^gid:\/\/shopify\/Order\//, ""),
+          lines: [
+            {
+              sourceProductsorderId: op.members[0],
+              lineItemId: judged.lineItemId,
+              variantGid: judged.variantGid,
+              quantity: judged.quantity,
+              stripeFundedCents: frozen.stripeFundedCents,
+            },
+          ],
+        },
+        resolvedBy: decision.by,
+      },
+    };
+  }
+  if (reconciliation) return { ok: true, effectRef: decision.evidence, extras: { resolvedBy: decision.by } };
   const request = op.request;
   if (request.kind === "exchange_order") {
     if (!decision.orderGid) return { ok: false, reason: "exchange_order needs --order <gid of the order you found>" };
@@ -81,6 +120,15 @@ export async function resolveOperation(
   options: { write: boolean }
 ): Promise<OperatorOutcome> {
   if (op.state !== "unresolved") return { ok: false, reason: `not unresolved (${op.state})` };
+  if (decision.verdict === "rejected" && reconciliationRequestOf(op.request)) {
+    // A reconciliation record is never sent: "rejected" here means no payment
+    // happened before the ledger, so the line reads as unpaid to the next
+    // reconciliation run and is paid only once approved (D2 = A).
+    if (!options.write) return { ok: true, written: false, summary: "would mark rejected (no legacy payment)" };
+    return (await recordReconciliationRejected(op.id, decision.evidence, decision.by))
+      ? { ok: true, written: true, summary: "marked rejected (no legacy payment); the line is now unpaid" }
+      : { ok: false, reason: "the operation is no longer an unresolved reconciliation record" };
+  }
   if (decision.verdict === "rejected") {
     if (!options.write) return { ok: true, written: false, summary: "would mark rejected" };
     const changed = await recordRejected(op, UNRESOLVED, decision.evidence, decision.by);

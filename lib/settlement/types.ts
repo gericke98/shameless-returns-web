@@ -96,6 +96,30 @@ export type OpRequest =
       check: { draftOrderId: string; orderId: string };
     };
 
+/**
+ * S3: an operation of a `reconciled` submission records a payment made before
+ * the ledger (scripts/reconcile-legacy.ts). It has no variables: it is never
+ * sent (lib/settlement/ledger.ts skips it in every claim). `check` is the
+ * line's identity, for the operator who resolves an unresolved one. Not a
+ * member of `OpRequest`, which is what the runner sends: nothing that sends
+ * may ever be handed one. Read it through `reconciliationRequestOf`.
+ */
+export type ReconciliationRequest = {
+  kind: "reconciliation";
+  lane: "refund" | "root_refund" | "credit" | "exchange" | "native_exchange";
+  check: {
+    orderNumber: string;
+    returnId: string;
+    returnLineItemId: string;
+    lineItemId: string;
+    customerGid: string | null;
+    newVariantGid: string | null;
+    quantity: number;
+    giftCardId: string | null;
+  };
+  classified: { cls: string; reason: string };
+};
+
 /** The line-item property that names which returned garment a replacement line replaces. */
 export const SOURCE_LINE_PROPERTY = "_settlement_source_line";
 
@@ -113,3 +137,10 @@ export type LineStatus =
   | "in-flight"
   | "unresolved"
   | `held:${string}`;
+
+/** The reconciliation request an operation carries, or null for every op the runner may send. */
+export function reconciliationRequestOf(request: unknown): ReconciliationRequest | null {
+  return (request as { kind?: unknown } | null)?.kind === "reconciliation"
+    ? (request as ReconciliationRequest)
+    : null;
+}

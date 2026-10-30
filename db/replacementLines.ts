@@ -14,6 +14,14 @@
 // order from before S2 is ours when the legacy reconciliation recorded its
 // lines here (S3 R1/R4), by the order's own id.
 //
+// Which orders are replacements is recorded independently of their funding
+// (S3, Codex #3): an order with an S2 operation, a stored `orders.exchange_of`,
+// or a legacy_replacement_orders row (drizzle/0011: the census of every
+// pre-S2 exchange order, and every one the reconciliation found) IS a
+// replacement, and with no funding it refuses valuation. Absence of funding
+// never makes an order ordinary; only a completed census lets the absence of
+// every identity record say "ordinary".
+//
 // NOT "use server".
 import { sql } from "drizzle-orm";
 import db from "@/db/drizzle";
@@ -29,8 +37,11 @@ export type ReplacementFunding = {
 };
 
 export type FundingLookup =
-  /** Neither an exchange operation nor the reconciliation recorded this order. */
+  /** No identity record names this order, and the census is complete: ordinary. */
   | { kind: "not-settlement" }
+  /** No identity record names it, but no complete census exists: nobody can
+   *  say it is not a pre-S2 replacement. Never valued as ordinary. */
+  | { kind: "unprovable"; reason: string }
   | { kind: "funded"; funding: ReplacementFunding }
   /** Settlement created this order but its records are missing or disagree:
    *  never valued by any other means. */
@@ -80,8 +91,27 @@ export async function replacementFundingOf(order: {
        WHERE rl.order_id = ${String(order.id)}
     `)
   );
-  if (ops.length === 0) return { kind: "not-settlement" };
-  return fundingFrom(order, ops, sql`rl.order_id = ${String(order.id)}`);
+  if (ops.length > 0) return fundingFrom(order, ops, sql`rl.order_id = ${String(order.id)}`);
+
+  // No funding recorded. Is it a replacement anyway? Identity is explicit data.
+  const [known] = rowsOf(
+    await db.execute(sql`
+      SELECT source_order_id FROM legacy_replacement_orders WHERE order_id = ${String(order.id)}
+      UNION ALL
+      SELECT exchange_of AS source_order_id FROM orders WHERE id = ${String(order.id)} AND exchange_of IS NOT NULL
+      LIMIT 1
+    `)
+  );
+  if (known) {
+    return {
+      kind: "unfunded",
+      sourceOrderId: known.source_order_id ? String(known.source_order_id) : null,
+      reason: "replacement-without-funding",
+    };
+  }
+  const [census] = rowsOf(await db.execute(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
+  if (!census) return { kind: "unprovable", reason: "replacement-census-missing" };
+  return { kind: "not-settlement" };
 }
 
 async function fundingFrom(order: { id: string }, ops: any[], which: ReturnType<typeof sql>): Promise<FundingLookup> {

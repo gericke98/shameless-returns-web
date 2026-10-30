@@ -441,6 +441,30 @@ export const settlementApprovals = pgTable("settlement_approvals", {
   approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// S3, drizzle/0011 — identity the reconciliation records as data.
+export const reconciliationEffectDecisions = pgTable("reconciliation_effect_decisions", {
+  effectId: text("effect_id").primaryKey(),
+  verdict: text("verdict").notNull(),
+  productsorderId: integer("productsorder_id"),
+  decidedBy: text("decided_by").notNull(),
+  evidence: text("evidence").notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const legacyReplacementOrders = pgTable("legacy_replacement_orders", {
+  orderId: text("order_id").primaryKey(),
+  sourceOrderId: text("source_order_id"),
+  foundBy: text("found_by").notNull(),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const legacyReplacementCensus = pgTable("legacy_replacement_census", {
+  id: serial("id").primaryKey(),
+  ordersFound: integer("orders_found").notNull(),
+  runBy: text("run_by").notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
 //
 // There is no `drizzle/` directory and no committed migration history, so

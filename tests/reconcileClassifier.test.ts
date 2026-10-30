@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  afterOperatorRejection,
   approvalBasisOf,
+  readsNeeded,
   classifyLine,
   lineValues,
   parseApprovalFile,
@@ -115,9 +117,11 @@ describe("root refund lane (a line on a replacement order)", () => {
       evidence: { lane: "root_refund", refundId: "R1", rootOrderGid: "gid://shopify/Order/1" },
     });
   });
-  it("a refund naming the order in words but not the marker is not evidence → unpaid", () => {
-    expect(classify(l, root([{ id: "R1", note: "Return from replacement order #100", transactions: { nodes: [tx()] } }])).cls)
-      .toBe("unpaid");
+  it("an unmarked refund that moved money on the root is NOT absence of payment → ambiguous, naming it", () => {
+    // Codex S3 #1: refunded by hand on the root, no marker. Words in the note
+    // are never read; the refund stays unattributed until a human decides.
+    const c = classify(l, root([{ id: "R1", note: "Return from replacement order #100", transactions: { nodes: [tx()] } }]));
+    expect(c).toMatchObject({ cls: "ambiguous", unattributed: ["R1"] });
   });
   it("two marked → ambiguous; truncated root → ambiguous", () => {
     expect(classify(l, root([marked("R1"), marked("R2")])).cls).toBe("ambiguous");
@@ -331,5 +335,133 @@ describe("--approve-file", () => {
 describe("needs-human wins over null-action", () => {
   it("a NULL-action line with no Shopify return is needs-human: D3 has no return to decide against", () => {
     expect(classify(line({ action: null, returnId: null }), { ret: { ok: false, error: "no return on the line" } }).cls).toBe("needs-human");
+  });
+});
+
+// Codex S3 review, 30 Oct: every historical effect, explicit attribution only.
+describe("unattributed refunds (Codex #1)", () => {
+  const l = line({ isReplacement: true });
+  const unmarked = (id: string, status = "SUCCESS") => ({ id, note: "manual", transactions: { nodes: [tx(status)] } });
+  const root = (refunds: any[]) =>
+    reads({ rootRefunds: { ok: true, value: { orderGid: "gid://shopify/Order/1", presentmentCurrencyCode: "EUR", refunds } } });
+  const withLedger = (ledger: Parameters<typeof sharedIdentity>[1]) => (c: LineFacts, r: LineReads) =>
+    classifyLine(c, r, sharedIdentity([c], ledger));
+
+  it("a pending unmarked root refund is unattributed too", () => {
+    expect(classify(l, root([unmarked("R1", "PENDING")]))).toMatchObject({ cls: "ambiguous", unattributed: ["R1"] });
+  });
+  it("a zero-money root refund is no payment of anything", () => {
+    expect(classify(l, root([{ id: "R1", note: "", transactions: { nodes: [] } }])).cls).toBe("unpaid");
+  });
+  it("a refund carrying ANOTHER line's marker is that line's, not unattributed", () => {
+    const sibling = line({ productsorderId: 2, returnLineItemId: "gid://shopify/ReturnLineItem/6", isReplacement: true });
+    const theirs = { id: "R1", note: "[gid://shopify/ReturnLineItem/6]", transactions: { nodes: [tx()] } };
+    expect(classify(l, root([theirs]), [l, sibling]).cls).toBe("unpaid");
+  });
+  it("a refund the ledger recorded for another line is that line's", () => {
+    expect(withLedger({ recordedEffects: new Map([["R1", [9]]]) })(l, root([unmarked("R1")])).cls).toBe("unpaid");
+  });
+  it("a human excludes it → the complete read is unpaid; binds it to this line → paid by it", () => {
+    expect(withLedger({ decisions: new Map([["R1", { verdict: "excludes", productsorderId: null }]]) })(l, root([unmarked("R1")])).cls)
+      .toBe("unpaid");
+    expect(withLedger({ decisions: new Map([["R1", { verdict: "binds", productsorderId: 1 }]]) })(l, root([unmarked("R1")])))
+      .toMatchObject({ cls: "paid", evidence: { lane: "root_refund", refundId: "R1" } });
+    expect(withLedger({ decisions: new Map([["R1", { verdict: "binds", productsorderId: 2 }]]) })(l, root([unmarked("R1")])).cls)
+      .toBe("unpaid");
+  });
+  it("a money refund on the RETURN naming no line is unattributed for its lines", () => {
+    const bare = { id: "R9", refundLineItems: { nodes: [] }, transactions: { nodes: [tx()] } };
+    expect(classify(line(), reads({ ret: { ok: true, value: ret({ refunds: { nodes: [bare] } }) } })))
+      .toMatchObject({ cls: "ambiguous", unattributed: ["R9"] });
+  });
+  it("an operator's rejection never clears an unattributed refund; it clears other ambiguity", () => {
+    const c = classify(l, root([unmarked("R1")]));
+    expect(afterOperatorRejection(c).cls).toBe("ambiguous");
+    const other = classify(line({ credit: true }), reads());
+    expect(afterOperatorRejection(other).cls).toBe("unpaid");
+  });
+});
+
+describe("every historical writer, whatever the action (Codex #2)", () => {
+  const V = "gid://shopify/ProductVariant/42";
+  const card = { id: "gid://shopify/GiftCard/3", initialValue: { amount: "51.75", currencyCode: "EUR" }, customer: { id: CUSTOMER } };
+  const noOrders = { exchangeOrders: { ok: true as const, value: { truncated: false, nodes: [] } } };
+  it("reads every source a row could have an effect in", () => {
+    expect(readsNeeded(line({ action: "CAMBIO", newVariantId: "42", credit: true, giftCardId: "3", isReplacement: true })))
+      .toEqual({ rootRefunds: true, giftCard: true, exchangeOrders: true });
+    expect(readsNeeded(line())).toEqual({ rootRefunds: false, giftCard: false, exchangeOrders: false });
+  });
+  it("a credit CAMBIO paid by its stored gift card (the old writer checked credit first) → paid, never unpaid", () => {
+    const l = line({ action: "CAMBIO", newVariantId: "42", credit: true, giftCardId: "gid://shopify/GiftCard/3" });
+    expect(classify(l, reads({ giftCard: { ok: true, value: card }, ...noOrders }))).toMatchObject({
+      cls: "paid",
+      lane: "credit",
+      evidence: { lane: "credit", giftCardId: "gid://shopify/GiftCard/3" },
+    });
+  });
+  it("a credit CAMBIO with no stored card → ambiguous (no identity), never unpaid", () => {
+    expect(classify(line({ action: "CAMBIO", newVariantId: "42", credit: true }), reads(noOrders)).cls).toBe("ambiguous");
+  });
+  it("a cash CAMBIO with a stored card and no exchange order → ambiguous (conflicting history)", () => {
+    const l = line({ action: "CAMBIO", newVariantId: "42", giftCardId: "gid://shopify/GiftCard/3" });
+    expect(classify(l, reads({ giftCard: { ok: true, value: card }, ...noOrders })).cls).toBe("ambiguous");
+  });
+  it("a cash (refund) row whose only effect is a stored gift card → ambiguous (tender mismatch), never paid", () => {
+    const l = line({ giftCardId: "gid://shopify/GiftCard/3" });
+    expect(classify(l, reads({ giftCard: { ok: true, value: card } })).cls).toBe("ambiguous");
+  });
+  it("a DEVOLUCIÓN refunded AND delivered an exchange order → ambiguous", () => {
+    const l = line({ newVariantId: "42" });
+    const order = {
+      id: "gid://shopify/Order/500",
+      name: "#500",
+      tags: ["Change", "Order #100"],
+      customer: { id: CUSTOMER },
+      lineItems: { nodes: [{ id: "gid://shopify/LineItem/9", quantity: 1, variant: { id: V }, originalUnitPriceSet: { shopMoney: { amount: "30.00", currencyCode: "EUR" } } }] },
+    };
+    const r = reads({
+      ret: { ok: true, value: ret({ refunds: { nodes: [refund("R1", LI, [tx()])] } }) },
+      exchangeOrders: { ok: true, value: { truncated: false, nodes: [order] } },
+    });
+    expect(classify(l, r).cls).toBe("ambiguous");
+  });
+});
+
+describe("delivery and the difference are separate (Codex #4)", () => {
+  const V = "gid://shopify/ProductVariant/42";
+  const l = line({ action: "CAMBIO", newVariantId: "42", price: "100.00" });
+  const order = {
+    id: "gid://shopify/Order/500",
+    name: "#500",
+    tags: ["Change", "Order #100"],
+    customer: { id: CUSTOMER },
+    lineItems: { nodes: [{ id: "gid://shopify/LineItem/9", quantity: 1, variant: { id: V }, originalUnitPriceSet: { shopMoney: { amount: "60.00", currencyCode: "EUR" } } }] },
+  };
+  const delivered = (refunds: any[]) =>
+    reads({
+      ret: { ok: true, value: ret({ refunds: { nodes: refunds } }) },
+      exchangeOrders: { ok: true, value: { truncated: false, nodes: [order] } },
+    });
+  it("€100 returned, €60 delivered, €40 already refunded on the line → paid, but no swap approval", () => {
+    const c = classify(l, delivered([refund("R40", LI, [tx("SUCCESS", "40.00")])]));
+    expect(c).toMatchObject({ cls: "paid", evidence: { lane: "exchange" }, moneyEffects: ["R40"] });
+    expect(approvalBasisOf(l, c)).toMatchObject({ ok: false });
+  });
+  it("the same with no refund at all → swap approvable up to €40", () => {
+    const c = classify(l, delivered([]));
+    expect(approvalBasisOf(l, c)).toEqual({ ok: true, basis: "swap", capCents: 4000 });
+  });
+  it("an unattributed money refund on the return → ambiguous, not approvable", () => {
+    const c = classify(l, delivered([{ id: "R1", refundLineItems: { nodes: [] }, transactions: { nodes: [tx("SUCCESS", "40.00")] } }]));
+    expect(c).toMatchObject({ cls: "ambiguous", unattributed: ["R1"] });
+    expect(approvalBasisOf(l, c).ok).toBe(false);
+  });
+});
+
+describe("line totals round once (Codex #7)", () => {
+  it("€31.01 over two units, stored 15.505, is 3101 — never 3102", () => {
+    const c = { productsorderId: 1, lane: "refund" as const, cls: "unpaid" as const, reason: "none", returnStatus: "CLOSED" };
+    expect(lineValues(line({ price: "15.505", quantity: 2 }), c).returnedCents).toBe(3101);
+    expect(approvalBasisOf(line({ price: "15.505", quantity: 2 }), c)).toEqual({ ok: true, basis: "unpaid", capCents: 3101 });
   });
 });

@@ -10,7 +10,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { orders, productsOrder } from "@/db/schema";
 import { buildAgreement, type Agreement } from "@/lib/agreement";
-import { valueSelection } from "@/lib/basket";
+import { lineTotalCents, valueSelection } from "@/lib/basket";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { resolveFee, type FeeTable } from "@/lib/fees";
 import type { OrderItem, Product } from "@/types";
@@ -172,15 +172,15 @@ export function legacySubmissionCtes(
 }
 
 /**
- * The terms of an APPROVED legacy payment (S3, Santi 30 Oct: "you set each
- * amount"): each line pays exactly the amount Santi stated, in the line's
- * tender — nothing is valued, no fee is charged and no ×1.15 applied, because
- * the stated amount already is the payment. returned − replacement − fee =
- * net holds by construction (replacement = returned − amount, fee 0).
+ * Terms built ONLY from the rows and what was stated or found — never from
+ * today's catalogue or fee table (Codex #5: a historical figure is never
+ * reconstructed). Each line's replacement and pay come from `valueOf`; the
+ * fee is 0 and nothing is Stripe-funded. returned − replacement − fee = net.
  */
-export async function approvedTerms(
+async function explicitTerms(
   basket: Row[],
-  approvals: ReadonlyArray<{ productsorderId: number; amountCents: number }>
+  valueOf: (r: Row, returned: number) => { replacement: number; pay: number } | { held: string },
+  owed: (net: number) => number
 ): Promise<{ ok: true; terms: LegacyTerms } | { ok: false; held: string }> {
   if (basket.length === 0) return { ok: false, held: "empty-basket" };
   const returns = new Set(basket.map((r) => r.return_id));
@@ -189,7 +189,6 @@ export async function approvedTerms(
   const credits = new Set(basket.map((r) => r.credit === true));
   if (credits.size !== 1) return { ok: false, held: "legacy-mixed-tender" };
   const tender = basket[0].credit === true ? "credit" : "refund";
-  const amount = new Map(approvals.map((a) => [a.productsorderId, a.amountCents]));
 
   const returnId = String(basket[0].return_id);
   const ret = await readReturnFacts(returnId);
@@ -197,11 +196,11 @@ export async function approvedTerms(
 
   const lines: LegacyLine[] = [];
   for (const r of basket) {
-    const pay = amount.get(r.id);
-    if (pay === undefined) return { ok: false, held: `not-approved:${r.id}` };
     const fli = ret.value.fulfillmentByReturnLine.get(String(r.return_line_item_id));
     if (!fli) return { ok: false, held: `return-line-missing:${r.id}` };
-    const returned = Math.round(Number(r.price) * 100) * r.quantity;
+    const returned = lineTotalCents(r.price, r.quantity);
+    const v = valueOf(r, returned);
+    if ("held" in v) return { ok: false, held: v.held };
     lines.push({
       productsorder_id: r.id,
       shopify_line_item_id: r.lineItemId,
@@ -213,13 +212,13 @@ export async function approvedTerms(
       reason: r.reason,
       notes: r.notes,
       returned_cents: returned,
-      replacement_cents: returned - pay,
-      pay_cents: pay,
+      replacement_cents: v.replacement,
+      pay_cents: v.pay,
       stripe_funded_cents: 0,
     });
   }
   const sum = (f: (l: LegacyLine) => number) => lines.reduce((t, l) => t + f(l), 0);
-  const paid = sum((l) => l.pay_cents);
+  const net = sum((l) => l.returned_cents) - sum((l) => l.replacement_cents);
   const agreement = {
     tender,
     returnLegCents: 0,
@@ -227,12 +226,45 @@ export async function approvedTerms(
     chargedFeeCents: 0,
     returnedValueCents: sum((l) => l.returned_cents),
     replacementValueCents: sum((l) => l.replacement_cents),
-    netCents: paid,
+    netCents: net,
     stripeChargeCents: 0,
     waivedCents: 0,
-    owedCents: paid,
+    owedCents: owed(net),
     residualCents: 0,
     lines: [],
   } as unknown as Agreement;
   return { ok: true, terms: { agreement, lines, tender } };
+}
+
+/**
+ * The terms of an APPROVED legacy payment (S3, Santi 30 Oct: "you set each
+ * amount"): each line pays exactly the amount Santi stated, in the line's
+ * tender — nothing is valued, no fee is charged and no ×1.15 applied, because
+ * the stated amount already is the payment. returned − replacement − fee =
+ * net holds by construction (replacement = returned − amount, fee 0).
+ */
+export async function approvedTerms(
+  basket: Row[],
+  approvals: ReadonlyArray<{ productsorderId: number; amountCents: number }>
+): Promise<{ ok: true; terms: LegacyTerms } | { ok: false; held: string }> {
+  const amount = new Map(approvals.map((a) => [a.productsorderId, a.amountCents]));
+  return explicitTerms(
+    basket,
+    (r, returned) => {
+      const pay = amount.get(r.id);
+      return pay === undefined ? { held: `not-approved:${r.id}` } : { replacement: returned - pay, pay };
+    },
+    (net) => net
+  );
+}
+
+/**
+ * The terms a RECONCILED submission records (S3 R1): a record pays nothing.
+ * Each line carries its exact returned total and nothing else — no
+ * replacement value, fee, payment or funding; what was found lives in the
+ * operations' evidence, and funding only in replacement_lines from a real
+ * Stripe read. returned − 0 − 0 = net; owed 0.
+ */
+export async function recordedTerms(basket: Row[]): Promise<{ ok: true; terms: LegacyTerms } | { ok: false; held: string }> {
+  return explicitTerms(basket, () => ({ replacement: 0, pay: 0 }), () => 0);
 }

@@ -22,13 +22,24 @@ export type ReplacementPlan =
 export async function planReplacementOrder(order: OrderData): Promise<ReplacementPlan> {
   const live = order.line_items.filter((item) => item.quantity > 0);
 
-  // Ours only if settlement recorded it: created by S2 (its sourceIdentifier
-  // names the exchange operation) or, from before S2, recorded by the legacy
-  // reconciliation (S3 R1). Valued from those records or not at all — never
-  // from tags or by matching variants (S3 R4). A line the records do not
-  // cover refuses rather than falls back.
+  // A replacement by explicit identity: created by S2 (its sourceIdentifier
+  // names the exchange operation), or named by the census, the reconciliation
+  // or `orders.exchange_of` (db/replacementLines.ts). Valued from
+  // replacement_lines or not at all — never from tags or by matching variants
+  // (S3 R4). A known replacement without funding, or a line the records do
+  // not cover, refuses rather than falls back; an order is ordinary only once
+  // the census has run and no identity record names it.
   const found = await replacementFundingOf({ id: String(order.id), sourceIdentifier: order.source_identifier });
   if (found.kind === "not-settlement") return { kind: "ordinary" };
+  if (found.kind === "unprovable") {
+    await alertOps(
+      `[returns] ORDER NOT RETURNABLE ONLINE — ${order.name}`,
+      `The portal could not establish whether ${order.name} is one of our pre-ledger exchange orders.\n` +
+        `Reason: ${found.reason} — the replacement census (scripts/reconcile-legacy.ts --census) must run before this deploy.\n` +
+        `The customer was told to contact us. Nothing was saved, so nothing was priced at list.`
+    );
+    return { kind: "refused", reason: found.reason };
+  }
   if (found.kind === "unfunded") {
     return refuseWith(order, found.sourceOrderId ?? "(unknown)", `settlement-order-unfunded:${found.reason}`);
   }

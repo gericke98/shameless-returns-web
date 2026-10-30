@@ -2,26 +2,34 @@
 //
 // docs/superpowers/specs/2026-10-30-settlement-S3-legacy-plan.md
 //
-// For every confirmed line the ledger has never touched, the payment its lane
-// would have made is looked for in Shopify, by explicit identity only:
+// For every settled line the ledger has never touched, EVERY effect the
+// pre-ledger writers could have left for it is read, whatever its action —
+// the old writer chose by `credit` before `action`, so the action alone never
+// says which writer ran:
 //
-//   refund       a refund on the line's return whose refundLineItems name its
-//                order line item, with a SUCCESS refund transaction;
-//   root_refund  (a line on one of our replacement orders) a refund on the
-//                ROOT order whose note carries the bracketed marker
-//                `[<return line item gid>]` the pre-S2 code wrote;
-//   credit       the gift card in `gift_card_id`, whose customer is the
-//                order's customer;
-//   exchange     exactly one order tagged `Change` + `Order <number>` whose
-//                lines contain the new variant, or — a native exchange — the
-//                return's exchange line items naming it.
+//   money     refunds on the line's Shopify return; for a line on one of our
+//             replacement orders, refunds on the ROOT order; the gift card in
+//             `gift_card_id`;
+//   delivery  exactly one order tagged `Change` + `Order <number>` whose lines
+//             contain the new variant, or the return's native exchange line.
+//
+// An effect belongs to a line only by explicit identity: a refund whose
+// refundLineItems name the line's order line item, a root refund carrying the
+// bracketed marker `[<return line item gid>]` the pre-S2 code wrote, an effect
+// the ledger already recorded for the line, or a recorded human decision
+// (reconciliation_effect_decisions, drizzle/0011) that binds it. A refund
+// that moved money and that no identity attributes to any line is NOT absence
+// of payment: every line it could have paid is `ambiguous` until a human binds
+// or excludes it by its stable id. Notes are never read for words.
 //
 // Amounts and currencies are checked only after identity matched. A line is
-// `paid` (evidence found and verified), `unpaid` (a complete read found none,
-// on a return that is open or closed), `ambiguous` (several matches, an
-// unreadable or truncated read, a recipient or currency that does not match)
+// `paid` (exactly the effect its writer leaves, verified), `unpaid` (a
+// complete read found no effect, on a return that is open or closed),
+// `ambiguous` (several or conflicting effects, an unattributed refund, an
+// unreadable or truncated read, a recipient or currency that does not match),
 // `null-action` (no lane: a human decides, D3) or `needs-human` (no Shopify
 // return on the line: nothing to read, nothing any write path may record).
+import { lineTotalCents } from "@/lib/basket";
 import { variantGid } from "@/lib/shopifyIds";
 
 export type Lane = "refund" | "root_refund" | "credit" | "exchange";
@@ -105,12 +113,14 @@ export type ExchangeOrderEvidence = {
 /** A read that answered, or why it gave no verdict. */
 export type Read<T> = { ok: true; value: T } | { ok: false; error: string };
 
-/** Everything read for one line's lane. Only the lane's own reads are set. */
+/** Everything read for one line (readsNeeded says which are required). */
 export type LineReads = {
   ret: Read<ReturnEvidence | null>;
+  /** Required for a line on a replacement order. */
   rootRefunds?: Read<RootRefundsEvidence>;
+  /** Required when the row stores a gift card. */
   giftCard?: Read<GiftCardEvidence>;
-  /** Orders the tag search returned for this line's order number. */
+  /** Required when the row names a new variant: orders the tag search returned. */
   exchangeOrders?: Read<{ truncated: boolean; nodes: ExchangeOrderEvidence[] }>;
 };
 
@@ -137,35 +147,67 @@ export type Classification = {
   reason: string;
   returnStatus: string | null;
   evidence?: PaidEvidence;
+  /** A delivered exchange: the money effects ALSO found for the line (a
+   *  refund, a gift card). Any one means its difference was not left unpaid. */
+  moneyEffects?: string[];
+  /** Refunds that moved money and that no identity attributes to any line:
+   *  only a recorded human decision (bind or exclude) clears them. */
+  unattributed?: string[];
 };
 
-/** Facts about the line's siblings that decide identity, computed over the whole population. */
+/** A human's recorded decision about one effect (drizzle/0011). */
+export type EffectDecision = { verdict: "binds" | "excludes"; productsorderId: number | null };
+
+/** Facts that decide identity, computed over the whole confirmed population
+ *  and the ledger. */
 export type SharedIdentity = {
   /** Gift card id → how many lines name it. */
   giftCardUses: Map<string, number>;
   /** `<order id>|<variant gid>` → how many confirmed CAMBIO lines of that order name it. */
   exchangeVariantUses: Map<string, number>;
+  /** Every return line item gid a confirmed row names: the markers a root refund may carry. */
+  markers: Set<string>;
+  /** Effect id (refund / gift card gid) → the lines the ledger recorded it for. */
+  recordedEffects: Map<string, number[]>;
+  /** Effect id → a human's recorded decision. */
+  decisions: Map<string, EffectDecision>;
 };
 
 const cents = (amount: unknown) => Math.round(Number(amount) * 100);
 const lineItemGid = (id: string) => (id.startsWith("gid://") ? id : `gid://shopify/LineItem/${id}`);
 const giftCardGid = (id: string) => (id.startsWith("gid://") ? id : `gid://shopify/GiftCard/${id}`);
 
+/**
+ * The lane the pre-ledger writer took for a row: `credit` first — it paid a
+ * credit row by gift card whatever its action — then CAMBIO (an exchange
+ * order), then a refund (on the root order for a replacement order's line).
+ */
 export function laneOf(line: Pick<LineFacts, "action" | "credit" | "isReplacement">): Lane | null {
+  if (line.action !== "CAMBIO" && line.action !== "DEVOLUCIÓN") return null;
+  if (line.credit) return "credit";
   if (line.action === "CAMBIO") return "exchange";
-  if (line.action === "DEVOLUCIÓN") {
-    if (line.credit) return "credit";
-    return line.isReplacement ? "root_refund" : "refund";
-  }
-  return null;
+  return line.isReplacement ? "root_refund" : "refund";
+}
+
+/** Which reads a line needs: every source of an effect it could have. */
+export function readsNeeded(line: Pick<LineFacts, "isReplacement" | "giftCardId" | "newVariantId" | "action">) {
+  return {
+    rootRefunds: line.isReplacement,
+    giftCard: !!line.giftCardId,
+    exchangeOrders: line.action === "CAMBIO" || !!variantGid(line.newVariantId),
+  };
 }
 
 export const exchangeVariantKey = (orderId: string, newVariantId: string | null) =>
   `${orderId}|${variantGid(newVariantId) ?? ""}`;
 
-export function sharedIdentity(lines: LineFacts[]): SharedIdentity {
+export function sharedIdentity(
+  lines: LineFacts[],
+  ledger: { recordedEffects?: Map<string, number[]>; decisions?: Map<string, EffectDecision> } = {}
+): SharedIdentity {
   const giftCardUses = new Map<string, number>();
   const exchangeVariantUses = new Map<string, number>();
+  const markers = new Set<string>();
   for (const l of lines) {
     if (l.giftCardId) {
       const k = giftCardGid(l.giftCardId);
@@ -175,8 +217,15 @@ export function sharedIdentity(lines: LineFacts[]): SharedIdentity {
       const k = exchangeVariantKey(l.orderId, l.newVariantId);
       exchangeVariantUses.set(k, (exchangeVariantUses.get(k) ?? 0) + 1);
     }
+    if (l.returnLineItemId) markers.add(l.returnLineItemId);
   }
-  return { giftCardUses, exchangeVariantUses };
+  return {
+    giftCardUses,
+    exchangeVariantUses,
+    markers,
+    recordedEffects: ledger.recordedEffects ?? new Map(),
+    decisions: ledger.decisions ?? new Map(),
+  };
 }
 
 /** Group lines by explicit identity: one Shopify return and one tender is one historical submission. */
@@ -190,6 +239,15 @@ type MoneyVerdict =
   | { v: "paid"; refundId: string; amountCents: number; currency: string }
   | { v: "none" }
   | { v: "ambiguous"; reason: string };
+
+/** Did this refund move (or is it moving) money? A zero-transaction refund —
+ *  how the old credit writer booked goods — moved none. */
+function movesMoney(refund: { transactions?: TxConn }): boolean {
+  if (refund.transactions?.pageInfo?.hasNextPage) return true;
+  return (refund.transactions?.nodes ?? []).some(
+    (t) => t?.kind === "REFUND" && (t.status === "SUCCESS" || t.status === "PENDING" || t.status === "AWAITING_RESPONSE")
+  );
+}
 
 /** Over refunds already known to be the line's own: the money they moved. */
 function judgeOwnRefunds(
@@ -222,20 +280,43 @@ function judgeOwnRefunds(
   return { v: "paid", refundId: hit.id, amountCents, currency };
 }
 
+/**
+ * Whose is this money-moving refund, for `line`? A human's decision first,
+ * then the ledger's records, then the identity the refund itself carries.
+ * `null` = no identity attributes it to any line.
+ */
+function ownerOf(
+  refundId: string,
+  carried: "mine" | "other" | "none",
+  line: LineFacts,
+  shared: SharedIdentity
+): "mine" | "other" | "excluded" | null {
+  const d = shared.decisions.get(refundId);
+  if (d) {
+    if (d.verdict === "excludes") return "excluded";
+    return d.productsorderId === line.productsorderId ? "mine" : "other";
+  }
+  const recorded = shared.recordedEffects.get(refundId);
+  if (recorded) return recorded.includes(line.productsorderId) ? "mine" : "other";
+  if (carried === "mine") return "mine";
+  if (carried === "other") return "other";
+  return null;
+}
+
 export function classifyLine(line: LineFacts, reads: LineReads, shared: SharedIdentity): Classification {
   const lane = laneOf(line);
   const base = { productsorderId: line.productsorderId, lane };
   const ret = reads.ret.ok ? reads.ret.value : null;
   const returnStatus = ret?.status ?? null;
-  const out = (cls: ReconcileClass, reason: string, evidence?: PaidEvidence): Classification => ({
+  const out = (cls: ReconcileClass, reason: string, extra: Partial<Classification> = {}): Classification => ({
     ...base,
     cls,
     reason,
     returnStatus,
-    ...(evidence ? { evidence } : {}),
+    ...extra,
   });
-  const ambiguous = (reason: string) => out("ambiguous", reason);
-  /** No evidence after a complete read: unpaid, but only for a return that is open or processed. */
+  const ambiguous = (reason: string, extra: Partial<Classification> = {}) => out("ambiguous", reason, extra);
+  /** No effect after a complete read: unpaid, but only for a return that is open or processed. */
   const none = (reason: string) =>
     PROCESSED_OR_OPEN.has(String(returnStatus)) ? out("unpaid", reason) : ambiguous(`${reason}; return ${returnStatus}`);
 
@@ -247,130 +328,211 @@ export function classifyLine(line: LineFacts, reads: LineReads, shared: SharedId
   if (!reads.ret.ok) return ambiguous(`return unreadable: ${reads.ret.error}`);
   if (!ret) return ambiguous(`return ${line.returnId} not found`);
 
-  if (lane === "refund") {
-    const refunds = ret.refunds;
-    if (refunds?.pageInfo?.hasNextPage) return ambiguous("return refunds truncated");
-    const gid = lineItemGid(line.lineItemId);
-    const own = [];
-    for (const r of refunds?.nodes ?? []) {
-      if (r.refundLineItems?.pageInfo?.hasNextPage) return ambiguous(`refund ${r.id} line items truncated`);
-      if ((r.refundLineItems?.nodes ?? []).some((n) => n?.lineItem?.id === gid)) own.push(r);
+  const problems: string[] = [];
+  const unattributed: string[] = [];
+  const need = readsNeeded(line);
+
+  // ── Refunds on the return ────────────────────────────────────────────────
+  const gid = lineItemGid(line.lineItemId);
+  const ownReturn: Array<{ id: string; transactions?: TxConn }> = [];
+  if (ret.refunds?.pageInfo?.hasNextPage) problems.push("return refunds truncated");
+  for (const r of ret.refunds?.nodes ?? []) {
+    if (r.refundLineItems?.pageInfo?.hasNextPage) {
+      problems.push(`refund ${r.id} line items truncated`);
+      continue;
     }
-    const money = judgeOwnRefunds(own, ret.order?.presentmentCurrencyCode);
-    if (money.v === "ambiguous") return ambiguous(money.reason);
-    if (money.v === "none") return none(`no paying refund names ${gid}`);
-    return out("paid", `refund ${money.refundId}`, {
-      lane,
-      refundId: money.refundId,
-      amountCents: money.amountCents,
-      currency: money.currency,
-    });
+    const named = (r.refundLineItems?.nodes ?? []).map((n) => n?.lineItem?.id).filter(Boolean) as string[];
+    const carried = named.includes(gid) ? "mine" : named.length > 0 ? "other" : "none";
+    if (!movesMoney(r)) continue;
+    const owner = ownerOf(r.id, carried, line, shared);
+    if (owner === "mine") ownReturn.push(r);
+    else if (owner === null) unattributed.push(r.id);
   }
 
-  if (lane === "root_refund") {
+  // ── Refunds on the root order (a replacement order's line) ───────────────
+  const ownRoot: Array<{ id: string; transactions?: TxConn }> = [];
+  let root: RootRefundsEvidence | null = null;
+  if (need.rootRefunds) {
     const r = reads.rootRefunds;
-    if (!r) return ambiguous("root order not read");
-    if (!r.ok) return ambiguous(`root order unreadable: ${r.error}`);
-    if (!r.value.refunds) return ambiguous("root order refunds truncated");
-    const marker = `[${line.returnLineItemId}]`;
-    const own = r.value.refunds.filter((x) => String(x.note ?? "").includes(marker));
-    const money = judgeOwnRefunds(own, r.value.presentmentCurrencyCode);
-    if (money.v === "ambiguous") return ambiguous(money.reason);
-    if (money.v === "none") return none(`no paying refund on the root carries ${marker}`);
-    return out("paid", `root refund ${money.refundId}`, {
-      lane,
-      refundId: money.refundId,
-      amountCents: money.amountCents,
-      currency: money.currency,
-      rootOrderGid: r.value.orderGid,
-    });
+    if (!r) problems.push("root order not read");
+    else if (!r.ok) problems.push(`root order unreadable: ${r.error}`);
+    else if (!r.value.refunds) problems.push("root order refunds truncated");
+    else {
+      root = r.value;
+      const mine = `[${line.returnLineItemId}]`;
+      for (const x of r.value.refunds) {
+        if (!movesMoney(x)) continue;
+        const note = String(x.note ?? "");
+        const carried = note.includes(mine)
+          ? "mine"
+          : Array.from(shared.markers).some((m) => m !== line.returnLineItemId && note.includes(`[${m}]`))
+            ? "other"
+            : "none";
+        const owner = ownerOf(x.id, carried, line, shared);
+        if (owner === "mine") ownRoot.push(x);
+        else if (owner === null) unattributed.push(x.id);
+      }
+    }
   }
 
-  if (lane === "credit") {
+  // ── The stored gift card ─────────────────────────────────────────────────
+  let card: PaidEvidence | null = null;
+  if (line.giftCardId) {
+    const cardGid = giftCardGid(line.giftCardId);
+    const uses = shared.giftCardUses.get(cardGid) ?? 0;
+    const g = reads.giftCard;
+    if (uses > 1) problems.push(`gift card ${cardGid} is named by ${uses} lines`);
+    else if (!g) problems.push("gift card not read");
+    else if (!g.ok) problems.push(`gift card unreadable: ${g.error}`);
+    else if (!g.value) problems.push(`gift card ${cardGid} not found`);
+    else {
+      const customer = ret.order?.customer?.id ?? null;
+      const currency = String(g.value.initialValue?.currencyCode ?? "");
+      if (!customer || g.value.customer?.id !== customer) {
+        problems.push(`gift card ${cardGid} customer ${g.value.customer?.id ?? "(none)"} vs order ${customer ?? "(none)"}`);
+      } else if (currency !== "EUR") problems.push(`gift card ${cardGid} currency ${currency || "(none)"}`);
+      else card = { lane: "credit", giftCardId: g.value.id, amountCents: cents(g.value.initialValue?.amount), currency };
+    }
+  } else if (line.credit) {
     // The spec's fallback — search the customer's gift cards for one whose
     // note names the order — cannot be built: pre-S2 cards were created with
-    // no note at all, and an amount is never identity. So without the stored
-    // id there is no identity to look for.
-    if (!line.giftCardId) return ambiguous("no gift_card_id: no identity to look for");
-    const gid = giftCardGid(line.giftCardId);
-    const uses = shared.giftCardUses.get(gid) ?? 0;
-    if (uses > 1) return ambiguous(`gift card ${gid} is named by ${uses} lines`);
-    const g = reads.giftCard;
-    if (!g) return ambiguous("gift card not read");
-    if (!g.ok) return ambiguous(`gift card unreadable: ${g.error}`);
-    const card = g.value;
-    if (!card) return ambiguous(`gift card ${gid} not found`);
-    const customer = ret.order?.customer?.id ?? null;
-    if (!customer || card.customer?.id !== customer) {
-      return ambiguous(`gift card ${gid} customer ${card.customer?.id ?? "(none)"} vs order ${customer ?? "(none)"}`);
-    }
-    const currency = String(card.initialValue?.currencyCode ?? "");
-    if (currency !== "EUR") return ambiguous(`gift card ${gid} currency ${currency || "(none)"}`);
-    return out("paid", `gift card ${gid}`, {
-      lane,
-      giftCardId: card.id,
-      amountCents: cents(card.initialValue?.amount),
-      currency,
-    });
+    // no note, and an amount is never identity.
+    problems.push("credit row with no gift_card_id: no identity to look for its gift card");
   }
 
-  // exchange
+  // ── Delivery: an exchange order of ours, or a native exchange line ───────
+  const deliveries: PaidEvidence[] = [];
   const variant = variantGid(line.newVariantId);
-  if (!variant) return ambiguous("exchange line has no new variant");
-  const sharing = shared.exchangeVariantUses.get(exchangeVariantKey(line.orderId, line.newVariantId)) ?? 0;
-  const e = reads.exchangeOrders;
-  if (!e) return ambiguous("exchange orders not searched");
-  if (!e.ok) return ambiguous(`exchange order search unreadable: ${e.error}`);
-  if (e.value.truncated) return ambiguous("exchange order search truncated");
-  const tag = `Order ${line.orderNumber}`;
-  const candidates = [];
-  for (const order of e.value.nodes) {
-    const tags = order.tags ?? [];
-    if (!tags.includes("Change") || !tags.includes(tag)) continue;
-    if (order.lineItems?.pageInfo?.hasNextPage) return ambiguous(`order ${order.id} lines truncated`);
-    const hits = (order.lineItems?.nodes ?? []).filter((n) => n.variant?.id === variant);
-    if (hits.length > 0) candidates.push({ order, hits });
-  }
-  if (candidates.length > 1) return ambiguous(`${candidates.length} exchange orders contain ${variant}`);
-  if (candidates.length === 1) {
-    if (sharing > 1) return ambiguous(`${sharing} lines of the order exchange to ${variant}`);
-    const judged = judgeLegacyExchangeOrder(
-      {
-        orderNumber: line.orderNumber,
-        customerGid: ret.order?.customer?.id ?? null,
-        newVariantGid: variant,
-        quantity: line.quantity,
-      },
-      candidates[0].order
-    );
-    if (!judged.ok) return ambiguous(judged.reason);
-    return out("paid", `exchange order ${judged.orderName || judged.orderGid}`, {
-      lane: "exchange",
-      orderGid: judged.orderGid,
-      orderName: judged.orderName,
-      lineItemId: judged.lineItemId,
-      variantGid: judged.variantGid,
-      quantity: judged.quantity,
-      unitCents: judged.unitCents,
-      currency: "EUR",
-    });
+  if (line.action === "CAMBIO" && !variant) problems.push("exchange line has no new variant");
+  if (variant) {
+    const sharing = shared.exchangeVariantUses.get(exchangeVariantKey(line.orderId, line.newVariantId)) ?? 0;
+    const e = reads.exchangeOrders;
+    if (!e) problems.push("exchange orders not searched");
+    else if (!e.ok) problems.push(`exchange order search unreadable: ${e.error}`);
+    else if (e.value.truncated) problems.push("exchange order search truncated");
+    else {
+      const tag = `Order ${line.orderNumber}`;
+      const candidates = [];
+      for (const order of e.value.nodes) {
+        const tags = order.tags ?? [];
+        if (!tags.includes("Change") || !tags.includes(tag)) continue;
+        if (order.lineItems?.pageInfo?.hasNextPage) {
+          problems.push(`order ${order.id} lines truncated`);
+          continue;
+        }
+        if ((order.lineItems?.nodes ?? []).some((n) => n.variant?.id === variant)) candidates.push(order);
+      }
+      if (candidates.length > 1) problems.push(`${candidates.length} exchange orders contain ${variant}`);
+      else if (candidates.length === 1) {
+        const judged = judgeLegacyExchangeOrder(
+          { orderNumber: line.orderNumber, customerGid: ret.order?.customer?.id ?? null, newVariantGid: variant, quantity: line.quantity },
+          candidates[0]
+        );
+        if (!judged.ok) problems.push(judged.reason);
+        else
+          deliveries.push({
+            lane: "exchange",
+            orderGid: judged.orderGid,
+            orderName: judged.orderName,
+            lineItemId: judged.lineItemId,
+            variantGid: judged.variantGid,
+            quantity: judged.quantity,
+            unitCents: judged.unitCents,
+            currency: "EUR",
+          });
+      }
+    }
+    const xli = ret.exchangeLineItems;
+    if (xli?.pageInfo?.hasNextPage) problems.push("exchange line items truncated");
+    const native = (xli?.nodes ?? []).filter((n) => (n.lineItems ?? []).some((li) => li?.variant?.id === variant));
+    if (native.length > 1) problems.push(`${native.length} native exchange lines name ${variant}`);
+    else if (native.length === 1) {
+      deliveries.push({ lane: "native_exchange", returnGid: ret.id, exchangeLineItemId: native[0].id, variantGid: variant });
+    }
+    if (deliveries.length > 0 && sharing > 1) problems.push(`${sharing} lines of the order exchange to ${variant}`);
   }
 
-  // No order of ours: a native exchange on the return itself?
-  const xli = ret.exchangeLineItems;
-  if (xli?.pageInfo?.hasNextPage) return ambiguous("exchange line items truncated");
-  const native = (xli?.nodes ?? []).filter((n) => (n.lineItems ?? []).some((li) => li?.variant?.id === variant));
-  if (native.length > 1) return ambiguous(`${native.length} native exchange lines name ${variant}`);
-  if (native.length === 1) {
-    if (sharing > 1) return ambiguous(`${sharing} lines of the order exchange to ${variant}`);
-    return out("paid", `native exchange ${native[0].id}`, {
-      lane: "native_exchange",
-      returnGid: ret.id,
-      exchangeLineItemId: native[0].id,
-      variantGid: variant,
-    });
+  if (problems.length > 0) {
+    return ambiguous(problems.join("; "), unattributed.length ? { unattributed } : {});
   }
-  return none(`no exchange order or native exchange line names ${variant}`);
+  if (unattributed.length > 0) {
+    return ambiguous(
+      `refund(s) ${unattributed.join(", ")} moved money and name no line: a human binds or excludes them`,
+      { unattributed }
+    );
+  }
+
+  // ── The money the line's own effects moved ───────────────────────────────
+  const money: PaidEvidence[] = [];
+  const fromReturn = judgeOwnRefunds(ownReturn, ret.order?.presentmentCurrencyCode);
+  if (fromReturn.v === "ambiguous") return ambiguous(fromReturn.reason);
+  if (fromReturn.v === "paid") {
+    money.push({ lane: "refund", refundId: fromReturn.refundId, amountCents: fromReturn.amountCents, currency: fromReturn.currency });
+  }
+  if (root) {
+    const fromRoot = judgeOwnRefunds(ownRoot, root.presentmentCurrencyCode);
+    if (fromRoot.v === "ambiguous") return ambiguous(fromRoot.reason);
+    if (fromRoot.v === "paid") {
+      money.push({
+        lane: "root_refund",
+        refundId: fromRoot.refundId,
+        amountCents: fromRoot.amountCents,
+        currency: fromRoot.currency,
+        rootOrderGid: root.orderGid,
+      });
+    }
+  }
+  if (card) money.push(card);
+  const idOf = (e: PaidEvidence) =>
+    e.lane === "refund" || e.lane === "root_refund"
+      ? e.refundId
+      : e.lane === "credit"
+        ? e.giftCardId
+        : e.lane === "exchange"
+          ? e.orderGid
+          : e.exchangeLineItemId;
+
+  if (deliveries.length > 1) return ambiguous(`delivered twice: ${deliveries.map(idOf).join(", ")}`);
+
+  // A cash exchange: the pre-ledger writer delivered a replacement order.
+  if (line.action === "CAMBIO" && !line.credit) {
+    if (deliveries.length === 1) {
+      const d = deliveries[0];
+      return out("paid", `${d.lane === "exchange" ? "exchange order" : "native exchange"} ${idOf(d)}`, {
+        evidence: d,
+        moneyEffects: money.map(idOf),
+      });
+    }
+    if (money.length > 0) {
+      return ambiguous(`exchange line with no delivery but money paid by ${money.map(idOf).join(", ")}`);
+    }
+    return none(`no exchange order or native exchange line names ${variant}`);
+  }
+
+  // A money lane: a refund, or a gift card for a credit row.
+  if (deliveries.length > 0) return ambiguous(`money line with a delivery ${deliveries.map(idOf).join(", ")}`);
+  if (money.length > 1) return ambiguous(`paid more than once: ${money.map(idOf).join(", ")}`);
+  if (money.length === 0) {
+    return none(lane === "root_refund" ? `no paying refund on the return or the root carries [${line.returnLineItemId}]` : `no paying effect names ${gid}`);
+  }
+  const [paid] = money;
+  if (line.credit !== (paid.lane === "credit")) {
+    return ambiguous(`${line.credit ? "credit" : "refund"} row paid by ${paid.lane} ${idOf(paid)}`);
+  }
+  return out("paid", `${paid.lane === "credit" ? "gift card" : paid.lane === "root_refund" ? "root refund" : "refund"} ${idOf(paid)}`, {
+    evidence: paid,
+  });
+}
+
+/**
+ * An operator rejected this line's reconciliation record ("no payment
+ * happened"). That decision makes an ambiguous line unpaid — except where the
+ * ambiguity is an unattributed refund: only a decision on THAT refund's id
+ * (bind or exclude) clears it.
+ */
+export function afterOperatorRejection(c: Classification): Classification {
+  if (c.cls !== "ambiguous" || (c.unattributed?.length ?? 0) > 0) return c;
+  return { ...c, cls: "unpaid", reason: `operator: no legacy payment; was: ${c.reason}` };
 }
 
 /**
@@ -450,7 +612,7 @@ export function reconcilePopulation<T extends Pick<LineFacts, "productsorderId" 
 
 /** What the reconciliation read for a line, in cents: never what is owed. */
 export function lineValues(line: Pick<LineFacts, "price" | "quantity">, c: Classification) {
-  const returnedCents = Math.round(Number(line.price) * 100) * line.quantity;
+  const returnedCents = lineTotalCents(line.price, line.quantity);
   const ev = c.evidence;
   const replacementCents = ev?.lane === "exchange" ? ev.unitCents * ev.quantity : null;
   return { returnedCents, replacementCents };
@@ -463,7 +625,9 @@ export function lineValues(line: Pick<LineFacts, "price" | "quantity">, c: Class
  * cap. Only two findings admit an approval:
  *  - `unpaid` (D2): no payment found; cap = the returned value;
  *  - a paid exchange order whose replacement, read from Shopify, was cheaper
- *    than what came back (D1, `swap`); cap = returned − replacement.
+ *    than what came back, with NO refund or gift card found for the line
+ *    (D1, `swap`); cap = returned − replacement.
+ * Returned is the line total, rounded once (lib/basket.ts lineTotalCents).
  */
 export function approvalBasisOf(
   line: Pick<LineFacts, "price" | "quantity">,
@@ -472,6 +636,11 @@ export function approvalBasisOf(
   const { returnedCents, replacementCents } = lineValues(line, c);
   if (c.cls === "unpaid") return { ok: true, basis: "unpaid", capCents: returnedCents };
   if (c.cls === "paid" && replacementCents !== null) {
+    // Delivery and the money difference are separate: a refund or gift card
+    // found for the line means its difference was not left unpaid.
+    if ((c.moneyEffects?.length ?? 0) > 0) {
+      return { ok: false, reason: `difference already met by ${c.moneyEffects!.join(", ")}` };
+    }
     const cap = returnedCents - replacementCents;
     return cap > 0
       ? { ok: true, basis: "swap", capCents: cap }
@@ -508,4 +677,33 @@ export function parseApprovalFile(
     rows.push({ productsorderId: id, amountCents: Number(amount), approvedBy: by });
   }
   return { ok: true, rows };
+}
+
+/**
+ * Codex #8: the PENDING NULL-action lines (not settled, no action) — outside
+ * R1's population, never classified or written — listed for D3 with what
+ * Shopify shows for them. A line with no Shopify return is needs-human, not
+ * a D3 decision (lineAction.ts refuses it), so it is not listed here.
+ */
+export function pendingNullActionLines<T extends Pick<LineFacts, "refunded" | "action" | "returnId">>(facts: readonly T[]): T[] {
+  return facts.filter((l) => !l.refunded && l.action === null && !!l.returnId);
+}
+
+/** What Shopify shows for a NULL-action line (R5 / D3), read-only. */
+export function nullActionDiagnostics(
+  line: Pick<LineFacts, "lineItemId">,
+  ret: Read<ReturnEvidence | null> | null,
+  exchangeOrders: Read<{ truncated: boolean; nodes: ExchangeOrderEvidence[] }> | null
+): { returnStatus: string; refunds: string; exchangeOrders: string; nativeExchangeLines: string } {
+  const r = ret?.ok ? ret.value : null;
+  const gid = lineItemGid(line.lineItemId);
+  const refunds = (r?.refunds?.nodes ?? []).filter((x) => (x.refundLineItems?.nodes ?? []).some((n) => n?.lineItem?.id === gid));
+  return {
+    returnStatus: ret === null ? "(no return)" : ret.ok ? String(r?.status ?? "(not found)") : `unreadable: ${ret.error}`,
+    refunds: ret?.ok ? refunds.map((x) => x.id).join(" ") || "none" : "unreadable",
+    exchangeOrders: exchangeOrders?.ok
+      ? exchangeOrders.value.nodes.map((o) => o.name ?? o.id).join(" ") + (exchangeOrders.value.truncated ? " (truncated)" : "") || "none"
+      : "unreadable",
+    nativeExchangeLines: ret?.ok ? String((r?.exchangeLineItems?.nodes ?? []).length) : "unreadable",
+  };
 }

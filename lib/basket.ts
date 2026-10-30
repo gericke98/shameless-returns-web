@@ -154,6 +154,16 @@ export type ValuedLine = {
 };
 
 /**
+ * A stored line's exact total in cents: `price` is the UNROUNDED per-unit
+ * price, so the total is rounded once, from price × quantity — never the
+ * unit first (3101 cents over 2 units is stored "15.505": 3101, not 3102).
+ * The one rule every reader of a productsorder row's value uses (valueLine).
+ */
+export function lineTotalCents(price: string | number | null | undefined, quantity: number): number {
+  return Math.round((parseFloat(String(price ?? "")) || 0) * quantity * 100);
+}
+
+/**
  * Value one line as LINE TOTALS, not unit prices — Shopify is sent `quantity`,
  * so a qty-2 line returns two garments and has to be worth two.
  *
@@ -175,7 +185,7 @@ export function valueLine(
   fallbackRatio: number | null
 ): ValuedLine {
   const quantity = Math.max(1, Number(item.quantity) || 1);
-  const returnedCents = Math.round((parseFloat(item.price) || 0) * quantity * 100);
+  const returnedCents = lineTotalCents(item.price, quantity);
   if (item.action !== "CAMBIO") {
     return {
       id: Number((item as any).id),

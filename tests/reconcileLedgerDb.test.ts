@@ -130,13 +130,15 @@ const ambiguous = (id: number) => ({
 });
 const unpaid = (id: number) => ({ ...ambiguous(id), cls: "unpaid" as const, reason: "none" });
 
-async function write(lines: Array<{ id: number; c: any; over?: any }>, action?: string) {
+async function write(lines: Array<{ id: number; c: any; over?: any }>, action?: string, funding: Map<number, any> = new Map()) {
   const { reconciliationRecord, recordReconciliation } = await import("@/lib/settlement/reconcileLedger");
   const t = terms(lines.map((l) => l.id), action);
   const record = reconciliationRecord(
     t,
     lines.map((l) => ({ line: lineFacts(l.id, l.over), classification: l.c, customerGid: CUSTOMER })),
-    "test"
+    "test",
+    undefined,
+    funding
   );
   const [order] = await q(`SELECT * FROM orders WHERE id='100'`);
   return recordReconciliation({ ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record);
@@ -182,6 +184,44 @@ describe("R1 --write", () => {
     expect((await q(`SELECT count(*)::int AS n FROM return_submissions`))[0].n).toBe(0);
   });
 
+  const exchangePaid = (id: number) => ({
+      productsorderId: id,
+      lane: "exchange",
+      cls: "paid",
+      reason: "exchange order #500",
+      returnStatus: "CLOSED",
+      evidence: {
+        lane: "exchange",
+        orderGid: "gid://shopify/Order/500",
+        orderName: "#500",
+        lineItemId: "gid://shopify/LineItem/9",
+        variantGid: "gid://shopify/ProductVariant/42",
+        quantity: 1,
+        unitCents: 6200,
+        currency: "EUR",
+      },
+    });
+
+  it("an exchange whose funding Stripe cannot allocate is a replacement BY ID with no funding: it refuses valuation (Codex #3/#5)", async () => {
+    await seedRow(4, { action: "CAMBIO", newVariant: "42" });
+    // The terms fixture carries stripe_funded 300 — it must never become funding.
+    await write([{ id: 4, c: exchangePaid(4), over: { action: "CAMBIO", newVariantId: "42" } }], "CAMBIO", new Map([[4, { ok: false, reason: "paid Stripe session cs_1 for order 100 carry no split" }]]));
+    expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
+    expect(await q(`SELECT order_id, source_order_id, found_by FROM legacy_replacement_orders`)).toEqual([
+      { order_id: "500", source_order_id: "100", found_by: "reconciliation" },
+    ]);
+    expect((await q(`SELECT dedupe_key FROM ops_alerts`)).map((r: any) => r.dedupe_key)).toContain("replacement-unfunded:500");
+    const { replacementFundingOf } = await import("@/db/replacementLines");
+    expect(await replacementFundingOf({ id: "500", sourceIdentifier: null })).toEqual({
+      kind: "unfunded",
+      sourceOrderId: "100",
+      reason: "replacement-without-funding",
+    });
+    // Not even a census makes a known replacement ordinary.
+    await q(`INSERT INTO legacy_replacement_census (orders_found, run_by) VALUES (1, 'test')`);
+    expect((await replacementFundingOf({ id: "500", sourceIdentifier: null })).kind).toBe("unfunded");
+  });
+
   it("a paid exchange records its replacement line, which values the order from then on (R4)", async () => {
     await seedRow(4, { action: "CAMBIO", newVariant: "42" });
     const c = {
@@ -201,13 +241,14 @@ describe("R1 --write", () => {
         currency: "EUR",
       },
     };
-    await write([{ id: 4, c, over: { action: "CAMBIO", newVariantId: "42" } }], "CAMBIO");
+    // Funding read from Stripe: no paid legacy session for the order → 0.
+    await write([{ id: 4, c, over: { action: "CAMBIO", newVariantId: "42" } }], "CAMBIO", new Map([[4, { ok: true, stripeFundedCents: 0, source: "stripe" }]]));
     const rl = await q(`SELECT order_id, line_item_id, source_productsorder_id, stripe_funded_cents FROM replacement_lines`);
-    expect(rl).toEqual([{ order_id: "500", line_item_id: "gid://shopify/LineItem/9", source_productsorder_id: 4, stripe_funded_cents: 300 }]);
+    expect(rl).toEqual([{ order_id: "500", line_item_id: "gid://shopify/LineItem/9", source_productsorder_id: 4, stripe_funded_cents: 0 }]);
     const { replacementFundingOf } = await import("@/db/replacementLines");
     const funding = await replacementFundingOf({ id: "500", sourceIdentifier: null });
     expect(funding).toMatchObject({ kind: "funded", funding: { sourceOrderId: "100" } });
-    expect((funding as any).funding.lineByLineItem.get("gid://shopify/LineItem/9")).toEqual({ totalCents: 5300, quantity: 1 });
+    expect((funding as any).funding.lineByLineItem.get("gid://shopify/LineItem/9")).toEqual({ totalCents: 5000, quantity: 1 });
   });
 });
 
@@ -510,5 +551,291 @@ describe("a line with no Shopify return: needs-human, and nothing writes it", ()
     expect(await q(`SELECT action, refunded FROM productsorder WHERE id = 30`)).toEqual([{ action: null, refunded: true }]);
     expect(await q(`SELECT count(*)::int AS n FROM return_submissions`)).toEqual([{ n: 0 }]);
     expect(await q(`SELECT count(*)::int AS n FROM line_action_decisions`)).toEqual([{ n: 0 }]);
+  });
+});
+
+// ── Codex S3 review (30 Oct) ────────────────────────────────────────────────
+describe("approvals are resumable (Codex #6)", () => {
+  const shopifyClosed = (id: number) => {
+    answers.SettlementAdmissionReturn = () => ({
+      data: {
+        return: {
+          id: RETURN,
+          status: "CLOSED",
+          exchangeLineItems: { nodes: [] },
+          returnLineItems: {
+            pageInfo: { hasNextPage: false },
+            nodes: [{ id: `gid://shopify/ReturnLineItem/${id}`, quantity: 1, processedQuantity: 1, fulfillmentLineItem: { id: `gid://shopify/FulfillmentLineItem/${id}` } }],
+          },
+          reverseFulfillmentOrders: { pageInfo: { hasNextPage: false }, nodes: [] },
+          order: { id: "gid://shopify/Order/100", customer: { id: CUSTOMER }, totalPriceSet: null },
+        },
+      },
+    });
+    answers.SettlementAdmissionPayingOrder = () => ({
+      data: {
+        order: {
+          id: "gid://shopify/Order/100",
+          totalPriceSet: null,
+          transactions: [{ id: "gid://shopify/OrderTransaction/7", kind: "SALE", status: "SUCCESS", gateway: "shopify_payments", amountSet: { shopMoney: { amount: "50.00" } } }],
+        },
+      },
+    });
+  };
+
+  it("crash between the approval commit and admission: an identical rerun resumes the same obligation, never a second", async () => {
+    shopifyClosed(40);
+    await seedRow(40);
+    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
+    const first = await recordApprovedLegacySubmission([approval(40, { amountCents: 3000 })]);
+    expect(first.ok).toBe(true);
+    // ...the process stopped here: no admission ran.
+    const again = await recordApprovedLegacySubmission([approval(40, { amountCents: 3000 })]);
+    expect(again).toEqual(first);
+    expect(await q(`SELECT count(*)::int AS n FROM settlement_approvals`)).toEqual([{ n: 1 }]);
+    expect(await q(`SELECT count(*)::int AS n FROM return_submissions`)).toEqual([{ n: 1 }]);
+    const { admit } = await import("@/lib/settlement/admission");
+    expect(await admit((again as any).submissionId, [40])).toMatchObject({ ok: true });
+    expect(await admit((again as any).submissionId, [40])).toMatchObject({ ok: true });
+    expect(await q(`SELECT kind, amount_cents FROM settlement_operations`)).toEqual([{ kind: "root_refund", amount_cents: 3000 }]);
+  });
+
+  it("a different approval of the same line is refused, not recorded twice", async () => {
+    shopifyClosed(41);
+    await seedRow(41);
+    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
+    expect((await recordApprovedLegacySubmission([approval(41, { amountCents: 3000 })])).ok).toBe(true);
+    expect(await recordApprovedLegacySubmission([approval(41, { amountCents: 3100 })])).toEqual({ ok: false, held: "approval-differs:41" });
+    expect(await q(`SELECT count(*)::int AS n FROM settlement_approvals`)).toEqual([{ n: 1 }]);
+  });
+
+  it("recovery admits an approval that was never admitted, once", async () => {
+    shopifyClosed(42);
+    await seedRow(42);
+    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
+    const sub = await recordApprovedLegacySubmission([approval(42, { amountCents: 2500 })]);
+    const { approvalsAwaitingAdmission } = await import("@/lib/settlement/ledger");
+    expect(await approvalsAwaitingAdmission()).toEqual([{ submissionId: (sub as any).submissionId, lines: [42] }]);
+    const { recoverSettlements } = await import("@/lib/settlement/recovery");
+    // limit 0: admit only — running the admitted refund is the ledger's usual path.
+    const report = await recoverSettlements({ deadline: Date.now() + 60_000, limit: 0 });
+    expect(report.admittedApprovals).toEqual([{ submission: (sub as any).submissionId, lines: [42], outcome: "admitted" }]);
+    expect(await approvalsAwaitingAdmission()).toEqual([]);
+    await recoverSettlements({ deadline: Date.now() + 60_000, limit: 0 });
+    expect(await q(`SELECT kind, amount_cents FROM settlement_operations`)).toEqual([{ kind: "root_refund", amount_cents: 2500 }]);
+  });
+
+  it("a held admission stays awaiting and alerts once per reason", async () => {
+    await seedRow(43);
+    shopifyClosed(43);
+    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
+    const sub = await recordApprovedLegacySubmission([approval(43, { amountCents: 2500 })]);
+    delete answers.SettlementAdmissionReturn; // Shopify stops answering
+    const { recoverSettlements } = await import("@/lib/settlement/recovery");
+    const report = await recoverSettlements({ deadline: Date.now() + 60_000, limit: 0 });
+    expect(report.admittedApprovals[0]).toMatchObject({ submission: (sub as any).submissionId, outcome: expect.stringMatching(/^held:/) });
+    const { approvalsAwaitingAdmission } = await import("@/lib/settlement/ledger");
+    expect(await approvalsAwaitingAdmission()).toHaveLength(1);
+  });
+});
+
+describe("line totals round once on the approval path (Codex #7)", () => {
+  it("€31.01 over two units (stored 15.505): cap and returned_cents are 3101, and 3102 is refused", async () => {
+    answers.SettlementAdmissionReturn = () => ({
+      data: {
+        return: {
+          id: RETURN,
+          status: "CLOSED",
+          exchangeLineItems: { nodes: [] },
+          returnLineItems: {
+            pageInfo: { hasNextPage: false },
+            nodes: [{ id: "gid://shopify/ReturnLineItem/44", quantity: 2, processedQuantity: 2, fulfillmentLineItem: { id: "gid://shopify/FulfillmentLineItem/44" } }],
+          },
+          reverseFulfillmentOrders: { pageInfo: { hasNextPage: false }, nodes: [] },
+          order: { id: "gid://shopify/Order/100", customer: { id: CUSTOMER }, totalPriceSet: null },
+        },
+      },
+    });
+    await seedRow(44);
+    await q(`UPDATE productsorder SET price = '15.505', quantity = 2 WHERE id = 44`);
+    const { approvalBasisOf } = await import("@/lib/settlement/reconcile");
+    const basis = approvalBasisOf({ price: "15.505", quantity: 2 }, { productsorderId: 44, lane: "refund", cls: "unpaid", reason: "", returnStatus: "CLOSED" });
+    expect(basis).toEqual({ ok: true, basis: "unpaid", capCents: 3101 });
+    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
+    expect(await recordApprovedLegacySubmission([approval(44, { amountCents: 3102, capCents: 3101 })])).toMatchObject({ ok: false });
+    expect((await recordApprovedLegacySubmission([approval(44, { amountCents: 3101, capCents: 3101 })])).ok).toBe(true);
+    expect(await q(`SELECT returned_cents, pay_cents, replacement_cents FROM submission_lines`)).toEqual([
+      { returned_cents: 3101, pay_cents: 3101, replacement_cents: 0 },
+    ]);
+  });
+});
+
+describe("effect decisions (Codex #1/#5)", () => {
+  it("one decision per effect, with who and why; binds needs a confirmed line", async () => {
+    await seedRow(45);
+    const { decideEffect, effectDecisions } = await import("@/lib/settlement/effectDecisions");
+    expect(await decideEffect({ effectId: "gid://shopify/Refund/9", verdict: "binds", productsorderId: 999, by: "santi", evidence: "x" }))
+      .toMatchObject({ ok: false });
+    expect(await decideEffect({ effectId: "gid://shopify/Refund/9", verdict: "binds", productsorderId: 45, by: "santi", evidence: "admin refund for line 45" }))
+      .toEqual({ ok: true });
+    expect(await decideEffect({ effectId: "gid://shopify/Refund/9", verdict: "excludes", productsorderId: null, by: "santi", evidence: "changed my mind" }))
+      .toMatchObject({ ok: false });
+    expect(await decideEffect({ effectId: "cs_1", verdict: "excludes", productsorderId: null, by: "", evidence: "x" })).toMatchObject({ ok: false });
+    expect(await effectDecisions()).toEqual(new Map([["gid://shopify/Refund/9", { verdict: "binds", productsorderId: 45 }]]));
+  });
+
+  it("the ledger's done effects are identity: recordedEffects lists them by line", async () => {
+    await seedRow(46, { refunded: false });
+    await write([{ id: 46, c: paid(46) }]);
+    const { recordedEffects } = await import("@/lib/settlement/effectDecisions");
+    expect((await recordedEffects()).get("gid://shopify/Refund/46")).toEqual([46]);
+  });
+});
+
+describe("the census: every pre-S2 exchange order, by id (Codex #3)", () => {
+  it("records every Change-tagged order with its exact source, then the census; ordinary only after it", async () => {
+    await q(`INSERT INTO orders (id, order_number) VALUES ('100', '#100'), ('101', '#101') ON CONFLICT DO NOTHING`);
+    const pages = [
+      { nodes: [{ id: "gid://shopify/Order/500", tags: ["Change", "Order #100"] }], pageInfo: { hasNextPage: true, endCursor: "c1" } },
+      { nodes: [{ id: "gid://shopify/Order/501", tags: ["Change", "Order #999"] }], pageInfo: { hasNextPage: false, endCursor: null } },
+    ];
+    answers.ReconcileChangeOrders = (v: any) => ({ data: { orders: v.after ? pages[1] : pages[0] } });
+    const census = await import("@/lib/settlement/replacementCensus");
+    const found = await census.readChangeOrders();
+    expect(found).toMatchObject({ ok: true });
+    const rows = census.censusRows((found as any).value, await census.ourOrderTags());
+    expect(rows).toEqual([
+      { order_id: "500", source_order_id: "100" },
+      { order_id: "501", source_order_id: null },
+    ]);
+    const { replacementFundingOf } = await import("@/db/replacementLines");
+    expect((await replacementFundingOf({ id: "777", sourceIdentifier: null })).kind).toBe("unprovable");
+    await census.recordCensus(rows, "santi");
+    expect(await census.censusComplete()).toBe(true);
+    expect(await replacementFundingOf({ id: "501", sourceIdentifier: null })).toEqual({
+      kind: "unfunded",
+      sourceOrderId: null,
+      reason: "replacement-without-funding",
+    });
+    expect(await replacementFundingOf({ id: "777", sourceIdentifier: null })).toEqual({ kind: "not-settlement" });
+  });
+
+  it("an unreadable page means no census at all", async () => {
+    answers.ReconcileChangeOrders = (v: any) =>
+      v.after ? undefined : { data: { orders: { nodes: [], pageInfo: { hasNextPage: true, endCursor: "c1" } } } };
+    const census = await import("@/lib/settlement/replacementCensus");
+    expect((await census.readChangeOrders()).ok).toBe(false);
+  });
+
+  it("an order already stored with exchange_of is a replacement: unfunded, never ordinary", async () => {
+    await q(`INSERT INTO orders (id, order_number, exchange_of) VALUES ('600', '#600', '100')`);
+    await q(`INSERT INTO legacy_replacement_census (orders_found, run_by) VALUES (0, 'test')`);
+    const { replacementFundingOf } = await import("@/db/replacementLines");
+    expect(await replacementFundingOf({ id: "600", sourceIdentifier: null })).toMatchObject({ kind: "unfunded", sourceOrderId: "100" });
+  });
+
+  it("an operator's done on a legacy exchange records the order as a replacement, with no invented funding", async () => {
+    await seedRow(47, { action: "CAMBIO", newVariant: "42", refunded: false });
+    await write([{ id: 47, c: { productsorderId: 47, lane: "exchange", cls: "ambiguous", reason: "x", returnStatus: "CLOSED" }, over: { action: "CAMBIO", newVariantId: "42" } }], "CAMBIO");
+    answers.ReconcileOrderById = () => ({
+      data: {
+        order: {
+          id: "gid://shopify/Order/510",
+          name: "#510",
+          tags: ["Change", "Order #100"],
+          customer: { id: CUSTOMER },
+          lineItems: { nodes: [{ id: "gid://shopify/LineItem/91", quantity: 1, variant: { id: "gid://shopify/ProductVariant/42" }, originalUnitPriceSet: { shopMoney: { amount: "30.00", currencyCode: "EUR" } } }] },
+        },
+      },
+    });
+    const [row] = await q(`SELECT id FROM settlement_operations`);
+    const { getOperation } = await import("@/lib/settlement/ledger");
+    const { resolveOperation } = await import("@/lib/settlement/operator");
+    const out = await resolveOperation((await getOperation(row.id))!, { verdict: "done", evidence: "found it", by: "santi", orderGid: "gid://shopify/Order/510" }, { write: true });
+    expect(out).toMatchObject({ ok: true, written: true });
+    expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
+    expect(await q(`SELECT order_id, source_order_id, found_by FROM legacy_replacement_orders`)).toEqual([
+      { order_id: "510", source_order_id: "100", found_by: "operator" },
+    ]);
+  });
+});
+
+describe("no historical figure is rebuilt (Codex #5)", () => {
+  it("a reconciled submission's terms carry the exact returned total and nothing else", async () => {
+    answers.SettlementAdmissionReturn = () => ({
+      data: {
+        return: {
+          id: RETURN,
+          status: "CLOSED",
+          exchangeLineItems: { nodes: [] },
+          returnLineItems: {
+            pageInfo: { hasNextPage: false },
+            nodes: [{ id: "gid://shopify/ReturnLineItem/48", quantity: 2, processedQuantity: 2, fulfillmentLineItem: { id: "gid://shopify/FulfillmentLineItem/48" } }],
+          },
+          reverseFulfillmentOrders: { pageInfo: { hasNextPage: false }, nodes: [] },
+          order: { id: "gid://shopify/Order/100", customer: { id: CUSTOMER }, totalPriceSet: null },
+        },
+      },
+    });
+    await seedRow(48, { action: "CAMBIO", newVariant: "gid://shopify/ProductVariant/42" });
+    await q(`UPDATE productsorder SET price = '15.505', quantity = 2 WHERE id = 48`);
+    const { db } = env;
+    const { productsOrder } = await import("@/db/schema");
+    const rows = await db.select().from(productsOrder);
+    const { recordedTerms } = await import("@/lib/settlement/legacyTerms");
+    const t = await recordedTerms(rows as any);
+    expect(t.ok).toBe(true);
+    const { agreement, lines } = (t as any).terms;
+    expect(lines.map((l: any) => [l.returned_cents, l.replacement_cents, l.pay_cents, l.stripe_funded_cents])).toEqual([[3101, 0, 0, 0]]);
+    expect([agreement.chargedFeeCents, agreement.netCents, agreement.owedCents, agreement.stripeChargeCents]).toEqual([0, 3101, 0, 0]);
+  });
+
+  it("an exchange recorded with no funding read writes no replacement line (never the terms' figure)", async () => {
+    await seedRow(49, { action: "CAMBIO", newVariant: "42" });
+    const c = {
+      productsorderId: 49,
+      lane: "exchange",
+      cls: "paid",
+      reason: "exchange order #520",
+      returnStatus: "CLOSED",
+      evidence: {
+        lane: "exchange",
+        orderGid: "gid://shopify/Order/520",
+        orderName: "#520",
+        lineItemId: "gid://shopify/LineItem/92",
+        variantGid: "gid://shopify/ProductVariant/42",
+        quantity: 1,
+        unitCents: 6200,
+        currency: "EUR",
+      },
+    };
+    await write([{ id: 49, c, over: { action: "CAMBIO", newVariantId: "42" } }], "CAMBIO");
+    expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
+    expect(await q(`SELECT order_id FROM legacy_replacement_orders`)).toEqual([{ order_id: "520" }]);
+  });
+});
+
+describe("census sources are exact", () => {
+  it("a tag that matches two of our orders, or two tags naming different orders, give no source", async () => {
+    const { censusRows } = await import("@/lib/settlement/replacementCensus");
+    const ours = new Map([
+      ["Order #100", ["100"]],
+      ["Order #101", ["101"]],
+      ["Order #200", ["200", "201"]],
+    ]);
+    expect(
+      censusRows(
+        [
+          { id: "gid://shopify/Order/1", tags: ["Change", "Order #200"] },
+          { id: "gid://shopify/Order/2", tags: ["Change", "Order #100", "Order #101"] },
+          { id: "gid://shopify/Order/3", tags: ["Change", "Order #1000"] },
+        ],
+        ours
+      )
+    ).toEqual([
+      { order_id: "1", source_order_id: null },
+      { order_id: "2", source_order_id: null },
+      { order_id: "3", source_order_id: null },
+    ]);
   });
 });

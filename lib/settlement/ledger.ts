@@ -487,6 +487,9 @@ export type DoneExtras = {
   };
   /** release_hold: clear the order's pointer to the deleted draft. */
   clearReservation?: { orderId: string; draftOrderId: string };
+  /** S3: a legacy exchange order an operator found — recorded as a
+   *  replacement by id (drizzle/0011), with no funding (Codex #3/#5). */
+  replacementIdentity?: { orderId: string; sourceOrderId: string };
   resolvedBy?: string;
 };
 
@@ -607,6 +610,14 @@ export async function recordDone(
          AND orders.exchange_reservation_id = ${extras.clearReservation.draftOrderId}
       RETURNING 1)`);
   }
+  if (extras.replacementIdentity) {
+    ctes.push(sql`ident AS (
+      INSERT INTO legacy_replacement_orders (order_id, source_order_id, found_by)
+      SELECT ${extras.replacementIdentity.orderId}, ${extras.replacementIdentity.sourceOrderId}, 'operator' FROM d
+      ON CONFLICT (order_id) DO UPDATE
+        SET source_order_id = COALESCE(legacy_replacement_orders.source_order_id, EXCLUDED.source_order_id)
+      RETURNING 1)`);
+  }
   const doneStatement = sql`WITH ${sql.join(ctes, sql`, `)} SELECT count(*)::int AS done FROM d`;
 
   const [, doneRows, settledRows] = await transact([
@@ -659,6 +670,33 @@ export async function recoverableOperations(limit: number): Promise<Operation[]>
  *  and replay (`recoverDispatched`), never claimed afresh. */
 export const hasDispatched = (op: Operation): boolean =>
   op.state === "dispatched" || (op.state === "claimed" && op.dispatchedAt !== null);
+
+/**
+ * Santi's approvals (drizzle/0010) whose line no operation of their
+ * submission covers yet: the approval and its submission committed, and
+ * admission never ran or was held (Codex #6). Recovery admits them; a
+ * cancelled or cancelling submission is not resumed.
+ */
+export async function approvalsAwaitingAdmission(): Promise<Array<{ submissionId: string; lines: number[] }>> {
+  const rows = rowsOf(
+    await db.execute(sql`
+      SELECT a.submission_id::text AS submission_id, to_jsonb(array_agg(a.productsorder_id ORDER BY a.productsorder_id)) AS lines
+        FROM settlement_approvals a
+        JOIN return_submissions s ON s.id = a.submission_id
+       WHERE s.state = 'accepted'
+         AND s.holder IS DISTINCT FROM 'cancellation'
+         AND NOT EXISTS (SELECT 1 FROM settlement_operations o
+                          WHERE o.submission_id = a.submission_id
+                            AND a.productsorder_id = ANY (o.members))
+       GROUP BY a.submission_id
+       ORDER BY a.submission_id
+    `)
+  );
+  return rows.map((r) => ({
+    submissionId: String(r.submission_id),
+    lines: ((typeof r.lines === "string" ? JSON.parse(r.lines) : r.lines) as unknown[]).map(Number),
+  }));
+}
 
 /** Submissions with a done op and a line still unsettled. */
 export async function submissionsToFinalize(): Promise<string[]> {

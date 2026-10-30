@@ -24,7 +24,7 @@ import { getFeeTable } from "@/db/fees";
 import { getProducts } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
 import type { Product } from "@/types";
-import { standingReconciliations, submissionOfRow, type ApprovalBasis } from "./ledger";
+import { approvalsOf, standingReconciliations, submissionOfRow, type ApprovalBasis } from "./ledger";
 import {
   approvedTerms,
   idListOf,
@@ -141,6 +141,12 @@ export async function recordApprovedLegacySubmission(approvals: ApprovalInput[])
     const problem = approvalProblem(a);
     if (problem) return { ok: false, held: `approval-invalid:${a.productsorderId}:${problem}` };
   }
+  // Resumable (Codex #6): the same approval already recorded is the same
+  // obligation — hand back its submission so admission resumes; never a
+  // second approval or payment. A different one is refused.
+  const prior = await approvalRowsOf(ids);
+  if (prior.length > 0) return resumeApproval(approvals, prior);
+
   const rows = await db.select().from(productsOrder).where(sql`${productsOrder.id} IN ${idListOf(ids)}`);
   if (rows.length !== ids.length) return { ok: false, held: "no-such-line" };
   if (rows.some((r) => r.confirmed !== true || !r.return_id || !r.return_line_item_id || !r.action)) {
@@ -198,4 +204,51 @@ export async function recordApprovedLegacySubmission(approvals: ApprovalInput[])
   ]);
   const recorded = await submissionOfRow(ids[0]);
   return recorded === submissionId ? { ok: true, submissionId } : { ok: false, held: "legacy-not-recorded" };
+}
+
+type ApprovalRow = {
+  productsorder_id: number;
+  submission_id: string;
+  basis: string;
+  amount_cents: number;
+  cap_cents: number;
+  approved_by: string;
+};
+
+async function approvalRowsOf(ids: number[]): Promise<ApprovalRow[]> {
+  const result: any = await db.execute(sql`
+    SELECT productsorder_id, submission_id::text AS submission_id, basis, amount_cents, cap_cents, approved_by
+      FROM settlement_approvals WHERE productsorder_id IN ${idListOf(ids)}`);
+  return (result?.rows ?? result ?? []).map((r: any) => ({
+    productsorder_id: Number(r.productsorder_id),
+    submission_id: String(r.submission_id),
+    basis: String(r.basis),
+    amount_cents: Number(r.amount_cents),
+    cap_cents: Number(r.cap_cents),
+    approved_by: String(r.approved_by),
+  }));
+}
+
+/** The identical approval, already recorded with ONE submission that holds
+ *  exactly these lines → that submission; anything else is refused. */
+async function resumeApproval(approvals: ApprovalInput[], prior: ApprovalRow[]): Promise<SubmissionLookup> {
+  const byLine = new Map(prior.map((p) => [p.productsorder_id, p]));
+  for (const a of approvals) {
+    const p = byLine.get(a.productsorderId);
+    if (!p) return { ok: false, held: `approval-partly-recorded:${a.productsorderId}` };
+    if (
+      p.basis !== a.basis ||
+      p.amount_cents !== a.amountCents ||
+      p.cap_cents !== a.capCents ||
+      p.approved_by !== a.approvedBy
+    ) {
+      return { ok: false, held: `approval-differs:${a.productsorderId}` };
+    }
+  }
+  const submissions = new Set(prior.map((p) => p.submission_id));
+  if (submissions.size !== 1) return { ok: false, held: "approval-spans-submissions" };
+  const submissionId = Array.from(submissions)[0];
+  const all = await approvalsOf(submissionId);
+  if (all.size !== approvals.length) return { ok: false, held: "approval-submission-holds-other-lines" };
+  return { ok: true, submissionId };
 }

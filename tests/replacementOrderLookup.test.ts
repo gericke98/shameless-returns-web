@@ -40,12 +40,22 @@ describe("planReplacementOrder", () => {
     expect(alerts).toHaveLength(0);
   });
 
-  it("never prices from tags: a Change-tagged order settlement has no records for is ordinary (S3 R4)", async () => {
+  it("never prices from tags, and a KNOWN replacement with no funding refuses — never ordinary (S3 R4, Codex #3)", async () => {
     // Before S3 these tags + the original's CAMBIO row priced the line at
-    // 47.03. Now only replacement_lines can: the reconciliation records every
-    // pre-S2 exchange order it can identify, and anything else is not ours.
-    await expect(plan(replacement("Change, Order #311749"))).resolves.toEqual({ kind: "ordinary" });
-    expect(alerts).toHaveLength(0);
+    // 47.03. Now the census / reconciliation name it a replacement by id, and
+    // with no replacement_lines it is not returnable online: never list price.
+    FUNDING = { kind: "unfunded", sourceOrderId: "13282550841670", reason: "replacement-without-funding" };
+    await expect(plan(replacement("Change, Order #311749"))).resolves.toEqual({
+      kind: "refused",
+      reason: "settlement-order-unfunded:replacement-without-funding",
+    });
+    expect(alerts).toHaveLength(1);
+  });
+
+  it("before the census has run, no order can be shown ordinary: refused, never list-priced (cutover coverage)", async () => {
+    FUNDING = { kind: "unprovable", reason: "replacement-census-missing" };
+    await expect(plan(replacement("amphora_shipped"))).resolves.toEqual({ kind: "refused", reason: "replacement-census-missing" });
+    expect(alerts).toHaveLength(1);
   });
 
   it("ignores zero-quantity lines like the lookup does", async () => {

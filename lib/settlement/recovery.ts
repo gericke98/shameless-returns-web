@@ -7,7 +7,9 @@
 // NOT "use server".
 import { randomUUID } from "node:crypto";
 import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { admit } from "./admission";
 import {
+  approvalsAwaitingAdmission,
   finalize,
   hasDispatched,
   recoverableOperations,
@@ -18,6 +20,8 @@ import { recoverDispatched, run, type RunResult } from "./run";
 
 export type RecoveryReport = {
   ran: Array<{ op: string; kind: string; from: string; result: RunResult }>;
+  /** Approved legacy payments whose admission never ran or was held (S3). */
+  admittedApprovals: Array<{ submission: string; lines: number[]; outcome: string }>;
   finalized: Array<{ submission: string; lines: number[] }>;
   stuckCancellations: number;
   budgetExhausted: boolean;
@@ -25,7 +29,42 @@ export type RecoveryReport = {
 
 export async function recoverSettlements(options: { deadline: number; limit?: number }): Promise<RecoveryReport> {
   const me = randomUUID();
-  const report: RecoveryReport = { ran: [], finalized: [], stuckCancellations: 0, budgetExhausted: false };
+  const report: RecoveryReport = {
+    ran: [],
+    admittedApprovals: [],
+    finalized: [],
+    stuckCancellations: 0,
+    budgetExhausted: false,
+  };
+
+  // S3 (Codex #6): an approval recorded but never admitted — the process
+  // stopped between the two, or admission was held — is admitted here. The
+  // approval is the authority; admission is idempotent by scope key, so this
+  // never plans a second payment. A held admission alerts once per reason.
+  const heldApprovals: Array<{ submission: string; held: string }> = [];
+  for (const awaiting of await approvalsAwaitingAdmission()) {
+    if (Date.now() >= options.deadline) {
+      report.budgetExhausted = true;
+      break;
+    }
+    const outcome = await admit(awaiting.submissionId, awaiting.lines);
+    report.admittedApprovals.push({
+      submission: awaiting.submissionId,
+      lines: awaiting.lines,
+      outcome: outcome.ok ? "admitted" : `held:${outcome.held}`,
+    });
+    if (!outcome.ok) heldApprovals.push({ submission: awaiting.submissionId, held: outcome.held });
+  }
+  await enqueueOpsAlerts(
+    heldApprovals.map((h) => ({
+      dedupeKey: `approval-not-admitted:${h.submission}:${h.held}`,
+      subject: `[returns] APPROVED LEGACY PAYMENT NOT ADMITTED — submission ${h.submission}`,
+      body: [
+        `Santi approved a legacy payment (submission ${h.submission}) and admission is held: ${h.held}.`,
+        `Recovery retries it every run; nothing is paid until admission succeeds.`,
+      ].join("\n"),
+    }))
+  );
 
   for (const op of await recoverableOperations(options.limit ?? 50)) {
     if (Date.now() >= options.deadline) {

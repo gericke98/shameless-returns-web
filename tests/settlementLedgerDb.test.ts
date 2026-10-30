@@ -448,6 +448,13 @@ describe("the exchange order", () => {
       kind: "unfunded",
       reason: "no-replacement-lines",
     });
+    // Without its operation id, nothing names 555: ordinary only once the
+    // census of pre-S2 replacements has run (S3, Codex #3).
+    expect(await replacementFundingOf({ id: "555", sourceIdentifier: null })).toEqual({
+      kind: "unprovable",
+      reason: "replacement-census-missing",
+    });
+    await env.pg.query("INSERT INTO legacy_replacement_census (orders_found, run_by) VALUES (0, 'test')");
     expect(await replacementFundingOf({ id: "555", sourceIdentifier: null })).toEqual({ kind: "not-settlement" });
   });
 

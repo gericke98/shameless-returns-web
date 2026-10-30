@@ -42,7 +42,7 @@ async function doneRecords(
   // S3: a reconciliation record of a pre-ledger exchange order. That order
   // never carried an operation id, so it is judged by what the pre-S2 code
   // wrote — its two tags, the customer, the one line of the new variant — and
-  // its replacement line is recorded with the done state, as the runner's is.
+  // the order is recorded as a replacement by id with the done state.
   const reconciliation = reconciliationRequestOf(op.request);
   if (reconciliation?.lane === "exchange") {
     if (!decision.orderGid) return { ok: false, reason: "a legacy exchange needs --order <gid of the order you found>" };
@@ -50,26 +50,18 @@ async function doneRecords(
     if (!r.ok) return { ok: false, reason: `Shopify unreadable: ${r.error}` };
     const judged = judgeLegacyExchangeOrder(reconciliation.check, r.value);
     if (!judged.ok) return { ok: false, reason: `order ${decision.orderGid} is not this line's exchange: ${judged.reason}` };
-    // Funding as the reconciliation records it for a paid line: the line's
-    // legacy agreement, frozen on the reconciled submission.
+    // Recorded as a replacement BY ID, with no funding: the legacy terms carry
+    // none, and funding comes only from a Stripe read allocated to the line
+    // (Codex #5). Until then the order refuses valuation (db/replacementLines.ts).
     const loaded = await loadSubmission(op.submissionId);
-    const frozen = loaded?.lines.find((l) => l.productsorderId === op.members[0]);
-    if (!frozen) return { ok: false, reason: `line ${op.members[0]} is not on submission ${op.submissionId}` };
+    if (!loaded) return { ok: false, reason: `no submission ${op.submissionId}` };
     return {
       ok: true,
       effectRef: judged.orderGid,
       extras: {
-        replacementLines: {
+        replacementIdentity: {
           orderId: judged.orderGid.replace(/^gid:\/\/shopify\/Order\//, ""),
-          lines: [
-            {
-              sourceProductsorderId: op.members[0],
-              lineItemId: judged.lineItemId,
-              variantGid: judged.variantGid,
-              quantity: judged.quantity,
-              stripeFundedCents: frozen.stripeFundedCents,
-            },
-          ],
+          sourceOrderId: loaded.submission.orderId,
         },
         resolvedBy: decision.by,
       },

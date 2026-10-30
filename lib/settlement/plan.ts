@@ -15,8 +15,8 @@ export type ReturnFacts = {
   returnGid: string;
   status: string;
   hasExchangeLineItems: boolean;
-  /** Return line item gid → its quantity. */
-  returnLines: Map<string, { quantity: number }>;
+  /** Return line item gid → its quantity, and how much of it Shopify has processed. */
+  returnLines: Map<string, { quantity: number; processedQuantity: number }>;
   /** Fulfillment line item gid → the reverse-fulfillment line covering it. */
   reverseByFulfillment: Map<string, { id: string; totalQuantity: number }>;
   orderGid: string;
@@ -49,6 +49,8 @@ export type PlanInput = {
   /** Required for refund-tender money outside a returnProcess (root/residual). */
   paying: PayingOrder | null;
   reservation: { draftOrderId: string; existed: boolean } | null;
+  /** Santi's recorded approvals for lines of this submission (drizzle/0010). */
+  approved?: ReadonlyMap<number, { amountCents: number; basis: string }>;
   order: ExchangeOrderSource & { id: string };
   newId: () => string;
   newGiftCardCode: () => string;
@@ -107,22 +109,83 @@ export function planAdmission(input: PlanInput): Plan {
     if (!row?.returnId) return held(`no-return:${po}`);
     const ret = input.returns.get(row.returnId);
     if (!ret) return held(`shopify-unreadable:${row.returnId}`);
+    const approval = input.approved?.get(po);
     // Historical native exchanges are not ours to settle (L6): S3 lists them.
-    if (ret.hasExchangeLineItems) return held("native-exchange");
+    // An approved payment on one is money only, paid on Santi's authority.
+    if (ret.hasExchangeLineItems && !approval) return held("native-exchange");
 
     const rli = ret.returnLines.get(line.returnLineItemId);
     if (!rli) return held(`return-line-missing:${po}`);
     if (rli.quantity < line.quantity) return held(`return-quantity:${po}`);
 
-    let rfo = line.reverseFulfillmentLineItemId;
-    if (!rfo) {
+    const resolveRfo = (): string | null => {
+      if (line.reverseFulfillmentLineItemId) return line.reverseFulfillmentLineItemId;
       const found = line.fulfillmentLineItemId
         ? ret.reverseByFulfillment.get(line.fulfillmentLineItemId)
         : undefined;
-      if (!found) return held(`no-reverse-fulfillment-line:${po}`);
-      rfo = found.id;
-      reverseFulfillment.push({ productsorder_id: po, rfo });
+      if (!found) return null;
+      reverseFulfillment.push({ productsorder_id: po, rfo: found.id });
+      return found.id;
+    };
+
+    if (approval) {
+      // S3 D1/D2: a payment Santi approved after the reconciliation found no
+      // evidence of one, for exactly the amount he stated. The approval
+      // replaces the OPEN gate (it is the explicit finding that nothing was
+      // settled outside the ledger), so the return may be closed. Money is
+      // never folded into a returnProcess here — it goes to the payment (a
+      // refundCreate on the order holding it) or a gift card — and the goods
+      // are processed only where Shopify still can: an OPEN return whose line
+      // is not processed at all. A processed line, or a closed return, gets no
+      // goods operation: it would be refused forever. A partly processed line
+      // is neither, and waits for a human.
+      if (approval.amountCents !== line.payCents || line.payCents <= 0) return held(`approval-amount:${po}`);
+      const processed = rli.processedQuantity;
+      if (processed > 0 && processed < line.quantity) return held(`approval-partly-processed:${po}`);
+      if (ret.status === "OPEN" && processed === 0) {
+        const rfo = resolveRfo();
+        if (!rfo) return held(`no-reverse-fulfillment-line:${po}`);
+        add({
+          id: input.newId(),
+          kind: "process_goods",
+          scope_key: scopeKeys.goods(s.id, po),
+          members: [po],
+          after: null,
+          request: {
+            kind: "process_goods",
+            variables: {
+              input: {
+                returnId: ret.returnGid,
+                notifyCustomer: false,
+                returnLineItems: [
+                  {
+                    id: line.returnLineItemId,
+                    quantity: line.quantity,
+                    dispositions: [
+                      { reverseFulfillmentOrderLineItemId: rfo, quantity: line.quantity, dispositionType: "NOT_RESTOCKED" },
+                    ],
+                  },
+                ],
+              },
+            },
+            check: {
+              returnId: ret.returnGid,
+              returnLineItemId: line.returnLineItemId,
+              reverseFulfillmentLineItemId: rfo,
+              quantity: line.quantity,
+            },
+          },
+          amount_cents: 0,
+        });
+      }
+      const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po]);
+      if ("held" in money) return held(money.held);
+      add(money);
+      continue;
     }
+
+    const rfo = resolveRfo();
+    if (!rfo) return held(`no-reverse-fulfillment-line:${po}`);
 
     const goodsInput = (financialTransfer?: Record<string, unknown>, notify = false) => ({
       input: {
@@ -212,7 +275,9 @@ export function planAdmission(input: PlanInput): Plan {
 
   // One replacement order for every exchanged garment of the submission, and
   // the hold released only after it exists (L6).
-  const cambio = lines.filter((l) => l.action === "CAMBIO");
+  // An approved line's exchange was made before the ledger: what is approved
+  // is money (D1), never a second replacement order.
+  const cambio = lines.filter((l) => l.action === "CAMBIO" && !input.approved?.has(l.productsorderId));
   if (cambio.length > 0 && cambio.some((l) => input.admit.includes(l.productsorderId))) {
     const members = cambio.map((l) => l.productsorderId);
     const existingExchange = input.existing.find((o) => o.scopeKey === scopeKeys.exchange(s.id));

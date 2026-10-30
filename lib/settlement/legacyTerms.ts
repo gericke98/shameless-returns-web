@@ -170,3 +170,69 @@ export function legacySubmissionCtes(
         RETURNING 1
       )`;
 }
+
+/**
+ * The terms of an APPROVED legacy payment (S3, Santi 30 Oct: "you set each
+ * amount"): each line pays exactly the amount Santi stated, in the line's
+ * tender — nothing is valued, no fee is charged and no ×1.15 applied, because
+ * the stated amount already is the payment. returned − replacement − fee =
+ * net holds by construction (replacement = returned − amount, fee 0).
+ */
+export async function approvedTerms(
+  basket: Row[],
+  approvals: ReadonlyArray<{ productsorderId: number; amountCents: number }>
+): Promise<{ ok: true; terms: LegacyTerms } | { ok: false; held: string }> {
+  if (basket.length === 0) return { ok: false, held: "empty-basket" };
+  const returns = new Set(basket.map((r) => r.return_id));
+  if (returns.size !== 1 || !basket[0].return_id) return { ok: false, held: "legacy-not-one-return" };
+  if (basket.some((r) => !r.action || !r.return_line_item_id)) return { ok: false, held: "legacy-incomplete-line" };
+  const credits = new Set(basket.map((r) => r.credit === true));
+  if (credits.size !== 1) return { ok: false, held: "legacy-mixed-tender" };
+  const tender = basket[0].credit === true ? "credit" : "refund";
+  const amount = new Map(approvals.map((a) => [a.productsorderId, a.amountCents]));
+
+  const returnId = String(basket[0].return_id);
+  const ret = await readReturnFacts(returnId);
+  if (!ret.ok || !ret.value) return { ok: false, held: `shopify-unreadable:${returnId}` };
+
+  const lines: LegacyLine[] = [];
+  for (const r of basket) {
+    const pay = amount.get(r.id);
+    if (pay === undefined) return { ok: false, held: `not-approved:${r.id}` };
+    const fli = ret.value.fulfillmentByReturnLine.get(String(r.return_line_item_id));
+    if (!fli) return { ok: false, held: `return-line-missing:${r.id}` };
+    const returned = Math.round(Number(r.price) * 100) * r.quantity;
+    lines.push({
+      productsorder_id: r.id,
+      shopify_line_item_id: r.lineItemId,
+      fulfillment_line_item_id: fli,
+      return_line_item_id: r.return_line_item_id,
+      quantity: r.quantity,
+      action: String(r.action),
+      new_variant_id: r.action === "CAMBIO" ? r.new_variant_id : null,
+      reason: r.reason,
+      notes: r.notes,
+      returned_cents: returned,
+      replacement_cents: returned - pay,
+      pay_cents: pay,
+      stripe_funded_cents: 0,
+    });
+  }
+  const sum = (f: (l: LegacyLine) => number) => lines.reduce((t, l) => t + f(l), 0);
+  const paid = sum((l) => l.pay_cents);
+  const agreement = {
+    tender,
+    returnLegCents: 0,
+    outboundLegCents: 0,
+    chargedFeeCents: 0,
+    returnedValueCents: sum((l) => l.returned_cents),
+    replacementValueCents: sum((l) => l.replacement_cents),
+    netCents: paid,
+    stripeChargeCents: 0,
+    waivedCents: 0,
+    owedCents: paid,
+    residualCents: 0,
+    lines: [],
+  } as unknown as Agreement;
+  return { ok: true, terms: { agreement, lines, tender } };
+}

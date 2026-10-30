@@ -13,7 +13,7 @@ import db from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { rootOrderIdOf } from "@/actions/replacementOrder";
 import { readDraftExists, readPayingOrder, readReturnFacts } from "./facts";
-import { insertAdmission, loadSubmission, operationsOf, standingReconciliations } from "./ledger";
+import { approvalsOf, insertAdmission, loadSubmission, operationsOf, standingReconciliations } from "./ledger";
 import { planAdmission, type PayingOrder, type ReturnFacts } from "./plan";
 
 export type AdmitOutcome =
@@ -54,7 +54,12 @@ export async function admit(submissionId: string, requested: readonly number[]):
     const admitIds = expandAdmission(lines, requested);
     // S3: the reconciliation found this line paid before the ledger, or left
     // it for a human. Either way no new obligation may be planned for it.
-    const reconciled = await standingReconciliations(admitIds);
+    // Santi's approvals recorded with this submission (drizzle/0010).
+    const approved = await approvalsOf(submissionId);
+    const reconciled = await standingReconciliations(
+      admitIds,
+      new Map(Array.from(approved, ([po, a]) => [po, a.basis]))
+    );
     if (reconciled.size > 0) {
       const [po, rec] = Array.from(reconciled)[0];
       return { ok: false, held: `reconciliation-${rec.state}:${po}` };
@@ -79,11 +84,13 @@ export async function admit(submissionId: string, requested: readonly number[]):
 
     // The payment a refund outside a returnProcess goes against: the root's
     // largest settled payment for a replacement order (as refundSourceFor
-    // resolves it), the rows' stored parent for an ordinary one.
+    // resolves it), the rows' stored parent for an ordinary one. An approved
+    // legacy payment is always outside a returnProcess (lib/settlement/plan.ts).
     let paying: PayingOrder | null = null;
     const isReplacement = !!order.exchangeOf;
     const needsPaying =
-      submission.tender === "refund" && (isReplacement || submission.residualCents > 0);
+      submission.tender === "refund" &&
+      (isReplacement || submission.residualCents > 0 || admitIds.some((id) => approved.has(id)));
     if (needsPaying) {
       let payingOrderId = order.id;
       let parent: string | null = null;
@@ -123,6 +130,7 @@ export async function admit(submissionId: string, requested: readonly number[]):
       isReplacement,
       paying,
       reservation,
+      approved,
       order: order as any,
       newId: randomUUID,
       newGiftCardCode,

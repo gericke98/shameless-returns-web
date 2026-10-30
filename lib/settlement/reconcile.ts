@@ -20,11 +20,12 @@
 // `paid` (evidence found and verified), `unpaid` (a complete read found none,
 // on a return that is open or closed), `ambiguous` (several matches, an
 // unreadable or truncated read, a recipient or currency that does not match)
-// or `null-action` (no lane: a human decides, D3).
+// `null-action` (no lane: a human decides, D3) or `needs-human` (no Shopify
+// return on the line: nothing to read, nothing any write path may record).
 import { variantGid } from "@/lib/shopifyIds";
 
 export type Lane = "refund" | "root_refund" | "credit" | "exchange";
-export type ReconcileClass = "paid" | "unpaid" | "ambiguous" | "null-action";
+export type ReconcileClass = "paid" | "unpaid" | "ambiguous" | "null-action" | "needs-human";
 
 /** One productsorder row, as the reconciliation reads it. */
 export type LineFacts = {
@@ -238,8 +239,11 @@ export function classifyLine(line: LineFacts, reads: LineReads, shared: SharedId
   const none = (reason: string) =>
     PROCESSED_OR_OPEN.has(String(returnStatus)) ? out("unpaid", reason) : ambiguous(`${reason}; return ${returnStatus}`);
 
+  // No Shopify return: no identity to read evidence by, and no return line a
+  // submission could name. Listed for a human — whatever its action — and no
+  // write path takes it (not R1's record, an approval, D3, nor admission).
+  if (!line.returnId || !line.returnLineItemId) return out("needs-human", "no Shopify return on the line");
   if (!lane) return out("null-action", "action is NULL");
-  if (!line.returnId || !line.returnLineItemId) return ambiguous("no Shopify return on the line");
   if (!reads.ret.ok) return ambiguous(`return unreadable: ${reads.ret.error}`);
   if (!ret) return ambiguous(`return ${line.returnId} not found`);
 
@@ -424,4 +428,84 @@ export function judgeLegacyExchangeOrder(
     quantity: check.quantity,
     unitCents: cents(money?.amount),
   };
+}
+
+/**
+ * Santi, 30 Oct — "Reconcile settled lines only": R1 classifies the lines
+ * marked settled (`refunded = true`) that no settlement operation covers.
+ * A pending line is never R1's: it settles through S2 admission. The only
+ * covered lines listed again are `swapCandidates` — settled exchanges already
+ * recorded as paid — so R2 can show their returned/replacement values.
+ */
+export function reconcilePopulation<T extends Pick<LineFacts, "productsorderId" | "refunded">>(
+  facts: readonly T[],
+  coverage: { covered: ReadonlySet<number>; swapCandidates: ReadonlySet<number> }
+): T[] {
+  return facts.filter(
+    (l) =>
+      l.refunded &&
+      (!coverage.covered.has(l.productsorderId) || coverage.swapCandidates.has(l.productsorderId))
+  );
+}
+
+/** What the reconciliation read for a line, in cents: never what is owed. */
+export function lineValues(line: Pick<LineFacts, "price" | "quantity">, c: Classification) {
+  const returnedCents = Math.round(Number(line.price) * 100) * line.quantity;
+  const ev = c.evidence;
+  const replacementCents = ev?.lane === "exchange" ? ev.unitCents * ev.quantity : null;
+  return { returnedCents, replacementCents };
+}
+
+/**
+ * Santi, 30 Oct — "You set each amount". Which approval a line admits, and
+ * the most it may pay. Nothing here computes the amount: the approver states
+ * it, and `approvalProblem` (lib/settlement/legacy.ts) checks it against this
+ * cap. Only two findings admit an approval:
+ *  - `unpaid` (D2): no payment found; cap = the returned value;
+ *  - a paid exchange order whose replacement, read from Shopify, was cheaper
+ *    than what came back (D1, `swap`); cap = returned − replacement.
+ */
+export function approvalBasisOf(
+  line: Pick<LineFacts, "price" | "quantity">,
+  c: Classification
+): { ok: true; basis: "unpaid" | "swap"; capCents: number } | { ok: false; reason: string } {
+  const { returnedCents, replacementCents } = lineValues(line, c);
+  if (c.cls === "unpaid") return { ok: true, basis: "unpaid", capCents: returnedCents };
+  if (c.cls === "paid" && replacementCents !== null) {
+    const cap = returnedCents - replacementCents;
+    return cap > 0
+      ? { ok: true, basis: "swap", capCents: cap }
+      : { ok: false, reason: `replacement ${replacementCents} ≥ returned ${returnedCents}: nothing owed` };
+  }
+  return { ok: false, reason: `class ${c.cls}${c.evidence ? `/${c.evidence.lane}` : ""} admits no approval` };
+}
+
+/**
+ * The approval file: `productsorder_id,amount_cents,approved_by`, header
+ * first, one line per approval. Strict: any malformed row refuses the file.
+ */
+export function parseApprovalFile(
+  text: string
+): { ok: true; rows: { productsorderId: number; amountCents: number; approvedBy: string }[] } | { ok: false; error: string } {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
+  if (lines.length === 0) return { ok: false, error: "empty approval file" };
+  const header = lines[0].split(",").map((h) => h.trim());
+  if (header.join(",") !== "productsorder_id,amount_cents,approved_by") {
+    return { ok: false, error: `header must be productsorder_id,amount_cents,approved_by (got ${lines[0]})` };
+  }
+  const rows: { productsorderId: number; amountCents: number; approvedBy: string }[] = [];
+  const seen = new Set<number>();
+  for (let i = 1; i < lines.length; i++) {
+    const cells = lines[i].split(",").map((c) => c.trim());
+    if (cells.length !== 3) return { ok: false, error: `line ${i + 1}: expected 3 columns` };
+    const [po, amount, by] = cells;
+    if (!/^[1-9]\d*$/.test(po)) return { ok: false, error: `line ${i + 1}: productsorder_id ${po}` };
+    if (!/^[1-9]\d*$/.test(amount)) return { ok: false, error: `line ${i + 1}: amount_cents must be an integer > 0 (${amount})` };
+    if (!by) return { ok: false, error: `line ${i + 1}: approved_by is required` };
+    const id = Number(po);
+    if (seen.has(id)) return { ok: false, error: `line ${i + 1}: productsorder ${id} approved twice` };
+    seen.add(id);
+    rows.push({ productsorderId: id, amountCents: Number(amount), approvedBy: by });
+  }
+  return { ok: true, rows };
 }

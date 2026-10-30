@@ -2,36 +2,46 @@
  * S3 R1/R5 — the legacy reconciliation (docs/superpowers/specs/
  * 2026-10-30-settlement-S3-legacy-plan.md).
  *
- * Walks every confirmed productsorder line no settlement operation covers,
- * reads the Shopify evidence for its lane and classifies it — paid, unpaid,
- * ambiguous, null-action — by explicit identity only
- * (lib/settlement/reconcile.ts). Shopify is only ever READ here.
+ * Santi, 30 Oct — "Reconcile settled lines only": walks the lines marked
+ * settled (`refunded = true`) that no settlement operation covers — a pending
+ * line is never touched here, it settles through S2 admission — reads the
+ * Shopify evidence for its lane and classifies it — paid, unpaid, ambiguous,
+ * null-action, needs-human — by explicit identity only
+ * (lib/settlement/reconcile.ts). Shopify is only ever READ here. Settled
+ * exchanges already recorded as paid are listed again for R2.
  *
- *   dry-run (default)  writes the CSV: every line, its class and why, the
- *                      evidence found, and for an unpaid line the legacy
- *                      terms an approval would pay (pay_cents, fee_cents).
+ *   dry-run (default)  writes the CSV: every line, its class (the evidence
+ *                      status) and why, the evidence found, returned_cents,
+ *                      replacement_cents read from Shopify, the approval it
+ *                      admits and its cap, and today's fee as a REFERENCE
+ *                      only. Nothing computes what is owed.
  *   --write            records `paid` lines as done operations and
  *                      `ambiguous` ones as unresolved operations + alert, in a
  *                      `reconciled` submission per Shopify return and tender
  *                      (lib/settlement/reconcileLedger.ts). Moves no money.
  *                      Re-running skips every line already recorded.
- *   --approve <ids>    D1/D2 = A: the productsorder ids Santi approved from the
- *                      CSV, comma-separated. Each must classify as `unpaid` on
- *                      THIS run's fresh reads. With --write, each Shopify
- *                      return's approved lines become one accepted legacy
- *                      submission and are admitted; the ledger's recovery cron
- *                      then sends the payments. Without --write it only says
- *                      what it would record.
+ *   --approve-file <csv>  D1/D2 = A and Santi's "You set each amount": a CSV
+ *                      `productsorder_id,amount_cents,approved_by`. Each line
+ *                      must admit an approval on THIS run's fresh reads
+ *                      (`unpaid`, or a paid exchange whose replacement was
+ *                      cheaper), and its amount must be an integer > 0 and
+ *                      ≤ its cap (returned, or returned − replacement). Any
+ *                      refusal refuses the whole file. With --write, each
+ *                      Shopify return's approved lines become one accepted
+ *                      legacy submission paying exactly those amounts, with
+ *                      one settlement_approvals row each, and are admitted;
+ *                      the ledger's recovery cron then sends the payments.
+ *                      Without --write it only says what it would record.
  *
  * Refuses to classify anything unless the app holds read_all_orders: without
  * it Shopify answers only the last 60 days of orders, and every "no evidence"
  * would be wrong.
  *
  *   npx tsx --tsconfig tsconfig.scripts.json scripts/reconcile-legacy.ts \
- *     --out <file.csv> [--write] [--approve 101,102] [--by <name>] [--order <orders.id>]
+ *     --out <file.csv> [--write] [--approve-file <approvals.csv>] [--by <name>] [--order <orders.id>]
  */
 import "dotenv/config";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { parseArgs } from "node:util";
 import React from "react";
@@ -61,8 +71,9 @@ const COLUMNS = [
   "evidence_currency",
   "returned_cents",
   "replacement_cents",
-  "pay_cents",
-  "fee_cents",
+  "approval_basis",
+  "approval_cap_cents",
+  "fee_today_reference_cents",
   "tender",
   "detail",
 ] as const;
@@ -72,24 +83,22 @@ async function main() {
     options: {
       out: { type: "string" },
       write: { type: "boolean", default: false },
-      approve: { type: "string" },
+      "approve-file": { type: "string" },
       by: { type: "string" },
       order: { type: "string" },
     },
   });
-  if (!values.out) throw new Error("usage: --out <file.csv> [--write] [--approve <ids>] [--by <name>] [--order <id>]");
+  if (!values.out) {
+    throw new Error("usage: --out <file.csv> [--write] [--approve-file <csv>] [--by <name>] [--order <id>]");
+  }
   const by = values.by ?? userInfo().username;
-  const approved = new Set(
-    (values.approve ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((s) => {
-        const n = Number(s);
-        if (!Number.isInteger(n) || n <= 0) throw new Error(`--approve: not a productsorder id: ${s}`);
-        return n;
-      })
-  );
+  const { parseApprovalFile } = await import("@/lib/settlement/reconcile");
+  let approvalRows: { productsorderId: number; amountCents: number; approvedBy: string }[] = [];
+  if (values["approve-file"]) {
+    const parsed = parseApprovalFile(readFileSync(values["approve-file"], "utf8"));
+    if (!parsed.ok) throw new Error(`--approve-file: ${parsed.error}. Nothing approved.`);
+    approvalRows = parsed.rows;
+  }
 
   const { default: db } = await import("@/db/drizzle");
   const { sql } = await import("drizzle-orm");
@@ -112,7 +121,8 @@ async function main() {
     throw new Error("the app lacks read_all_orders: Shopify would answer only 60 days of orders. Nothing classified.");
   }
 
-  // The population: every confirmed line. gift_card_id is read by name — the
+  // Every confirmed line is read (shared identities span them all); the
+  // population is chosen below. gift_card_id is read by name — the
   // schema no longer models it (R4).
   const result: any = await db.execute(sql`
     SELECT p.*, p.gift_card_id AS gift_card_id_raw, o.order_number, o.exchange_of
@@ -140,9 +150,13 @@ async function main() {
     })
   );
   const shared = rec.sharedIdentity(facts);
-  const { covered, rejected } = await reconciliationCoverage();
-  const population = facts.filter((l) => !covered.has(l.productsorderId));
-  console.error(`${facts.length} confirmed lines; ${population.length} without a settlement operation.`);
+  const coverage = await reconciliationCoverage();
+  const { rejected, swapCandidates } = coverage;
+  const population = rec.reconcilePopulation(facts, coverage);
+  console.error(
+    `${facts.length} confirmed lines; ${population.length} settled lines to reconcile ` +
+      `(${swapCandidates.size} already-recorded exchanges among them, for R2).`
+  );
 
   // Reads, each fetched once.
   const returnReads = new Map<string, Awaited<ReturnType<typeof reads.readReturnEvidence>>>();
@@ -209,9 +223,7 @@ async function main() {
       );
       detail.push(`native exchange lines: ${(ret?.exchangeLineItems?.nodes ?? []).length}`);
     }
-    if (c.evidence?.lane === "exchange") {
-      detail.push("R2 owed not computed: the fee in force on the confirmation date is not recoverable");
-    }
+    if (swapCandidates.has(line.productsorderId)) detail.push("already recorded paid (exchange order); listed for R2");
     const ret = r.ret.ok ? r.ret.value : null;
     out.push({ line, c, customerGid: ret?.order?.customer?.id ?? null, detail });
   }
@@ -244,28 +256,23 @@ async function main() {
     return built.ok ? { ok: true, order, terms: built.terms } : built;
   };
 
-  const paying = new Map<number, { pay: number; fee: number; tender: string } | { held: string }>();
+  // Today's fee for the return, a REFERENCE only: the fee in force on the
+  // confirmation date is not recoverable, and nothing derives an amount from it.
+  const feeReference = new Map<number, { fee: number } | { held: string }>();
   for (const members of Array.from(groups.values())) {
-    const unpaid = members.filter((m) => m.c.cls === "unpaid");
-    if (unpaid.length === 0) continue;
-    const t = await termsFor(unpaid);
-    if (!t.ok) {
-      for (const m of unpaid) paying.set(m.line.productsorderId, { held: t.held });
-      continue;
-    }
-    const fee = t.terms.agreement.chargedFeeCents;
-    for (const l of t.terms.lines) {
-      paying.set(l.productsorder_id, { pay: l.pay_cents, fee, tender: t.terms.tender });
+    const t = await termsFor(members);
+    for (const m of members) {
+      feeReference.set(m.line.productsorderId, t.ok ? { fee: t.terms.agreement.chargedFeeCents } : { held: t.held });
     }
   }
 
   const csv = [COLUMNS.join(",")];
   for (const { line, c, detail } of out) {
     const ev: any = c.evidence;
-    const p = paying.get(line.productsorderId);
-    const returned = Math.round(Number(line.price) * 100) * line.quantity;
-    const replacement = ev?.lane === "exchange" ? ev.unitCents * ev.quantity : "";
-    if (p && "held" in p) detail.push(`legacy terms held: ${p.held}`);
+    const f = feeReference.get(line.productsorderId);
+    const { returnedCents, replacementCents } = rec.lineValues(line, c);
+    const basis = rec.approvalBasisOf(line, c);
+    if (f && "held" in f) detail.push(`fee reference unavailable: ${f.held}`);
     csv.push(
       [
         line.productsorderId,
@@ -280,11 +287,12 @@ async function main() {
         ev?.refundId ?? ev?.giftCardId ?? ev?.orderGid ?? ev?.exchangeLineItemId ?? "",
         ev?.amountCents ?? "",
         ev?.currency ?? "",
-        returned,
-        replacement,
-        p && "pay" in p ? p.pay : "",
-        p && "fee" in p ? p.fee : "",
-        p && "tender" in p ? p.tender : line.credit ? "credit" : "refund",
+        returnedCents,
+        replacementCents ?? "",
+        basis.ok ? basis.basis : "",
+        basis.ok ? basis.capCents : "",
+        f && "fee" in f ? f.fee : "",
+        line.credit ? "credit" : "refund",
         detail.join("; "),
       ]
         .map(csvCell)
@@ -297,7 +305,10 @@ async function main() {
 
   if (values.write) {
     for (const members of Array.from(groups.values())) {
-      const recorded = members.filter((m) => m.c.cls === "paid" || m.c.cls === "ambiguous");
+      // An already-recorded exchange is listed for R2 only: never recorded twice.
+      const recorded = members.filter(
+        (m) => (m.c.cls === "paid" || m.c.cls === "ambiguous") && !swapCandidates.has(m.line.productsorderId)
+      );
       if (recorded.length === 0) continue;
       const t = await termsFor(recorded);
       const label = `${members[0].line.orderNumber} ${members[0].line.returnId}`;
@@ -319,36 +330,51 @@ async function main() {
     }
   }
 
-  if (approved.size > 0) {
+  if (approvalRows.length > 0) {
+    const { approvalProblem, recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
     const byId = new Map(out.map((o) => [o.line.productsorderId, o]));
-    const refused = Array.from(approved).filter((id) => byId.get(id)?.c.cls !== "unpaid");
-    if (refused.length > 0) {
-      throw new Error(
-        `--approve: not unpaid on this run's reads, nothing approved: ${refused
-          .map((id) => `${id}=${byId.get(id)?.c.cls ?? "not in the population"}`)
-          .join(", ")}`
-      );
-    }
-    const byGroup = new Map<string, number[]>();
-    for (const id of Array.from(approved)) {
-      const k = rec.groupKey(byId.get(id)!.line);
-      (byGroup.get(k) ?? byGroup.set(k, []).get(k)!).push(id);
-    }
-    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const { admit } = await import("@/lib/settlement/admission");
-    for (const ids of Array.from(byGroup.values())) {
-      if (!values.write) {
-        console.error(`DRY: would record and admit approved lines ${ids.join(",")}`);
+    type Approval = import("@/lib/settlement/legacy").ApprovalInput;
+    const approvals: Approval[] = [];
+    const refused: string[] = [];
+    for (const a of approvalRows) {
+      const o = byId.get(a.productsorderId);
+      if (!o) {
+        refused.push(`${a.productsorderId}: not in this run's population`);
         continue;
       }
-      const sub = await recordApprovedLegacySubmission(ids, deps);
+      const basis = rec.approvalBasisOf(o.line, o.c);
+      if (!basis.ok) {
+        refused.push(`${a.productsorderId}: ${basis.reason}`);
+        continue;
+      }
+      const approval: Approval = { ...a, basis: basis.basis, capCents: basis.capCents };
+      const problem = approvalProblem(approval);
+      if (problem) refused.push(`${a.productsorderId}: ${problem}`);
+      else approvals.push(approval);
+    }
+    if (refused.length > 0) throw new Error(`--approve-file refused, nothing approved:\n  ${refused.join("\n  ")}`);
+
+    const byGroup = new Map<string, Approval[]>();
+    for (const a of approvals) {
+      const k = rec.groupKey(byId.get(a.productsorderId)!.line);
+      (byGroup.get(k) ?? byGroup.set(k, []).get(k)!).push(a);
+    }
+    const { admit } = await import("@/lib/settlement/admission");
+    for (const group of Array.from(byGroup.values())) {
+      const ids = group.map((a) => a.productsorderId);
+      const label = group.map((a) => `${a.productsorderId}=${a.amountCents} (${a.basis}, by ${a.approvedBy})`).join(", ");
+      if (!values.write) {
+        console.error(`DRY: would record and admit ${label}`);
+        continue;
+      }
+      const sub = await recordApprovedLegacySubmission(group);
       if (!sub.ok) {
-        console.error(`approved ${ids.join(",")} NOT recorded: ${sub.held}`);
+        console.error(`approved ${label} NOT recorded: ${sub.held}`);
         continue;
       }
       const admitted = await admit(sub.submissionId, ids);
       console.error(
-        `approved ${ids.join(",")}: submission ${sub.submissionId}, ` +
+        `approved ${label}: submission ${sub.submissionId}, ` +
           (admitted.ok ? `admitted ${admitted.admitted.join(",")} — recovery sends it` : `held: ${admitted.held}`)
       );
     }

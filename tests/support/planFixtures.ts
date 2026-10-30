@@ -43,7 +43,7 @@ export function returnFacts(lines: SubmissionLineRow[], over: Partial<ReturnFact
     returnGid: RETURN,
     status: "OPEN",
     hasExchangeLineItems: false,
-    returnLines: new Map(lines.map((l) => [String(l.returnLineItemId), { quantity: l.quantity }])),
+    returnLines: new Map(lines.map((l) => [String(l.returnLineItemId), { quantity: l.quantity, processedQuantity: 0 }])),
     reverseByFulfillment: new Map(
       lines.map((l) => [
         String(l.fulfillmentLineItemId),

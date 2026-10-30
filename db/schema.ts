@@ -428,6 +428,19 @@ export const lineActionDecisions = pgTable("line_action_decisions", {
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// S3, drizzle/0010 — Santi's approval of a legacy payment, with the amount he
+// stated. Written with the accepted submission that pays it; admission's
+// authority to pay that line on a return that is no longer OPEN.
+export const settlementApprovals = pgTable("settlement_approvals", {
+  productsorderId: integer("productsorder_id").primaryKey(),
+  submissionId: uuid("submission_id").notNull(),
+  basis: text("basis").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  capCents: integer("cap_cents").notNull(),
+  approvedBy: text("approved_by").notNull(),
+  approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
 //
 // There is no `drizzle/` directory and no committed migration history, so

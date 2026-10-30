@@ -37,10 +37,13 @@ export async function readReturnFacts(returnGid: string): Promise<ReadResult<Ret
   if (ret.returnLineItems?.pageInfo?.hasNextPage || ret.reverseFulfillmentOrders?.pageInfo?.hasNextPage) {
     return { ok: false, error: `return ${returnGid} has more lines than one page` };
   }
-  const returnLines = new Map<string, { quantity: number }>();
+  const returnLines = new Map<string, { quantity: number; processedQuantity: number }>();
   const fulfillmentByReturnLine = new Map<string, string>();
   for (const node of ret.returnLineItems?.nodes ?? []) {
-    returnLines.set(String(node.id), { quantity: Number(node.quantity) || 0 });
+    returnLines.set(String(node.id), {
+      quantity: Number(node.quantity) || 0,
+      processedQuantity: Number(node.processedQuantity) || 0,
+    });
     if (node.fulfillmentLineItem?.id) {
       fulfillmentByReturnLine.set(String(node.id), String(node.fulfillmentLineItem.id));
     }

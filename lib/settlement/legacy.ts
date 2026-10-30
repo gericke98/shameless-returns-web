@@ -17,14 +17,16 @@
 // yet settled, and not already part of an accepted submission.
 //
 // NOT "use server".
+import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import db, { transact } from "@/db/drizzle";
 import { getFeeTable } from "@/db/fees";
 import { getProducts } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
 import type { Product } from "@/types";
-import { standingReconciliations, submissionOfRow } from "./ledger";
+import { standingReconciliations, submissionOfRow, type ApprovalBasis } from "./ledger";
 import {
+  approvedTerms,
   idListOf,
   legacySubmissionCtes,
   legacyTerms,
@@ -101,23 +103,47 @@ async function recordLegacySubmissionFor(productsorderId: number): Promise<Submi
   return recorded ? { ok: true, submissionId: recorded } : { ok: false, held: "legacy-not-recorded" };
 }
 
+/** One line Santi approved, with the amount HE stated (never computed). */
+export type ApprovalInput = {
+  productsorderId: number;
+  basis: ApprovalBasis;
+  amountCents: number;
+  /** returned − replacement at approval time: the most it may pay. */
+  capCents: number;
+  approvedBy: string;
+};
+
+/** The amount rule, before anything is written (0010 enforces it again). */
+export function approvalProblem(a: ApprovalInput): string | null {
+  if (!Number.isInteger(a.amountCents) || a.amountCents <= 0) return `amount must be an integer > 0 (${a.amountCents})`;
+  if (!Number.isInteger(a.capCents) || a.amountCents > a.capCents) {
+    return `amount ${a.amountCents} exceeds returned − replacement = ${a.capCents}`;
+  }
+  if (!a.approvedBy.trim()) return "approved_by is required";
+  return null;
+}
+
 /**
- * D1/D2 = A: the lines Santi approved — named one by one — after the
- * reconciliation found no payment for them, recorded as ONE accepted legacy
- * submission so the ledger pays them. They must be confirmed lines of one
+ * D1/D2 = A, and Santi's "you set each amount" (30 Oct): the lines he
+ * approved, each with the amount he stated, recorded as ONE accepted legacy
+ * submission whose lines pay exactly those amounts — and each approval row
+ * (drizzle/0010) in the same statement. They must be confirmed lines of one
  * Shopify return and one tender, in no accepted submission and with no
- * standing reconciliation record. `refunded` is deliberately NOT a refusal
- * here: it is what the reconciliation proved wrong.
+ * standing reconciliation record (a `swap` approval over a done exchange
+ * record excepted). `refunded` is deliberately NOT a refusal here: it is what
+ * the reconciliation proved wrong.
  */
-export async function recordApprovedLegacySubmission(
-  productsorderIds: number[],
-  deps: LegacyDeps
-): Promise<SubmissionLookup> {
-  const ids = Array.from(new Set(productsorderIds)).sort((a, b) => a - b);
+export async function recordApprovedLegacySubmission(approvals: ApprovalInput[]): Promise<SubmissionLookup> {
+  const ids = approvals.map((a) => a.productsorderId).sort((a, b) => a - b);
   if (ids.length === 0) return { ok: false, held: "nothing-approved" };
+  if (new Set(ids).size !== ids.length) return { ok: false, held: "duplicate-approval" };
+  for (const a of approvals) {
+    const problem = approvalProblem(a);
+    if (problem) return { ok: false, held: `approval-invalid:${a.productsorderId}:${problem}` };
+  }
   const rows = await db.select().from(productsOrder).where(sql`${productsOrder.id} IN ${idListOf(ids)}`);
   if (rows.length !== ids.length) return { ok: false, held: "no-such-line" };
-  if (rows.some((r) => r.confirmed !== true || !r.return_id || !r.return_line_item_id)) {
+  if (rows.some((r) => r.confirmed !== true || !r.return_id || !r.return_line_item_id || !r.action)) {
     return { ok: false, held: "not-confirmed" };
   }
   const orderIds = new Set(rows.map((r) => String(r.orderId)));
@@ -127,15 +153,49 @@ export async function recordApprovedLegacySubmission(
   for (const id of ids) {
     if (await submissionOfRow(id)) return { ok: false, held: `already-in-submission:${id}` };
   }
-  const reconciled = await standingReconciliations(ids);
+  const bases = new Map(approvals.map((a) => [a.productsorderId, a.basis]));
+  const reconciled = await standingReconciliations(ids, bases);
   if (reconciled.size > 0) {
     const [po, rec] = Array.from(reconciled)[0];
     return { ok: false, held: `reconciliation-${rec.state}:${po}` };
   }
-  const all = await db.select().from(productsOrder).where(eq(productsOrder.orderId, order.id));
-  const built = await legacyTerms(order, rows, all, deps);
+  const built = await approvedTerms(rows, approvals);
   if (!built.ok) return built;
-  await insertAccepted(order, built.terms);
+
+  const submissionId = randomUUID();
+  const records = approvals.map((a) => ({
+    productsorder_id: a.productsorderId,
+    basis: a.basis,
+    amount_cents: a.amountCents,
+    cap_cents: a.capCents,
+    approved_by: a.approvedBy,
+  }));
+  // Every approved line held by a standing record, but for the swap exception.
+  const stillHeld = sql`NOT EXISTS (
+           SELECT 1 FROM settlement_operations o
+             JOIN return_submissions rs ON rs.id = o.submission_id AND rs.state = 'reconciled'
+             JOIN jsonb_to_recordset(${JSON.stringify(records)}::jsonb) AS a(productsorder_id integer, basis text)
+               ON a.productsorder_id = ANY (o.members)
+            WHERE o.state <> 'rejected'
+              AND NOT (a.basis = 'swap' AND o.state = 'done' AND o.kind = 'exchange_order'))`;
+  await transact([
+    sql`SELECT id FROM productsorder WHERE id IN ${idListOf(ids)} FOR UPDATE`,
+    sql`WITH ${legacySubmissionCtes(
+      order,
+      built.terms,
+      "accepted",
+      sql`${noAcceptedSubmission(ids)} AND ${stillHeld}`,
+      submissionId
+    )},
+      approvals AS (
+        INSERT INTO settlement_approvals (productsorder_id, submission_id, basis, amount_cents, cap_cents, approved_by)
+        SELECT a.productsorder_id, ins.id, a.basis, a.amount_cents, a.cap_cents, a.approved_by
+          FROM ins, jsonb_to_recordset(${JSON.stringify(records)}::jsonb) AS a(
+            productsorder_id integer, basis text, amount_cents integer, cap_cents integer, approved_by text)
+        RETURNING 1
+      )
+      SELECT (SELECT count(*) FROM ins)::int AS n, (SELECT count(*) FROM approvals)::int AS a`,
+  ]);
   const recorded = await submissionOfRow(ids[0]);
-  return recorded ? { ok: true, submissionId: recorded } : { ok: false, held: "legacy-not-recorded" };
+  return recorded === submissionId ? { ok: true, submissionId } : { ok: false, held: "legacy-not-recorded" };
 }

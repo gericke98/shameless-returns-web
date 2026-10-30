@@ -195,14 +195,20 @@ export async function submissionsOfRows(productsorderIds: readonly number[]): Pr
  * paid before the ledger) or unresolved (a human has not decided). Nothing
  * may record or admit a new payment for such a row; one an operator marked
  * `rejected` ("no payment happened") no longer stands.
+ *
+ * The one exception is explicit data: a `swap` approval (drizzle/0010, D1)
+ * pays the owed part of an exchange the reconciliation found DONE — so a done
+ * `exchange_order` record does not hold a line approved on that basis. Pass
+ * the lines' approval bases in `approved`.
  */
 export async function standingReconciliations(
-  productsorderIds: readonly number[]
-): Promise<Map<number, { opId: string; state: string }>> {
+  productsorderIds: readonly number[],
+  approved: ReadonlyMap<number, ApprovalBasis> = new Map()
+): Promise<Map<number, { opId: string; state: string; kind: string }>> {
   if (productsorderIds.length === 0) return new Map();
   const rows = rowsOf(
     await db.execute(sql`
-      SELECT m.po, o.id, o.state
+      SELECT m.po, o.id, o.state, o.kind
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'
         CROSS JOIN LATERAL unnest(o.members) AS m(po)
@@ -210,7 +216,31 @@ export async function standingReconciliations(
          AND m.po IN (SELECT (jsonb_array_elements_text(${JSON.stringify(productsorderIds)}::jsonb))::int)
     `)
   );
-  return new Map(rows.map((r) => [Number(r.po), { opId: String(r.id), state: String(r.state) }]));
+  const out = new Map<number, { opId: string; state: string; kind: string }>();
+  for (const r of rows) {
+    const po = Number(r.po);
+    const swapOverDoneExchange = approved.get(po) === "swap" && r.state === "done" && r.kind === "exchange_order";
+    if (!swapOverDoneExchange) out.set(po, { opId: String(r.id), state: String(r.state), kind: String(r.kind) });
+  }
+  return out;
+}
+
+export type ApprovalBasis = "unpaid" | "swap";
+export type Approval = { productsorderId: number; basis: ApprovalBasis; amountCents: number };
+
+/** Santi's approvals (drizzle/0010) recorded with this submission, by line. */
+export async function approvalsOf(submissionId: string): Promise<Map<number, Approval>> {
+  const rows = rowsOf(
+    await db.execute(sql`
+      SELECT productsorder_id, basis, amount_cents FROM settlement_approvals WHERE submission_id = ${submissionId}
+    `)
+  );
+  return new Map(
+    rows.map((r) => [
+      Number(r.productsorder_id),
+      { productsorderId: Number(r.productsorder_id), basis: r.basis as ApprovalBasis, amountCents: Number(r.amount_cents) },
+    ])
+  );
 }
 
 // ── L3: admission, one statement ───────────────────────────────────────────

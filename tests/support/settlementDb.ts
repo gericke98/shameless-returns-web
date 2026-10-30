@@ -29,6 +29,7 @@ export const MIGRATIONS = [
   "drizzle/0007_settlement_operations.sql",
   "drizzle/0008_settlement_lease_generation.sql",
   "drizzle/0009_settlement_reconciliation.sql",
+  "drizzle/0010_settlement_approvals.sql",
 ];
 
 /**
@@ -62,7 +63,7 @@ export function settlementDatabase() {
 
   async function reset() {
     await pg.exec(`
-      DELETE FROM line_action_decisions;
+      DELETE FROM line_action_decisions; DELETE FROM settlement_approvals;
       DELETE FROM replacement_lines; DELETE FROM settlement_operations;
       DELETE FROM submission_lines; DELETE FROM return_submissions;
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);

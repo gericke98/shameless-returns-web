@@ -71,6 +71,12 @@ const lineFacts = (id: number, over: any = {}) => ({
   ...over,
 });
 
+/** An approval Santi states: the amount is his, never computed. */
+const approval = (
+  id: number,
+  over: Partial<{ amountCents: number; basis: "unpaid" | "swap"; capCents: number; approvedBy: string }> = {}
+) => ({ productsorderId: id, basis: "unpaid" as const, amountCents: 4000, capCents: 5000, approvedBy: "santi", ...over });
+
 /** Terms satisfying 0006's CHECKs: returned − replacement − fee = net. */
 function terms(ids: number[], action = "DEVOLUCIÓN") {
   return {
@@ -241,21 +247,20 @@ describe("standing records hold every payer (D1/D2 = A)", () => {
       },
     });
   };
-  const deps = { feeTable: async () => ({ "*": [{ maxGrams: 1_000_000, returnFeeCents: 500, exchangeFeeCents: 500 }] }), catalogue: async () => [] };
 
   it("an unresolved record refuses the approved payment; the operator's rejection then lets it through", async () => {
     facts();
     await seedRow(6);
     await write([{ id: 6, c: ambiguous(6) }]);
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const held = await recordApprovedLegacySubmission([6], deps as any);
+    const held = await recordApprovedLegacySubmission([approval(6)]);
     expect(held).toMatchObject({ ok: false });
     expect((held as any).held).toMatch(/^reconciliation-unresolved:6/);
 
     const [op] = await q(`SELECT id FROM settlement_operations`);
     const { recordReconciliationRejected } = await import("@/lib/settlement/ledger");
     await recordReconciliationRejected(op.id, "no refund", "santi");
-    const approved = await recordApprovedLegacySubmission([6], deps as any);
+    const approved = await recordApprovedLegacySubmission([approval(6)]);
     expect(approved.ok).toBe(true);
     const subs = await q(`SELECT state, provenance FROM return_submissions ORDER BY state`);
     expect(subs).toEqual([
@@ -268,7 +273,7 @@ describe("standing records hold every payer (D1/D2 = A)", () => {
     facts();
     await seedRow(7, { refunded: true });
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const r = await recordApprovedLegacySubmission([7], deps as any);
+    const r = await recordApprovedLegacySubmission([approval(7)]);
     expect(r.ok).toBe(true);
   });
 
@@ -311,5 +316,199 @@ describe("the operator resolves a reconciliation record", () => {
     await resolveOperation((await getOperation(row.id))!, { verdict: "rejected", evidence: "nothing in Shopify", by: "santi" }, { write: true });
     const keys = (await q(`SELECT dedupe_key FROM ops_alerts`)).map((r) => r.dedupe_key);
     expect(keys.some((k: string) => k.startsWith("settlement-rejected:"))).toBe(false);
+  });
+});
+
+// Santi, 30 Oct: "You set each amount", and an approved payment is admissible
+// on a return that is no longer OPEN — only on the authority of its 0010 row.
+describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () => {
+  const shopify = (status: string, processedQuantity: number, ids: number[] = [20]) => {
+    answers.SettlementAdmissionReturn = () => ({
+      data: {
+        return: {
+          id: RETURN,
+          status,
+          exchangeLineItems: { nodes: [] },
+          returnLineItems: {
+            pageInfo: { hasNextPage: false },
+            nodes: ids.map((id) => ({
+              id: `gid://shopify/ReturnLineItem/${id}`,
+              quantity: 1,
+              processedQuantity,
+              fulfillmentLineItem: { id: `gid://shopify/FulfillmentLineItem/${id}` },
+            })),
+          },
+          reverseFulfillmentOrders: {
+            pageInfo: { hasNextPage: false },
+            nodes: [
+              {
+                lineItems: {
+                  pageInfo: { hasNextPage: false },
+                  nodes: ids.map((id) => ({
+                    id: `gid://shopify/ReverseFulfillmentOrderLineItem/${id}`,
+                    totalQuantity: 1,
+                    fulfillmentLineItem: { id: `gid://shopify/FulfillmentLineItem/${id}` },
+                  })),
+                },
+              },
+            ],
+          },
+          order: { id: "gid://shopify/Order/100", customer: { id: CUSTOMER }, totalPriceSet: null },
+        },
+      },
+    });
+    answers.SettlementAdmissionPayingOrder = () => ({
+      data: {
+        order: {
+          id: "gid://shopify/Order/100",
+          totalPriceSet: null,
+          transactions: [
+            { id: "gid://shopify/OrderTransaction/7", kind: "SALE", status: "SUCCESS", gateway: "shopify_payments", amountSet: { shopMoney: { amount: "50.00" } } },
+          ],
+        },
+      },
+    });
+  };
+  const approve = async (id: number, over: Parameters<typeof approval>[1] = {}) => {
+    const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
+    return recordApprovedLegacySubmission([approval(id, over)]);
+  };
+
+  it("records the approval with its submission; that line pays exactly the stated amount", async () => {
+    shopify("CLOSED", 1);
+    await seedRow(20);
+    const sub = await approve(20, { amountCents: 3100, approvedBy: "santi" });
+    expect(sub.ok).toBe(true);
+    const id = (sub as any).submissionId;
+    expect(await q(`SELECT productsorder_id, submission_id, basis, amount_cents, cap_cents, approved_by FROM settlement_approvals`)).toEqual([
+      { productsorder_id: 20, submission_id: id, basis: "unpaid", amount_cents: 3100, cap_cents: 5000, approved_by: "santi" },
+    ]);
+    expect(await q(`SELECT pay_cents, returned_cents, replacement_cents FROM submission_lines`)).toEqual([
+      { pay_cents: 3100, returned_cents: 5000, replacement_cents: 1900 },
+    ]);
+    expect(await q(`SELECT state, provenance, net_cents, owed_cents, charged_fee_cents FROM return_submissions`)).toEqual([
+      { state: "accepted", provenance: "legacy", net_cents: 3100, owed_cents: 3100, charged_fee_cents: 0 },
+    ]);
+  });
+
+  it("refuses an amount over the cap, zero, or with no approver — and 0010 refuses it again", async () => {
+    shopify("CLOSED", 1, [21]);
+    await seedRow(21);
+    expect(await approve(21, { amountCents: 5001 })).toMatchObject({ ok: false });
+    expect(await approve(21, { amountCents: 0 })).toMatchObject({ ok: false });
+    expect(await approve(21, { amountCents: 10.5 })).toMatchObject({ ok: false });
+    expect(await approve(21, { approvedBy: "  " })).toMatchObject({ ok: false });
+    expect(await q(`SELECT * FROM return_submissions`)).toEqual([]);
+    // The violation is caught in the database: an error crossing PGlite's
+    // protocol corrupts its later queries. Accepted → the block raises.
+
+    // 0010 holds the same rule. (A violating insert is not run here: an
+    // error inside PGlite corrupts its later queries.)
+    const checks = await q(`SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint
+       WHERE conrelid = 'settlement_approvals'::regclass AND contype = 'c' ORDER BY conname`);
+    expect(checks.map((c: any) => c.def).join(" | ")).toMatch(/amount_cents <= cap_cents/);
+    expect(checks.map((c: any) => c.def).join(" | ")).toMatch(/amount_cents > 0/);
+    expect(await q(`SELECT * FROM settlement_approvals`)).toEqual([]);
+  });
+
+  it("admits it on a CLOSED, processed return: money only, no goods operation", async () => {
+    shopify("CLOSED", 1, [22]);
+    await seedRow(22);
+    const sub = await approve(22, { amountCents: 3100 });
+    expect(sub.ok).toBe(true);
+    const { admit } = await import("@/lib/settlement/admission");
+    expect(await admit((sub as any).submissionId, [22])).toMatchObject({ ok: true, admitted: [22] });
+    expect(await q(`SELECT kind, amount_cents, state FROM settlement_operations`)).toEqual([
+      { kind: "root_refund", amount_cents: 3100, state: "pending" },
+    ]);
+  });
+
+  it("admits it on an OPEN return whose line is unprocessed: goods, and the money outside them", async () => {
+    shopify("OPEN", 0, [23]);
+    await seedRow(23);
+    const sub = await approve(23, { amountCents: 2000 });
+    expect(sub.ok).toBe(true);
+    const { admit } = await import("@/lib/settlement/admission");
+    expect(await admit((sub as any).submissionId, [23])).toMatchObject({ ok: true });
+    const ops = await q(`SELECT kind, amount_cents FROM settlement_operations ORDER BY kind`);
+    expect(ops).toEqual([
+      { kind: "process_goods", amount_cents: 0 },
+      { kind: "root_refund", amount_cents: 2000 },
+    ]);
+  });
+
+  it("an unapproved line on a CLOSED return is still held by the OPEN gate", async () => {
+    shopify("CLOSED", 1, [24]);
+    await seedRow(24, { refunded: false });
+    await q(`INSERT INTO return_submissions (id, order_id, state, tender, return_method, return_leg_cents,
+       outbound_leg_cents, charged_fee_cents, returned_value_cents, replacement_value_cents, net_cents,
+       stripe_charge_cents, waived_cents, owed_cents, residual_cents, provenance)
+       VALUES ('33333333-3333-3333-3333-333333333333', '100', 'accepted', 'refund', 'CORREOS', 0, 0, 0, 5000, 0, 5000, 0, 0, 5000, 0, 'legacy')`);
+    await q(`INSERT INTO submission_lines (submission_id, productsorder_id, shopify_line_item_id, quantity, action,
+       returned_cents, replacement_cents, pay_cents, stripe_funded_cents, fulfillment_line_item_id, return_line_item_id)
+       VALUES ('33333333-3333-3333-3333-333333333333', 24, '724', 1, 'DEVOLUCIÓN', 5000, 0, 5000, 0,
+               'gid://shopify/FulfillmentLineItem/24', 'gid://shopify/ReturnLineItem/24')`);
+    const { admit } = await import("@/lib/settlement/admission");
+    expect(await admit("33333333-3333-3333-3333-333333333333", [24])).toEqual({ ok: false, held: "return-not-open:CLOSED" });
+    expect(await q(`SELECT * FROM settlement_operations`)).toEqual([]);
+  });
+
+  it("a swap approval pays the owed part of a recorded exchange; no second replacement order", async () => {
+    shopify("CLOSED", 1, [25]);
+    await seedRow(25, { action: "CAMBIO", newVariant: "42" });
+    const c = {
+      productsorderId: 25,
+      lane: "exchange",
+      cls: "paid",
+      reason: "exchange order #500",
+      returnStatus: "CLOSED",
+      evidence: {
+        lane: "exchange",
+        orderGid: "gid://shopify/Order/500",
+        orderName: "#500",
+        lineItemId: "gid://shopify/LineItem/9",
+        variantGid: "gid://shopify/ProductVariant/42",
+        quantity: 1,
+        unitCents: 3000,
+        currency: "EUR",
+      },
+    };
+    await write([{ id: 25, c, over: { action: "CAMBIO", newVariantId: "42" } }], "CAMBIO");
+    // The same line approved as `unpaid` is refused: it WAS paid.
+    expect(await approve(25, { amountCents: 2000 })).toMatchObject({ ok: false, held: "reconciliation-done:25" });
+    const sub = await approve(25, { basis: "swap", amountCents: 2000, capCents: 2000 });
+    expect(sub.ok).toBe(true);
+    const { admit } = await import("@/lib/settlement/admission");
+    expect(await admit((sub as any).submissionId, [25])).toMatchObject({ ok: true });
+    const ops = await q(`SELECT o.kind, o.amount_cents FROM settlement_operations o
+       JOIN return_submissions s ON s.id = o.submission_id WHERE s.state = 'accepted'`);
+    expect(ops).toEqual([{ kind: "root_refund", amount_cents: 2000 }]);
+  });
+});
+
+// Concern 6: a confirmed line with no Shopify return is listed as needs-human
+// and no write path takes it.
+describe("a line with no Shopify return: needs-human, and nothing writes it", () => {
+  it("R1 records nothing, an approval is refused, D3 is refused, the legacy recorder is refused", async () => {
+    await seedRow(30, { action: null });
+    await q(`UPDATE productsorder SET return_id = NULL, return_line_item_id = NULL WHERE id = 30`);
+    const c = { productsorderId: 30, lane: null, cls: "needs-human", reason: "no Shopify return on the line", returnStatus: null };
+    const { reconciliationRecord } = await import("@/lib/settlement/reconcileLedger");
+    const record = reconciliationRecord(
+      terms([30]),
+      [{ line: lineFacts(30, { returnId: null, returnLineItemId: null, action: null }), classification: c as any, customerGid: CUSTOMER }],
+      "test"
+    );
+    expect(record.ops).toEqual([]);
+
+    const { recordApprovedLegacySubmission, submissionForRow } = await import("@/lib/settlement/legacy");
+    expect(await recordApprovedLegacySubmission([approval(30)])).toEqual({ ok: false, held: "not-confirmed" });
+    expect(await submissionForRow(30)).toEqual({ ok: false, held: "not-confirmed" });
+    const { decideLineAction } = await import("@/lib/settlement/lineAction");
+    expect((await decideLineAction({ productsorderId: 30, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).ok).toBe(false);
+
+    expect(await q(`SELECT action, refunded FROM productsorder WHERE id = 30`)).toEqual([{ action: null, refunded: true }]);
+    expect(await q(`SELECT count(*)::int AS n FROM return_submissions`)).toEqual([{ n: 0 }]);
+    expect(await q(`SELECT count(*)::int AS n FROM line_action_decisions`)).toEqual([{ n: 0 }]);
   });
 });

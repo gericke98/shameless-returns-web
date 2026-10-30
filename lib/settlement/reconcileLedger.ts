@@ -261,11 +261,18 @@ export async function recordReconciliation(
 }
 
 /** Rows R1 must not walk: any operation covers them, except an operator's
- *  rejected reconciliation record (those are reported back as unpaid). */
-export async function reconciliationCoverage(): Promise<{ covered: Set<number>; rejected: Map<number, string> }> {
+ *  rejected reconciliation record (those are reported back as unpaid).
+ *  `swapCandidates` are the covered rows whose only cover is a done
+ *  reconciliation exchange_order — the settled exchanges R2 lists for a
+ *  possible owed difference (D1). */
+export async function reconciliationCoverage(): Promise<{
+  covered: Set<number>;
+  rejected: Map<number, string>;
+  swapCandidates: Set<number>;
+}> {
   const rows = rowsOf(
     await db.execute(sql`
-      SELECT m.po, o.id, o.state, s.state AS submission_state
+      SELECT m.po, o.id, o.state, o.kind, s.state AS submission_state
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id
         CROSS JOIN LATERAL unnest(o.members) AS m(po)
@@ -273,11 +280,19 @@ export async function reconciliationCoverage(): Promise<{ covered: Set<number>; 
   );
   const covered = new Set<number>();
   const rejected = new Map<number, string>();
+  const doneExchange = new Set<number>();
+  const other = new Set<number>();
   for (const r of rows) {
     const po = Number(r.po);
-    if (r.submission_state === "reconciled" && r.state === "rejected") rejected.set(po, String(r.id));
-    else covered.add(po);
+    if (r.submission_state === "reconciled" && r.state === "rejected") {
+      rejected.set(po, String(r.id));
+      continue;
+    }
+    covered.add(po);
+    if (r.submission_state === "reconciled" && r.state === "done" && r.kind === "exchange_order") doneExchange.add(po);
+    else other.add(po);
   }
   for (const po of Array.from(covered)) rejected.delete(po);
-  return { covered, rejected };
+  const swapCandidates = new Set(Array.from(doneExchange).filter((po) => !other.has(po)));
+  return { covered, rejected, swapCandidates };
 }

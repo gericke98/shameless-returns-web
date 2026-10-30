@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvalBasisOf,
   classifyLine,
+  lineValues,
+  parseApprovalFile,
+  reconcilePopulation,
   groupKey,
   judgeLegacyExchangeOrder,
   sharedIdentity,
@@ -216,5 +220,116 @@ describe("null action and grouping", () => {
     expect(groupKey(line())).toBe("gid://shopify/Return/9|refund");
     expect(groupKey(line({ credit: true }))).toBe("gid://shopify/Return/9|credit");
     expect(groupKey(line({ returnId: "gid://shopify/Return/10" }))).not.toBe(groupKey(line()));
+  });
+});
+
+// Santi, 30 Oct: "Reconcile settled lines only", "You set each amount", and a
+// line with no Shopify return listed for a human.
+describe("needs-human: a line with no Shopify return", () => {
+  it("no return_id, or no return line → needs-human, never ambiguous", () => {
+    expect(classify(line({ returnId: null }), { ret: { ok: false, error: "no return on the line" } }).cls).toBe("needs-human");
+    expect(classify(line({ returnLineItemId: null }), reads()).cls).toBe("needs-human");
+  });
+  it("admits no approval", () => {
+    const c = classify(line({ returnId: null }), { ret: { ok: false, error: "no return on the line" } });
+    expect(approvalBasisOf(line({ returnId: null }), c)).toMatchObject({ ok: false });
+  });
+});
+
+describe("R1 population: settled lines only", () => {
+  const facts = [
+    line({ productsorderId: 1, refunded: true }),
+    line({ productsorderId: 2, refunded: false }),
+    line({ productsorderId: 3, refunded: true }),
+    line({ productsorderId: 4, refunded: true }),
+  ];
+  it("a pending line is never classified; a covered one only when it is a recorded exchange (R2)", () => {
+    const got = reconcilePopulation(facts, { covered: new Set([2, 3, 4]), swapCandidates: new Set([4]) });
+    expect(got.map((l) => l.productsorderId)).toEqual([1, 4]);
+  });
+  it("a pending line stays out even if nothing covers it", () => {
+    expect(reconcilePopulation(facts, { covered: new Set(), swapCandidates: new Set() }).map((l) => l.productsorderId)).toEqual([1, 3, 4]);
+  });
+});
+
+describe("R2: the approval a line admits — never an amount", () => {
+  const exchangePaid = (unitCents: number) => ({
+    productsorderId: 1,
+    lane: "exchange" as const,
+    cls: "paid" as const,
+    reason: "exchange order #500",
+    returnStatus: "CLOSED",
+    evidence: {
+      lane: "exchange" as const,
+      orderGid: "gid://shopify/Order/500",
+      orderName: "#500",
+      lineItemId: "gid://shopify/LineItem/9",
+      variantGid: "gid://shopify/ProductVariant/42",
+      quantity: 1,
+      unitCents,
+      currency: "EUR",
+    },
+  });
+  it("unpaid → basis unpaid, capped at the returned value", () => {
+    const c = { productsorderId: 1, lane: "refund" as const, cls: "unpaid" as const, reason: "none", returnStatus: "CLOSED" };
+    expect(approvalBasisOf(line({ quantity: 2 }), c)).toEqual({ ok: true, basis: "unpaid", capCents: 10000 });
+  });
+  it("a cheaper replacement → basis swap, capped at returned − replacement (both read, nothing derived)", () => {
+    expect(lineValues(line(), exchangePaid(3000))).toEqual({ returnedCents: 5000, replacementCents: 3000 });
+    expect(approvalBasisOf(line(), exchangePaid(3000))).toEqual({ ok: true, basis: "swap", capCents: 2000 });
+  });
+  it("an equal or dearer replacement owes nothing", () => {
+    expect(approvalBasisOf(line(), exchangePaid(5000)).ok).toBe(false);
+    expect(approvalBasisOf(line(), exchangePaid(6200)).ok).toBe(false);
+  });
+  it("paid by refund, ambiguous, null-action, native exchange → no approval", () => {
+    const base = { productsorderId: 1, lane: "refund" as const, reason: "x", returnStatus: "CLOSED" };
+    expect(approvalBasisOf(line(), { ...base, cls: "ambiguous" }).ok).toBe(false);
+    expect(approvalBasisOf(line(), { ...base, cls: "null-action" }).ok).toBe(false);
+    expect(
+      approvalBasisOf(line(), {
+        ...base,
+        cls: "paid",
+        evidence: { lane: "refund", refundId: "gid://shopify/Refund/1", amountCents: 4500, currency: "EUR" },
+      }).ok
+    ).toBe(false);
+    expect(
+      approvalBasisOf(line(), {
+        ...base,
+        cls: "paid",
+        evidence: { lane: "native_exchange", returnGid: "r", exchangeLineItemId: "e", variantGid: "v" },
+      }).ok
+    ).toBe(false);
+  });
+});
+
+describe("--approve-file", () => {
+  it("reads productsorder_id,amount_cents,approved_by", () => {
+    expect(parseApprovalFile("productsorder_id,amount_cents,approved_by\n101,2000,santi\n102, 350 ,santi\n")).toEqual({
+      ok: true,
+      rows: [
+        { productsorderId: 101, amountCents: 2000, approvedBy: "santi" },
+        { productsorderId: 102, amountCents: 350, approvedBy: "santi" },
+      ],
+    });
+  });
+  it.each([
+    ["no header", "101,2000,santi"],
+    ["missing amount", "productsorder_id,amount_cents,approved_by\n101,,santi"],
+    ["zero", "productsorder_id,amount_cents,approved_by\n101,0,santi"],
+    ["euros, not cents", "productsorder_id,amount_cents,approved_by\n101,20.00,santi"],
+    ["negative", "productsorder_id,amount_cents,approved_by\n101,-5,santi"],
+    ["no approver", "productsorder_id,amount_cents,approved_by\n101,2000,"],
+    ["twice", "productsorder_id,amount_cents,approved_by\n101,2000,santi\n101,100,santi"],
+    ["extra column", "productsorder_id,amount_cents,approved_by\n101,2000,santi,x"],
+    ["empty", ""],
+  ])("refuses the whole file: %s", (_why, text) => {
+    expect(parseApprovalFile(text).ok).toBe(false);
+  });
+});
+
+describe("needs-human wins over null-action", () => {
+  it("a NULL-action line with no Shopify return is needs-human: D3 has no return to decide against", () => {
+    expect(classify(line({ action: null, returnId: null }), { ret: { ok: false, error: "no return on the line" } }).cls).toBe("needs-human");
   });
 });

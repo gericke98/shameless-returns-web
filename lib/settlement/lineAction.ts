@@ -48,6 +48,10 @@ export async function decideLineAction(d: LineActionDecision): Promise<{ ok: tru
          WHERE p.id = ${d.productsorderId}
            AND p.action IS NULL
            AND p.confirmed = true
+           -- A line with no Shopify return is the reconciliation's
+           -- needs-human: no decision recorded here may touch it.
+           AND p.return_id IS NOT NULL
+           AND p.return_line_item_id IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM submission_lines sl
                             JOIN return_submissions s ON s.id = sl.submission_id
                            WHERE sl.productsorder_id = p.id AND s.state IN ('accepted', 'reconciled'))
@@ -65,5 +69,5 @@ export async function decideLineAction(d: LineActionDecision): Promise<{ ok: tru
   const changed = Number(rows[0]?.changed ?? 0);
   return changed === 1
     ? { ok: true }
-    : { ok: false, reason: "not a confirmed NULL-action line free of any submission or operation" };
+    : { ok: false, reason: "not a confirmed NULL-action line on a Shopify return, free of any submission or operation" };
 }

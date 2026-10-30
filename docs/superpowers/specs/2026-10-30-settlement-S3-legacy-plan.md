@@ -1,6 +1,6 @@
 # Settlement foundation S3: legacy reconciliation and cutover
 
-Status: PLAN v1. Tier: **HEAVY** (money, historical payouts). Base: `main` at `c830d3e`
+Status: PLAN v1 — APPROVED, decisions D1=A, D2=A, D3=A (Santi, 30 Oct). Tier: **HEAVY** (money, historical payouts). Base: `main` at `c830d3e`
 (S2 deployed 2026-10-30; migrations 0006–0008 applied; auto-approve armed).
 
 Parent: `2026-10-30-settlement-ownership-plan.md`. Its post-r2 decisions are binding: no Codex plan round,
@@ -145,7 +145,7 @@ Once R1 has run `--write`, every confirmed line has an operation or a human deci
 The script prints each one with its Shopify return state, refunds and exchange orders. Their handling →
 **D3**. The source of the gap is already closed: S2 refuses row edits on lines in an accepted submission.
 
-## Decisions for Santi (my recommendation first)
+## Decisions (Santi, 30 Oct: D1 = A, D2 = A, D3 = A)
 
 - **D1 — past cheaper swaps found owed.**
   - **A (rec.):** list them for you to approve line by line in the CSV. Approved lines are paid through

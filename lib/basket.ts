@@ -81,6 +81,9 @@ export function valueBasket(
   returnPrice: number;
   exchangePrice: number;
   netAmount: number;
+  /** netAmount in integer cents — the value money decisions must use. */
+  netCents: number;
+  lines: ValuedLine[];
   hasItems: boolean;
   grams: number;
   degraded: boolean;
@@ -89,45 +92,97 @@ export function valueBasket(
   const index = indexCatalogue(catalogue);
   const fallbackRatio = orderRatio(items as unknown as PricedLine[], index);
 
-  // Rounded per line, to cents, exactly like exchangePrice below already is —
-  // `item.price` comes from calculatePriceWithDiscount's unrounded
-  // `unit - allocated/quantity` (utils/order-utils.ts) stored verbatim
-  // (db/repository.ts), so a qty>=3 line with a non-divisible allocation
-  // lands here as e.g. 50.88333333333333. Summing that raw against
-  // exchangePrice's already-rounded 50.88 left a same-product swap with
-  // netAmount = +0.0033... instead of exactly 0, which flipped resolveFee
-  // from the exchange lane to the return lane — undercharging the outbound
-  // leg entirely. Rounding here, at the same single point exchangePrice
-  // already rounds at, keeps both sums at the same cents-precision so their
-  // difference is exact; it deliberately does NOT round at the source
-  // (calculatePriceWithDiscount), which would drift a line's own total (3 x
-  // 50.88 = 152.64, not the 152.65 the unrounded per-unit price sums to).
-  const returnPrice = active.reduce(
-    (sum, item) => sum + round2(parseFloat(item.price)),
+  let degraded = false;
+  const lines = active.map((item) => {
+    const valued = valueLine(item, index, fallbackRatio);
+    // The server-side caller (createStripeUrl, actions/payments.ts) alerts
+    // on this; a pure module cannot.
+    if (valued.degraded) degraded = true;
+    return valued;
+  });
+
+  // Summed in integer cents, converted once. Every line is already exact
+  // cents (see valueLine), so a same-product swap nets to exactly 0 — the
+  // property the old per-unit round2 existed to protect.
+  const returnedCents = lines.reduce((sum, line) => sum + line.returnedCents, 0);
+  const replacementCents = lines.reduce(
+    (sum, line) => sum + line.replacementCents,
     0
   );
 
-  let degraded = false;
-  const exchangePrice = active
-    .filter((item) => item.action === "CAMBIO")
-    .reduce((sum, item) => {
-      const priced = replacementPrice(
-        item as unknown as PricedLine,
-        index,
-        fallbackRatio
-      );
-      // The server-side caller (createStripeUrl, actions/payments.ts) alerts
-      // on this; a pure module cannot.
-      if (priced.basis === "median" || priced.basis === "none") degraded = true;
-      return sum + priced.price;
-    }, 0);
-
   return {
-    returnPrice,
-    exchangePrice,
-    netAmount: returnPrice - exchangePrice,
+    returnPrice: returnedCents / 100,
+    exchangePrice: replacementCents / 100,
+    netAmount: (returnedCents - replacementCents) / 100,
+    netCents: returnedCents - replacementCents,
+    lines,
     hasItems: active.length > 0,
     grams: parcelGrams(active, catalogue),
     degraded,
+  };
+}
+
+/** One basket line, valued in integer cents. */
+export type ValuedLine = {
+  /** `productsorder.id`, the line's stable identity. */
+  readonly id: number;
+  readonly action: string;
+  readonly quantity: number;
+  /** What this line is worth coming back: its whole line total. */
+  readonly returnedCents: number;
+  /** What its replacement costs, whole line; 0 unless CAMBIO. */
+  readonly replacementCents: number;
+  readonly degraded: boolean;
+};
+
+/**
+ * Value one line as LINE TOTALS, not unit prices — Shopify is sent `quantity`,
+ * so a qty-2 line returns two garments and has to be worth two.
+ *
+ * `item.price` is the unrounded per-unit price `calculatePriceWithDiscount`
+ * stores (utils/order-utils.ts: `unit - allocated/quantity`), e.g.
+ * 50.88333… for a qty-3 line. The line total is rounded ONCE, from that
+ * unrounded price: 3 × 50.88333… = 152.65, which is what the customer paid —
+ * rounding the unit first and multiplying would give 152.64.
+ *
+ * A same-product swap reuses the returned total exactly, so the line nets to
+ * 0 whatever the rounding; that is what keeps resolveFee in the exchange lane
+ * for a size change. Any other replacement is priced per unit in whole cents
+ * (replacementPriceForVariant already rounds it) and multiplied, which is
+ * exact.
+ */
+export function valueLine(
+  item: OrderItem,
+  index: ReturnType<typeof indexCatalogue>,
+  fallbackRatio: number | null
+): ValuedLine {
+  const quantity = Math.max(1, Number(item.quantity) || 1);
+  const returnedCents = Math.round((parseFloat(item.price) || 0) * quantity * 100);
+  if (item.action !== "CAMBIO") {
+    return {
+      id: Number((item as any).id),
+      action: String(item.action),
+      quantity,
+      returnedCents,
+      replacementCents: 0,
+      degraded: false,
+    };
+  }
+  const priced = replacementPrice(
+    item as unknown as PricedLine,
+    index,
+    fallbackRatio
+  );
+  const replacementCents =
+    priced.basis === "paid"
+      ? returnedCents
+      : Math.round(round2(priced.price) * 100) * quantity;
+  return {
+    id: Number((item as any).id),
+    action: "CAMBIO",
+    quantity,
+    returnedCents,
+    replacementCents,
+    degraded: priced.basis === "median" || priced.basis === "none",
   };
 }

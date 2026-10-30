@@ -35,11 +35,14 @@ const ORDER: any = {
 
 const alerts: Array<{ subject: string; body: string }> = [];
 const behaviour: {
-  updateFinalOrderThrows: boolean;
+  confirmThrows: boolean;
   labelStatus: number;
-} = { updateFinalOrderThrows: false, labelStatus: 200 };
+  outcome: { kind: string; [k: string]: unknown };
+  submissionId: string | null;
+} = { confirmThrows: false, labelStatus: 200, outcome: { kind: "accepted" }, submissionId: "sub-1" };
 
-const updateFinalOrderCalls: Array<{ id: string; revert: boolean }> = [];
+const calls: string[] = [];
+const outbox: Array<{ dedupeKey: string; subject: string; body: string }> = [];
 
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
@@ -48,11 +51,40 @@ vi.mock("@/actions/opsAlert", () => ({
 }));
 
 vi.mock("@/actions/updateOrder", () => ({
-  updateFinalOrder: async (id: string, revert: boolean) => {
-    updateFinalOrderCalls.push({ id, revert });
-    if (!revert && behaviour.updateFinalOrderThrows) {
+  confirmSubmission: async (submissionId: string) => {
+    calls.push(`confirm:${submissionId}`);
+    if (behaviour.confirmThrows) {
       throw new Error("returnCreate failed: The presentment currency of the order needs to be used.");
     }
+  },
+  revertFinalOrder: async (id: string) => {
+    calls.push(`revert:${id}`);
+  },
+}));
+
+vi.mock("@/actions/opsAlertOutbox", () => ({
+  enqueueOpsAlert: async (alert: { dedupeKey: string; subject: string; body: string }) => {
+    outbox.push(alert);
+  },
+}));
+
+vi.mock("@/db/submissions", () => ({
+  acceptPaidSubmission: async (id: string, evidence: { sessionId: string }) => {
+    calls.push(`accept:${id}:${evidence.sessionId}`);
+    return behaviour.outcome;
+  },
+  attachStripeSession: async (id: string, sessionId: string) => {
+    calls.push(`attach:${id}:${sessionId}`);
+    return true;
+  },
+}));
+
+// A session created before submissions existed: its agreement is built from
+// the rows at webhook time.
+vi.mock("@/lib/submissionProposal", () => ({
+  proposeCurrentSelection: async (id: string) => {
+    calls.push(`propose:${id}`);
+    return { submissionId: "sub-legacy" };
   },
 }));
 
@@ -93,8 +125,14 @@ vi.mock("@/lib/stripe", () => ({
         type: "checkout.session.completed",
         data: {
           object: {
-            metadata: { id: "13158935429446", isCredit: "false" },
+            id: "cs_test_1",
+            metadata: {
+              id: "13158935429446",
+              isCredit: "false",
+              ...(behaviour.submissionId ? { submission_id: behaviour.submissionId } : {}),
+            },
             payment_intent: "pi_3U0QOAJSZ88eqCu00q2IRbdy",
+            payment_status: "paid",
             amount_total: 3496,
             currency: "eur",
           },
@@ -111,9 +149,12 @@ async function post() {
 
 beforeEach(() => {
   alerts.length = 0;
-  updateFinalOrderCalls.length = 0;
-  behaviour.updateFinalOrderThrows = false;
+  calls.length = 0;
+  outbox.length = 0;
+  behaviour.confirmThrows = false;
   behaviour.labelStatus = 200;
+  behaviour.outcome = { kind: "accepted" };
+  behaviour.submissionId = "sub-1";
   ORDER.products = [];
   vi.resetModules();
 });
@@ -125,9 +166,9 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
   });
 
   it("alerts when the return pipeline throws", async () => {
-    // #310741 exactly: returnCreate rejected, updateFinalOrder threw, the catch
+    // #310741 exactly: returnCreate rejected, the confirm threw, the catch
     // reverted, and nobody heard about it for ten days.
-    behaviour.updateFinalOrderThrows = true;
+    behaviour.confirmThrows = true;
 
     await post();
 
@@ -147,7 +188,7 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
   it("carries what a human needs to act: customer, amount and PaymentIntent", async () => {
     // Without the intent id, refunding means a human searching Stripe by hand
     // for a charge whose order row has just been reverted out of existence.
-    behaviour.updateFinalOrderThrows = true;
+    behaviour.confirmThrows = true;
 
     await post();
 
@@ -163,7 +204,7 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
     // Changing the status code changes Stripe's retry behaviour for every
     // failure mode at once. Pinned deliberately: if that is ever revisited it
     // should be a decision, not a side effect of touching this handler.
-    behaviour.updateFinalOrderThrows = true;
+    behaviour.confirmThrows = true;
 
     const res: any = await post();
 
@@ -173,7 +214,7 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
   it("alerts even when the revert itself fails", async () => {
     // The worst state: money taken, return possibly half-created, and the
     // database now disagreeing with reality. This must never be the quiet one.
-    behaviour.updateFinalOrderThrows = true;
+    behaviour.confirmThrows = true;
     const { alertOps } = await import("@/actions/opsAlert");
     expect(typeof alertOps).toBe("function");
 
@@ -236,5 +277,64 @@ describe("the alert must describe the state that actually exists", () => {
     await post();
 
     expect(alerts[0].body).toContain("pay a second time");
+  });
+});
+
+describe("the webhook confirms only the submission the customer paid for", () => {
+  it("accepts the session's own submission, then confirms that submission", async () => {
+    await post();
+
+    expect(calls.slice(0, 2)).toEqual(["accept:sub-1:cs_test_1", "confirm:sub-1"]);
+    expect(calls).not.toContain("propose:13158935429446");
+  });
+
+  it("confirms nothing and raises one alert when the payment is for a replaced checkout", async () => {
+    // Customer opened checkout in two tabs and paid the older one.
+    behaviour.outcome = { kind: "superseded", state: "superseded" };
+
+    const res: any = await post();
+
+    expect(res.status).toBe(200);
+    expect(calls.some((c) => c.startsWith("confirm:"))).toBe(false);
+    expect(calls.some((c) => c.startsWith("revert:"))).toBe(false);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0].dedupeKey).toBe("paid-unconfirmed:cs_test_1");
+    expect(outbox[0].body).toContain("pi_3U0QOAJSZ88eqCu00q2IRbdy");
+    // Not the PAID BUT NO RETURN alert: nothing was reverted, nothing failed.
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("confirms nothing when the amount paid is not the amount agreed", async () => {
+    behaviour.outcome = { kind: "mismatch", detail: "amount=2500/3496" };
+
+    await post();
+
+    expect(calls.some((c) => c.startsWith("confirm:"))).toBe(false);
+    expect(outbox[0].body).toContain("amount=2500/3496");
+  });
+
+  it("carries on to the idempotent confirm on a redelivery", async () => {
+    // Stripe redelivers after a timeout: the submission is already accepted.
+    // Stopping here would strand a paid return whose first attempt died
+    // half-way; confirmSubmission's own guard makes a second run harmless.
+    behaviour.outcome = { kind: "duplicate" };
+
+    await post();
+
+    expect(calls).toContain("confirm:sub-1");
+    expect(outbox).toHaveLength(0);
+  });
+
+  it("builds and binds an agreement for a session created before submissions existed", async () => {
+    behaviour.submissionId = null;
+
+    await post();
+
+    expect(calls.slice(0, 4)).toEqual([
+      "propose:13158935429446",
+      "attach:sub-legacy:cs_test_1",
+      "accept:sub-legacy:cs_test_1",
+      "confirm:sub-legacy",
+    ]);
   });
 });

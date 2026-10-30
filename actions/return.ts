@@ -7,7 +7,8 @@ import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { createShippingLabel } from "./shipping";
-import { updateFinalOrder } from "./updateOrder";
+import { confirmSubmission, revertFinalOrder } from "./updateOrder";
+import { acceptFreeSubmission } from "@/db/submissions";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";
 import { defaultMethodFor, resolveReturnMethod, type ReturnMethod } from "@/lib/returnMethods";
@@ -87,7 +88,7 @@ async function decideMethod(id: string, claimed: unknown): Promise<ReturnMethod>
  *
  * This is the only place `orders.locale` is written. It is safe here and was
  * NOT safe in `setLocale`: by this point the caller has already committed to
- * mutating this very order (`updateFinalOrder(id, ...)` below writes far more
+ * mutating this very order (`confirmSubmission(...)` below writes far more
  * consequential state with the same client-supplied id), so writing a
  * whitelisted two-value string adds no new exposure. `setLocale`, by contrast,
  * is reachable from the unauthenticated language switcher on any order id.
@@ -246,20 +247,34 @@ export async function returnFunction(
   }
 
   // Whether the customer owes anything is decided server-side, inside
-  // createStripeUrl. A null URL means nothing to pay.
-  const url = (await createStripeUrl(id, email, isCredit, method)).data;
+  // createStripeUrl, which also saves the agreement as a submission. A null
+  // URL means nothing to pay; the submission is then accepted right here.
+  const { data: url, submissionId } = await createStripeUrl(
+    id,
+    email,
+    isCredit,
+    method
+  );
   if (url) {
     redirect(url);
   }
+  if (!submissionId) {
+    console.error(`returnFunction: nothing to submit for order ${id}`);
+    await alertReturnWithoutLabel(id, "no lines were selected, so no submission was saved");
+    redirect(`/success`);
+  }
   try {
     // Caso en el que no tiene que pagar nada
+    if (!(await acceptFreeSubmission(submissionId))) {
+      throw new Error(`submission ${submissionId} could not be accepted (no longer awaiting)`);
+    }
     // First update the database
-    await updateFinalOrder(id, false, isCredit);
+    await confirmSubmission(submissionId);
     // // Then create the return shipment (Correos label, Amphora collection, or self-booked)
     const statusLabel = await createReturnShipment(id, method);
     if (statusLabel !== 200) {
       // If label creation fails, undo database changes
-      await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter
+      await revertFinalOrder(id);
       console.error("Failed to create shipping label");
       await alertReturnWithoutLabel(id, `carrier booking returned ${statusLabel}`);
     }
@@ -268,7 +283,7 @@ export async function returnFunction(
     const detail = error instanceof Error ? error.message : String(error);
     // Attempt to undo database changes if there was an error
     try {
-      await updateFinalOrder(id, true, isCredit);
+      await revertFinalOrder(id);
       await alertReturnWithoutLabel(id, detail);
     } catch (undoError) {
       console.error("Failed to revert database changes:", undoError);

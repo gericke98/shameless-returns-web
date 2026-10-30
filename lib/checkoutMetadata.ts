@@ -24,6 +24,9 @@ export type CheckoutMetadata = {
   id: string;
   /** Whether the customer chose store credit over a refund to their card. */
   isCredit: boolean;
+  /** The `return_submissions.id` this session pays for. Null on sessions
+   *  created before submissions existed (deploy of 2026-10-30). */
+  submissionId: string | null;
 };
 
 /**
@@ -43,5 +46,9 @@ export function parseCheckoutMetadata(
   const id = metadata?.id?.trim();
   if (!id) return null;
 
-  return { id, isCredit: metadata?.isCredit === "true" };
+  return {
+    id,
+    isCredit: metadata?.isCredit === "true",
+    submissionId: metadata?.submission_id?.trim() || null,
+  };
 }

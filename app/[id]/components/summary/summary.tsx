@@ -14,6 +14,7 @@ import { Product } from "@/types";
 import { useFeeLegs } from "../../feesContext";
 import { centsToEuros, resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
+import { buildAgreement, shownTotalEuros } from "@/lib/agreement";
 import {
   indexCatalogue,
   orderRatio,
@@ -105,7 +106,16 @@ export const SummaryComponent = ({
   const returnLegCost = centsToEuros(selfBooked ? 0 : returnLegCents);
   const outboundLegCost = centsToEuros(outboundLegCents);
 
-  const totalPrice = basket.netAmount - shippingCost;
+  // The agreement is the one source for the total: the Stripe charge and the
+  // stored submission read the same function (lib/agreement.ts).
+  const agreement = buildAgreement({
+    lines: basket.lines,
+    returnLegCents,
+    outboundLegCents,
+    feeCents,
+    selfBooked,
+    tender: credito ? "credit" : "refund",
+  });
 
   // The second section holds replacement items and the shipping fee, and its
   // heading has to describe whichever of those it actually contains. A pure
@@ -124,8 +134,13 @@ export const SummaryComponent = ({
   const showsShipping =
     shipping && itemsToDevolver.length > 0 && chargeCents > 0;
 
-  const creditBonus = credito ? totalPrice * 0.15 : 0;
-  const finalTotal = credito ? totalPrice * 1.15 : totalPrice;
+  const finalTotal = shownTotalEuros(agreement);
+  // The bonus is what credit adds on top of the cash value — only ever on
+  // money coming back, never on a charge.
+  const creditBonus =
+    credito && agreement.netCents > 0
+      ? (agreement.owedCents - agreement.netCents) / 100
+      : 0;
 
   // Helper function to find a product by variant ID
   const findProductByVariantId = (variantId: string | null) => {

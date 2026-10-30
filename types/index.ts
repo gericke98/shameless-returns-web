@@ -393,6 +393,8 @@ export type FulfillmentLineItem = {
   node: {
     id: string;
     lineItem: {
+      /** The line item gid — how a fulfillment line is matched to our row. */
+      id: string;
       /** How many of this line Shopify will still take back. Absent on older
        *  reads; zero once the line has been refunded. */
       refundableQuantity?: number | null;

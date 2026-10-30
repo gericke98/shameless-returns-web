@@ -52,7 +52,11 @@ vi.mock("next/headers", () => ({
   cookies: () => ({ get: () => ({ name: "locale", value: "es" }) }),
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
-vi.mock("@/actions/updateOrder", () => ({ updateFinalOrder: async () => {} }));
+vi.mock("@/actions/updateOrder", () => ({
+  confirmSubmission: async () => {},
+  revertFinalOrder: async () => {},
+}));
+vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
@@ -63,7 +67,7 @@ vi.mock("@/actions/payments", () => ({
   createStripeUrl: async (_id: string, _e: string, _c: boolean, method: string) => {
     events.push(`stripe:${method}`);
     stripeMethodSeen = method;
-    return { data: stripeUrl };
+    return { data: stripeUrl, submissionId: "sub-1" };
   },
 }));
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { acceptedSubmission } from "./submissionFixture";
 
 // Order #310957. The customer submitted, Shopify created return #310957-R1 and
 // Amphora booked the collection, then the request hit the 15s platform timeout.
@@ -21,6 +22,8 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
 type Row = {
+  id: number;
+  lineItemId: string;
   variant_id: string;
   confirmed: boolean;
   return_id: string | null;
@@ -37,7 +40,7 @@ const TOTAL_ORDER = {
   fulfillments: [
     {
       admin_graphql_api_id: FULFILLMENT_GID,
-      line_items: [{ variant_id: 1 }],
+      line_items: [{ id: 11, variant_id: 1 }],
     },
   ],
 };
@@ -48,7 +51,10 @@ const FULFILLMENT_LINE_ITEMS = {
         {
           node: {
             id: "gid://shopify/FulfillmentLineItem/1",
-            lineItem: { variant: { id: "gid://shopify/ProductVariant/1" } },
+            lineItem: {
+              id: "gid://shopify/LineItem/11",
+              variant: { id: "gid://shopify/ProductVariant/1" },
+            },
           },
         },
       ],
@@ -101,50 +107,68 @@ vi.mock("@/actions/exchangeReservation", () => ({
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
-async function updateFinalOrder(id: string, revert: boolean) {
+const recorded = vi.fn(async () => []);
+const submissionState: { returnLineItemIds: Record<number, string> } = { returnLineItemIds: {} };
+vi.mock("@/db/submissions", () => ({
+  getSubmission: async () =>
+    acceptedSubmission("13192219558214", state.rows, {
+      returnLineItemIds: submissionState.returnLineItemIds,
+    }),
+  recordConfirmation: (...args: unknown[]) => (recorded as any)(...args),
+}));
+
+async function revert(id: string) {
   const mod = await import("@/actions/updateOrder");
-  return mod.updateFinalOrder(id, revert, false);
+  return mod.revertFinalOrder(id);
+}
+async function confirm() {
+  const mod = await import("@/actions/updateOrder");
+  return mod.confirmSubmission("sub-1");
 }
 
 beforeEach(() => {
   state.rows = [];
   state.writes = [];
+  submissionState.returnLineItemIds = {};
   createReturn.mockClear();
+  recorded.mockClear();
 });
 
-describe("updateFinalOrder — revert must not destroy a real return", () => {
+describe("revertFinalOrder — revert must not destroy a real return", () => {
   it("leaves a row that already carries a Shopify return_id untouched", async () => {
     state.rows = [
-      { variant_id: "1", confirmed: true, return_id: "gid://shopify/Return/56113398086" },
+      { id: 1, lineItemId: "11", variant_id: "1", confirmed: true, return_id: "gid://shopify/Return/56113398086" },
     ];
 
-    await updateFinalOrder("13192219558214", true);
+    await revert("13192219558214");
 
     expect(state.writes).toHaveLength(0);
   });
 
   it("still reverts a confirmed row that has no return behind it", async () => {
-    state.rows = [{ variant_id: "1", confirmed: true, return_id: null }];
+    state.rows = [{ id: 1, lineItemId: "11", variant_id: "1", confirmed: true, return_id: null }];
 
-    await updateFinalOrder("13192219558214", true);
+    await revert("13192219558214");
 
     expect(state.writes).toEqual([{ confirmed: false, return_id: null }]);
   });
 
   it("reverts only the orphan rows when a parcel is half-created", async () => {
     state.rows = [
-      { variant_id: "1", confirmed: true, return_id: "gid://shopify/Return/56113398086" },
-      { variant_id: "2", confirmed: true, return_id: null },
+      { id: 1, lineItemId: "11", variant_id: "1", confirmed: true, return_id: "gid://shopify/Return/56113398086" },
+      { id: 2, lineItemId: "12", variant_id: "2", confirmed: true, return_id: null },
     ];
 
-    await updateFinalOrder("13192219558214", true);
+    await revert("13192219558214");
 
     expect(state.writes).toEqual([{ confirmed: false, return_id: null }]);
   });
 });
 
-describe("updateFinalOrder — a resubmit must not create a second return", () => {
+describe("confirmSubmission — a resubmit must not create a second return", () => {
   const RETURNABLE = {
+    id: 1,
+    lineItemId: "11",
     variant_id: "1",
     confirmed: true,
     action: "DEVOLUCIÓN",
@@ -154,7 +178,7 @@ describe("updateFinalOrder — a resubmit must not create a second return", () =
   it("bails out without calling Shopify when the parcel is already returned", async () => {
     state.rows = [{ ...RETURNABLE, return_id: "gid://shopify/Return/56113398086" }];
 
-    await updateFinalOrder("13192219558214", false);
+    await confirm();
 
     expect(createReturn).not.toHaveBeenCalled();
     expect(state.writes).toHaveLength(0);
@@ -165,8 +189,18 @@ describe("updateFinalOrder — a resubmit must not create a second return", () =
   it("still creates the return on a first submit", async () => {
     state.rows = [{ ...RETURNABLE, confirmed: false, return_id: null }];
 
-    await updateFinalOrder("13192219558214", false);
+    await confirm();
 
     expect(createReturn).toHaveBeenCalledTimes(1);
+  });
+
+  it("bails out without calling Shopify when the submission was already confirmed (webhook redelivery)", async () => {
+    state.rows = [{ ...RETURNABLE, confirmed: false, return_id: null }];
+    submissionState.returnLineItemIds = { 1: "gid://shopify/ReturnLineItem/9" };
+
+    await confirm();
+
+    expect(createReturn).not.toHaveBeenCalled();
+    expect(recorded).not.toHaveBeenCalled();
   });
 });

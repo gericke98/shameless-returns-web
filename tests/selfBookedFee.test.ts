@@ -34,9 +34,27 @@ const US_BANDS = [
   { maxGrams: 2147483647, returnFeeCents: 2200, exchangeFeeCents: 3496 },
 ];
 
-const basket = { hasItems: true, netAmount: 0, grams: 500 };
+const basket: Record<string, any> = { hasItems: true, grams: 500 };
+
+/**
+ * netAmount 0 is a like-for-like exchange (one line swapped at the same
+ * price); anything above it is a pure return of that value.
+ */
+function setNet(netAmount: number) {
+  const cents = Math.round(netAmount * 100);
+  basket.netAmount = netAmount;
+  basket.netCents = cents;
+  basket.lines =
+    cents === 0
+      ? [{ id: 1, action: "CAMBIO", quantity: 1, returnedCents: 5000, replacementCents: 5000, degraded: false }]
+      : [{ id: 1, action: "DEVOLUCIÓN", quantity: 1, returnedCents: cents, replacementCents: 0, degraded: false }];
+}
 const sessions: any[] = [];
 
+vi.mock("@/db/submissions", () => ({
+  proposeSubmission: async () => ({ ok: true, id: "sub-1" }),
+  attachStripeSession: async () => true,
+}));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 vi.mock("@/db/fees", () => ({
   getFeeTable: async () => ({ "*": BANDS, ES: ES_BANDS, US: US_BANDS }),
@@ -73,7 +91,7 @@ function chargedCents(): number {
 
 beforeEach(() => {
   sessions.length = 0;
-  basket.netAmount = 0;
+  setNet(0);
   process.env.NEXT_PUBLIC_APP_URL = "https://returns.test";
 });
 
@@ -97,7 +115,7 @@ describe("SELF drops the return leg", () => {
     // netAmount, only the method differs — so together they prove SELF
     // actually changes the outcome rather than the two lanes coincidentally
     // agreeing.
-    basket.netAmount = 3;
+    setNet(3);
 
     await priceIt("AMPHORA");
 
@@ -109,7 +127,7 @@ describe("SELF drops the return leg", () => {
     // return's outboundLegCents is 0 regardless of method, and SELF charges
     // outboundLegCents only, so nothing is owed and no Stripe session should
     // exist.
-    basket.netAmount = 3;
+    setNet(3);
 
     const result = await priceIt("SELF");
 

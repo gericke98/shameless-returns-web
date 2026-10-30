@@ -250,6 +250,11 @@ vi.mock("@/actions/opsAlertOutbox", () => ({
   },
 }));
 
+// Submission expiry rides on this cron; its SQL is covered by
+// tests/submissionsDb.test.ts.
+const abandon = vi.fn(async (): Promise<string[]> => []);
+vi.mock("@/db/submissions", () => ({ abandonExpiredSubmissions: () => abandon() }));
+
 const alerts: Array<{ subject: string; body: string }> = [];
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
@@ -263,6 +268,7 @@ async function call(headers: Record<string, string> = {}) {
 }
 
 beforeEach(() => {
+  abandon.mockClear();
   applied.length = 0;
   alerts.length = 0;
   queued.length = 0;
@@ -462,6 +468,23 @@ describe("amphora-sync cron — scope and resilience", () => {
 
     expect(res.status).toBe(502);
     expect(applied).toHaveLength(0);
+  });
+
+  it("still expires stale submissions when Amphora is unreachable", async () => {
+    state.listThrows = true;
+    abandon.mockResolvedValueOnce(["s1"]);
+
+    await call({ authorization: "Bearer s3cret" });
+
+    expect(abandon).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let a failing submission expiry stop the sync", async () => {
+    abandon.mockRejectedValueOnce(new Error("db down"));
+
+    const res = await call({ authorization: "Bearer s3cret" });
+
+    expect(res.status).toBe(200);
   });
 });
 

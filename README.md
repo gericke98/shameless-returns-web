@@ -373,7 +373,7 @@ ran: nothing in the deploy runs migrations.
 Delivery runs from its own cron, `/api/cron/ops-alerts` (every 15 min,
 `vercel.json`), independent of amphora-sync and auto-approve, which only queue.
 
-**Status: not yet applied.**
+**Status: applied to production (2026-10-30, before PR #44 deployed).**
 
 ### Applying the short-receipt migration
 
@@ -389,6 +389,30 @@ psql "$DATABASE_URL" -f drizzle/0005_receipt_shortfalls.sql
 Verify: `SELECT count(*) FROM information_schema.columns WHERE table_name =
 'receipt_shortfalls';` → 13. The first run alerts ops once for every short
 receipt open today (expected: #311208, and #312246 if still unsettled).
+
+**Status: applied to production (2026-10-30, before PR #44 deployed).**
+
+### Applying the return-submissions migration
+
+`drizzle/0006_return_submissions.sql` creates `return_submissions` (the terms
+a customer agreed to — fee, net, Stripe charge, amount owed — saved before
+checkout) and `submission_lines` (each line's share of it). Additive and
+idempotent. **Apply before deploying**: checkout, the free submit and the
+Stripe webhook all write to it, so without it every submission fails.
+
+```sh
+psql "$DATABASE_URL" -f drizzle/0006_return_submissions.sql
+```
+
+Verify: `SELECT count(*) FROM information_schema.columns WHERE table_name IN
+('return_submissions','submission_lines');` → 34 (20 + 14), and
+`SELECT indexname FROM pg_indexes WHERE tablename = 'return_submissions';`
+lists `return_submissions_one_awaiting_per_order`.
+
+Checkout sessions created by the previous deploy carry no `submission_id`.
+The webhook builds their agreement from the rows when they are paid; if the
+amount does not match, it raises a "PAID, NOT CONFIRMED" alert instead of
+confirming.
 
 **Status: not yet applied.**
 

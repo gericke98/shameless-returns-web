@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { acceptedSubmission } from "./submissionFixture";
 
 // `refundSourceFor` runs AFTER `createReturn` has already succeeded against
 // Shopify and BEFORE the write that stores `return_id` — the very thing the
@@ -27,7 +28,7 @@ const TOTAL_ORDER = {
   fulfillments: [
     {
       admin_graphql_api_id: FULFILLMENT_GID,
-      line_items: [{ variant_id: 1 }],
+      line_items: [{ id: 11, variant_id: 1 }],
     },
   ],
 };
@@ -38,7 +39,10 @@ const FULFILLMENT_LINE_ITEMS = {
         {
           node: {
             id: "gid://shopify/FulfillmentLineItem/1",
-            lineItem: { variant: { id: "gid://shopify/ProductVariant/1" } },
+            lineItem: {
+              id: "gid://shopify/LineItem/11",
+              variant: { id: "gid://shopify/ProductVariant/1" },
+            },
           },
         },
       ],
@@ -47,6 +51,8 @@ const FULFILLMENT_LINE_ITEMS = {
 };
 
 type Row = {
+  id: number;
+  lineItemId: string;
   variant_id: string;
   confirmed: boolean;
   return_id: string | null;
@@ -124,41 +130,56 @@ vi.mock("@/actions/replacementOrder", () => ({
   },
 }));
 
-async function updateFinalOrder(id: string) {
+// The confirm write is one SQL statement now; the test reads what it was given.
+const recorded = vi.fn(async (_input: any) => [1]);
+vi.mock("@/db/submissions", () => ({
+  getSubmission: async () => acceptedSubmission("13192219558214", state.rows),
+  recordConfirmation: (input: any) => recorded(input),
+}));
+
+async function confirm() {
   const mod = await import("@/actions/updateOrder");
-  return mod.updateFinalOrder(id, false, false);
+  return mod.confirmSubmission("sub-1");
 }
 
 beforeEach(() => {
   state.rows = [
-    { variant_id: "1", confirmed: false, return_id: null, action: "DEVOLUCIÓN", quantity: 1 },
+    { id: 1, lineItemId: "11", variant_id: "1", confirmed: false, return_id: null, action: "DEVOLUCIÓN", quantity: 1 },
   ];
   state.writes = [];
   createReturn.mockClear();
+  recorded.mockClear();
 });
 
-describe("updateFinalOrder — refundSourceFor rejects after Shopify's return already exists", () => {
-  it("does not throw out of updateFinalOrder", async () => {
-    await expect(updateFinalOrder("13192219558214")).resolves.not.toThrow();
+describe("confirmSubmission — refundSourceFor rejects after Shopify's return already exists", () => {
+  it("does not throw out of confirmSubmission", async () => {
+    await expect(confirm()).resolves.not.toThrow();
   });
 
-  it("still writes return_id, so a retry hits the idempotency guard instead of duplicating the Shopify return", async () => {
-    await updateFinalOrder("13192219558214");
+  it("still records the return line, so a retry hits the idempotency guard instead of duplicating the Shopify return", async () => {
+    await confirm();
 
     expect(createReturn).toHaveBeenCalledTimes(1);
-    expect(state.writes).toHaveLength(1);
-    expect(state.writes[0]).toMatchObject({
-      confirmed: true,
-      return_id: "gid://shopify/Return/1",
+    expect(recorded).toHaveBeenCalledTimes(1);
+    expect(recorded.mock.calls[0][0]).toMatchObject({
+      submissionId: "sub-1",
+      returnId: "gid://shopify/Return/1",
+      lines: [
+        {
+          productsorderId: 1,
+          fulfillmentLineItemId: "gid://shopify/FulfillmentLineItem/1",
+          returnLineItemId: "gid://shopify/ReturnLineItem/1",
+        },
+      ],
     });
   });
 
   it("stores a null transaction rather than the return's own placeholder-tainted one", async () => {
-    await updateFinalOrder("13192219558214");
+    await confirm();
 
-    expect(state.writes[0]).toMatchObject({
-      transaction_id: null,
-      transaction_amount: null,
+    expect(recorded.mock.calls[0][0]).toMatchObject({
+      transactionId: null,
+      transactionAmount: null,
     });
   });
 });

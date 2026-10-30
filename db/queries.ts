@@ -1286,6 +1286,7 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
             node {
               id
               lineItem {
+                id
                 title
                 # How many of this line Shopify will still take back. Zero once
                 # the line has been refunded — including by a 0.00 refund booked

@@ -6,8 +6,9 @@ import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import { useFeeLegs } from "../feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
+import { resolveFee } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
+import { buildAgreement, shownTotalEuros } from "@/lib/agreement";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
 import { ReturnMethodChoice } from "../components/returnMethodChoice";
@@ -64,16 +65,19 @@ const LastWindowBase = ({
       basket
     );
 
-    // Mirror actions/payments.ts exactly: a self-booked return pays the
-    // outbound leg only, never the return fee. Diverging here would show the
-    // customer a total that disagrees with what Stripe actually charges.
-    const chargeCents = method === "SELF" ? outboundLegCents : feeCents;
+    // The same agreement actions/payments.ts charges and stores, so the
+    // number on screen is the number Stripe takes (lib/agreement.ts).
+    const agreement = buildAgreement({
+      lines: basket.lines,
+      returnLegCents,
+      outboundLegCents,
+      feeCents,
+      selfBooked: method === "SELF",
+      tender: credito ? "credit" : "refund",
+    });
 
-    const totalPrice = basket.netAmount - centsToEuros(chargeCents);
-
-    // Calculate finalTotal the same way as SummaryComponent
     return {
-      finalTotal: credito ? totalPrice * 1.15 : totalPrice,
+      finalTotal: shownTotalEuros(agreement),
       returnLegCents,
     };
   }, [allProducts, credito, items, legs, method]);

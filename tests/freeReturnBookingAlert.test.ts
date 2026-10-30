@@ -12,7 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // happened reached nobody. Its only trace was a `console.error` in logs Vercel
 // keeps for about an hour.
 //
-// The revert cannot clean up after it either: `updateFinalOrder` refuses to
+// The revert cannot clean up after it either: `revertFinalOrder` refuses to
 // revert a row that already carries a `return_id` (learned from #310957), so
 // the row is left confirmed, with no locator, and the customer is left holding
 // a parcel they cannot send.
@@ -71,10 +71,14 @@ vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // Nothing to pay: this is the free lane, the one that had no alert.
 vi.mock("@/actions/payments", () => ({
-  createStripeUrl: async () => ({ data: null }),
+  createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
 }));
 
-vi.mock("@/actions/updateOrder", () => ({ updateFinalOrder: async () => {} }));
+vi.mock("@/actions/updateOrder", () => ({
+  confirmSubmission: async () => {},
+  revertFinalOrder: async () => {},
+}));
+vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
 
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {

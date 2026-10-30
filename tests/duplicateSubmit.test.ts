@@ -57,11 +57,16 @@ vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 // Nothing to pay, so returnFunction stays on the free path instead of leaving
 // for Stripe.
 vi.mock("@/actions/payments", () => ({
-  createStripeUrl: async () => ({ data: null }),
+  createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
 }));
 
+vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
+
 // Its own duplicate guard is already tested; here it must not be what saves us.
-vi.mock("@/actions/updateOrder", () => ({ updateFinalOrder: async () => {} }));
+vi.mock("@/actions/updateOrder", () => ({
+  confirmSubmission: async () => {},
+  revertFinalOrder: async () => {},
+}));
 
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => order,

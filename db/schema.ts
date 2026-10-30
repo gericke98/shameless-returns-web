@@ -295,6 +295,57 @@ export const receiptShortfalls = pgTable(
   })
 );
 
+/**
+ * The customer's agreement for one submission (drizzle/0006_return_submissions.sql),
+ * saved before checkout from lib/agreement.ts. Written and transitioned by
+ * db/submissions.ts only.
+ */
+export const returnSubmissions = pgTable("return_submissions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: text("order_id").notNull(),
+  state: text("state").notNull().default("awaiting_payment"),
+  tender: text("tender").notNull(),
+  returnMethod: text("return_method").notNull(),
+  currency: text("currency").notNull().default("EUR"),
+  returnLegCents: integer("return_leg_cents").notNull(),
+  outboundLegCents: integer("outbound_leg_cents").notNull(),
+  chargedFeeCents: integer("charged_fee_cents").notNull(),
+  returnedValueCents: integer("returned_value_cents").notNull(),
+  replacementValueCents: integer("replacement_value_cents").notNull(),
+  netCents: integer("net_cents").notNull(),
+  stripeChargeCents: integer("stripe_charge_cents").notNull(),
+  waivedCents: integer("waived_cents").notNull(),
+  owedCents: integer("owed_cents").notNull(),
+  residualCents: integer("residual_cents").notNull(),
+  stripeSessionId: text("stripe_session_id").unique(),
+  stripePaymentIntent: text("stripe_payment_intent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+});
+
+export const submissionLines = pgTable(
+  "submission_lines",
+  {
+    submissionId: uuid("submission_id").notNull(),
+    productsorderId: integer("productsorder_id").notNull(),
+    shopifyLineItemId: text("shopify_line_item_id").notNull(),
+    quantity: integer("quantity").notNull(),
+    action: text("action").notNull(),
+    newVariantId: text("new_variant_id"),
+    reason: text("reason"),
+    notes: text("notes"),
+    returnedCents: integer("returned_cents").notNull(),
+    replacementCents: integer("replacement_cents").notNull(),
+    payCents: integer("pay_cents").notNull(),
+    stripeFundedCents: integer("stripe_funded_cents").notNull(),
+    fulfillmentLineItemId: text("fulfillment_line_item_id"),
+    returnLineItemId: text("return_line_item_id"),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.submissionId, table.productsorderId] }),
+  })
+);
+
 // APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
 //
 // There is no `drizzle/` directory and no committed migration history, so

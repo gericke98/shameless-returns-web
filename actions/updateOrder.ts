@@ -23,6 +23,7 @@ import {
   reserveExchangeStock,
 } from "./exchangeReservation";
 import { refundSourceFor } from "./replacementOrder";
+import { getSubmission, recordConfirmation } from "@/db/submissions";
 import {
   buildReturnInput,
   matchReturnLineItems,
@@ -289,7 +290,14 @@ export async function updateData(prevState: number, formData: FormData) {
  * unfulfillable garment no longer costs the customer the rest of their return.
  */
 async function resolveFulfillmentLineItems(
-  products: Array<{ action?: string; variant_id: string; [key: string]: any }>,
+  products: Array<{
+    productsorderId: number;
+    /** Shopify's line item id (`productsorder.line_item`): the line's identity. */
+    lineItemId: string;
+    action?: string;
+    variant_id: string;
+    [key: string]: any;
+  }>,
   totalOrder: OrderData
 ): Promise<ReturnableLine[]> {
   const returnable = products.filter((p) => p.action);
@@ -305,14 +313,15 @@ async function resolveFulfillmentLineItems(
 
   const lines: ReturnableLine[] = [];
   for (const product of returnable) {
+    // Matched on the LINE ITEM, not the variant: an order can carry the same
+    // variant on two lines, and matching by variant gave both rows the first
+    // line's fulfillment.
     const fulfillment = totalOrder.fulfillments.find((f) =>
-      f.line_items.some(
-        (item) => Number(item.variant_id) === Number(product.variant_id)
-      )
+      f.line_items.some((item) => String(item.id) === String(product.lineItemId))
     );
     if (!fulfillment) {
       console.error(
-        `No fulfillment found for variant ${product.variant_id} on order ${totalOrder.id} — line skipped`
+        `No fulfillment found for line item ${product.lineItemId} on order ${totalOrder.id} — line skipped`
       );
       continue;
     }
@@ -320,17 +329,17 @@ async function resolveFulfillmentLineItems(
     const response = await fetchFulfillment(fulfillment.admin_graphql_api_id);
     const match = response.data.fulfillmentLineItems.edges.find(
       (e: FulfillmentLineItem) =>
-        e.node.lineItem.variant.id ===
-        `gid://shopify/ProductVariant/${product.variant_id}`
+        e.node.lineItem.id === `gid://shopify/LineItem/${product.lineItemId}`
     );
     if (!match) {
       console.error(
-        `No fulfillment line item for variant ${product.variant_id} on order ${totalOrder.id} — line skipped`
+        `No fulfillment line item for line item ${product.lineItemId} on order ${totalOrder.id} — line skipped`
       );
       continue;
     }
 
     lines.push({
+      productsorderId: product.productsorderId,
       variant_id: String(product.variant_id),
       fulfillmentLineItemId: match.node.id,
       quantity: product.quantity,
@@ -361,12 +370,8 @@ async function resolveFulfillmentLineItems(
  * would succeed and the return would never be created. The gate belongs on the
  * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
  */
-export async function updateFinalOrder(
-  id: string,
-  revert: boolean = false,
-  isCredit: boolean
-) {
-  if (revert) {
+export async function revertFinalOrder(id: string) {
+  {
     // Deliberately NOT `getOrderProductsById` — that is wrapped in React
     // `cache()`, so a revert following a create in the SAME request would read
     // the rows as they were before the create and decide on stale data. The
@@ -395,15 +400,12 @@ export async function updateFinalOrder(
           return true;
         }
         if (product.confirmed) {
+          // By row id: two rows can share a variant, and only this one is
+          // being reverted.
           await db
             .update(productsOrder)
             .set({ confirmed: false, return_id: null })
-            .where(
-              and(
-                eq(productsOrder.variant_id, product.variant_id),
-                eq(productsOrder.orderId, id)
-              )
-            );
+            .where(eq(productsOrder.id, product.id));
         }
         return false;
       })
@@ -424,57 +426,81 @@ export async function updateFinalOrder(
       await releaseExchangeReservation(id);
     }
     revalidatePath("/", "layout");
+  }
+}
+
+/**
+ * Confirm an ACCEPTED submission: create its Shopify return and mark its rows,
+ * from the agreement — never from the live rows.
+ *
+ * The rows can change between checkout and payment (another tab, a fee-table
+ * edit); what was paid for is the submission, so that is what is returned,
+ * reserved and later settled. Lines are identified by `productsorder.id` and
+ * the Shopify line item id, never by variant: two rows can share a variant.
+ *
+ * NOT session-gated, for the reason given on `revertFinalOrder` above: the
+ * Stripe webhook calls it with no cookies. The gate is that only an accepted
+ * submission is confirmed, and only the free path and a verified payment
+ * accept one (db/submissions.ts).
+ */
+export async function confirmSubmission(submissionId: string) {
+  const loaded = await getSubmission(submissionId);
+  if (!loaded || loaded.submission.state !== "accepted") {
+    throw new Error(
+      `confirmSubmission: submission ${submissionId} is ${loaded?.submission.state ?? "missing"}, not accepted`
+    );
+  }
+  const { submission, lines: agreed } = loaded;
+  const id = submission.orderId;
+
+  // Idempotency. Reachable twice for one parcel: the Stripe webhook is
+  // redelivered, or the free path is retried. Shopify would reject the second
+  // `returnCreate` — the units are already on the first return — and the
+  // caller's catch-all revert used to undo the first, successful return.
+  if (agreed.some((line) => line.returnLineItemId)) {
+    console.warn(
+      `Order ${id}: submission ${submissionId} already has its Shopify return — skipping creation (redelivery or retry).`
+    );
     return;
   }
-  const totalOrder = await getOrderTotal(id);
-  const products = await getOrderProductsById(id);
 
-  // Idempotency. Reachable twice for one parcel: the customer resubmits after a
-  // slow request (or a timeout), or the Stripe webhook is redelivered. Shopify
-  // then rejects the second `returnCreate` — the units are already on the first
-  // return, so it fails with "Return line item has an invalid quantity" — and
-  // the caller's catch-all revert used to undo the first, successful return.
-  //
-  // Bail out before touching Shopify. The return already exists, which is the
-  // outcome the caller wants; creating a second one for the same parcel is the
-  // same class of bug as #310756, which was billed the return fee twice.
-  const alreadyReturned = products.find((p) => p.return_id);
+  const totalOrder = await getOrderTotal(id);
+  // Fresh, not `getOrderProductsById`: that is request-scoped `cache()`d.
+  const rows = await db.query.productsOrder.findMany({
+    where: eq(productsOrder.orderId, id),
+  });
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+
+  // A row already carrying a return is on a live Shopify return from an
+  // earlier submission — asking Shopify for it again fails the whole mutation.
+  // Same class of bug as #310756, which was billed the return fee twice.
+  const alreadyReturned = agreed
+    .map((line) => rowById.get(line.productsorderId))
+    .find((row) => row?.return_id);
   if (alreadyReturned) {
     console.warn(
-      `Order ${id}: a Shopify return (${alreadyReturned.return_id}) already exists for this parcel — skipping creation (duplicate submit or webhook redelivery).`
+      `Order ${id}: row ${alreadyReturned.id} already carries Shopify return ${alreadyReturned.return_id} — skipping creation.`
     );
     return;
   }
 
   const dbOrder = await getOrderById(id);
-  const feeTable = await getFeeTable();
-  const orderFees = feesForCountry(
-    feeTable,
-    resolveZone(dbOrder?.shippingCountry, dbOrder?.shippingZip)
-  );
-  // One parcel, one weight: the band comes from the whole return, not from
-  // any single product in it.
-  const loadedForWeight = await loadBasket(id);
-  // A self-booked return pays its own courier, so the leg we declare to Shopify
-  // is zero — the same subtraction `createStripeUrl` already applied to the
-  // charge. Declaring the full leg here is the settlement half of the same
-  // deduction and would take it straight out of the refund the customer was
-  // shown.
-  //
-  // Read FRESH, not through `getOrderById`: that is request-scoped `cache()`d,
-  // and on the free path `decideMethod` has already primed it with the
-  // pre-`persistReturnMethod` snapshot, which still says null. A self-booked
-  // pure return is free by construction, so that is exactly the case this has
-  // to get right.
-  const selfBooked = (await getOrderByIdFresh(id))?.returnMethod === "SELF";
-  const returnFeeEuros = selfBooked
-    ? 0
-    : centsToEuros(
-        feesForWeight(orderFees, loadedForWeight?.basket.grams ?? 0).returnFeeCents
-      );
+  // The leg declared to Shopify is the one agreed at checkout: zero for a
+  // self-booked return, which pays its own courier.
+  const returnFeeEuros =
+    submission.returnMethod === "SELF" ? 0 : centsToEuros(submission.returnLegCents);
 
   const lines = await resolveFulfillmentLineItems(
-    products.map((p) => ({ ...p, action: p.action || undefined })),
+    agreed.map((line) => ({
+      productsorderId: line.productsorderId,
+      lineItemId: line.shopifyLineItemId,
+      variant_id: String(rowById.get(line.productsorderId)?.variant_id ?? ""),
+      quantity: line.quantity,
+      action: line.action,
+      reason: line.reason,
+      notes: line.notes,
+      new_variant_id: line.newVariantId,
+    })),
     totalOrder
   );
   if (lines.length === 0) {
@@ -503,12 +529,10 @@ export async function updateFinalOrder(
     presentment: presentmentRateFromOrder(totalOrder.total_price_set),
   });
 
-  // The `lines.length` guard above cannot cover this: `buildReturnInput` is
-  // what drops a line Shopify will no longer take back, so an order whose every
-  // line has already been refunded still arrives here with lines in hand and an
-  // EMPTY payload. Asking Shopify to create a return with no line items spends
-  // a round trip to be told what we can already see, and turns "nothing to
-  // return" into an opaque mutation error on the customer's screen.
+  // `buildReturnInput` drops a line Shopify will no longer take back, so an
+  // order whose every line has already been refunded arrives here with an
+  // EMPTY payload. Asking Shopify to create a return with no line items
+  // spends a round trip to be told what we can already see.
   if (returnInput.returnLineItems.length === 0) {
     console.error(
       `Order ${id}: every line is already refunded in Shopify — nothing to return`
@@ -530,10 +554,10 @@ export async function updateFinalOrder(
   // placeholder; the money is on the root order. See actions/replacementOrder.ts.
   //
   // Guarded HERE, not inside `refundSourceFor`: the Shopify return above
-  // already exists, and `return_id` — written in the loop below — is what the
-  // idempotency guard at the top of this function checks on a retry. Letting
-  // a `resolveRootOrderId` cycle or a failed `getOrderByIdFresh` throw out of
-  // this function would leave that guard blind, so a resubmit or webhook
+  // already exists, and the return line item ids — written below — are what
+  // the idempotency guard at the top of this function checks on a retry.
+  // Letting a `resolveRootOrderId` cycle or a failed `getOrderByIdFresh` throw
+  // out of this function would leave that guard blind, so a webhook
   // redelivery would create a SECOND Shopify return for the same parcel. Null
   // degrades safely instead: `settleReturn` refuses a null transaction with
   // `no-refund-transaction`, which the cron alerts on.
@@ -552,39 +576,38 @@ export async function updateFinalOrder(
   // makes no promise to echo the input order, and `return_line_item_id` is what
   // `returnRefund` later spends. Pairing by index would refund the wrong
   // garment.
-  const returnLineItemByVariant = matchReturnLineItems(
+  const returnLineItemByFulfillment = matchReturnLineItems(
     result.data.returnLineItems,
     lines
   );
+  const confirmed = lines.flatMap((line) => {
+    const returnLineItemId = line.fulfillmentLineItemId
+      ? returnLineItemByFulfillment[line.fulfillmentLineItemId]
+      : undefined;
+    if (!returnLineItemId || line.productsorderId == null) {
+      // Leave the row unconfirmed rather than store an id we did not receive.
+      console.error(
+        `Order ${id}: Shopify returned no return line item for row ${line.productsorderId} — row left unconfirmed`
+      );
+      return [];
+    }
+    return [
+      {
+        productsorderId: line.productsorderId,
+        fulfillmentLineItemId: line.fulfillmentLineItemId as string,
+        returnLineItemId,
+      },
+    ];
+  });
 
-  await Promise.all(
-    lines.map(async (line) => {
-      const returnLineItemId = returnLineItemByVariant[line.variant_id];
-      if (!returnLineItemId) {
-        // Leave the row unconfirmed rather than store an id we did not receive.
-        console.error(
-          `Order ${id}: Shopify returned no return line item for variant ${line.variant_id} — row left unconfirmed`
-        );
-        return;
-      }
-      await db
-        .update(productsOrder)
-        .set({
-          confirmed: true,
-          return_id: result.data.id,
-          return_line_item_id: returnLineItemId,
-          transaction_id: refundSource.transactionId,
-          transaction_amount: refundSource.transactionAmount,
-          ...(isCredit ? { credit: true } : {}),
-        })
-        .where(
-          and(
-            eq(productsOrder.variant_id, line.variant_id),
-            eq(productsOrder.orderId, String(totalOrder.id))
-          )
-        );
-    })
-  );
+  await recordConfirmation({
+    submissionId,
+    returnId: result.data.id,
+    transactionId: refundSource.transactionId,
+    transactionAmount: refundSource.transactionAmount,
+    credit: submission.tender === "credit",
+    lines: confirmed,
+  });
 
   // The rows are now confirmed, which is the moment the customer has paid.
   // Hold the replacement stock so their size cannot sell out during the days

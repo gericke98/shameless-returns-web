@@ -192,8 +192,8 @@ describe("matchReturnLineItems", () => {
 
     const matched = matchReturnLineItems(nodes, [returnLine, exchangeLine]);
 
-    expect(matched[returnLine.variant_id]).toBe("gid://shopify/ReturnLineItem/A");
-    expect(matched[exchangeLine.variant_id]).toBe("gid://shopify/ReturnLineItem/B");
+    expect(matched[FLI_A]).toBe("gid://shopify/ReturnLineItem/A");
+    expect(matched[FLI_B]).toBe("gid://shopify/ReturnLineItem/B");
   });
 
   it("leaves a line unmatched rather than guessing", () => {
@@ -201,8 +201,21 @@ describe("matchReturnLineItems", () => {
       { id: "gid://shopify/ReturnLineItem/A", fulfillmentLineItem: { id: FLI_A } },
     ];
     const matched = matchReturnLineItems(nodes, [returnLine, exchangeLine]);
-    expect(matched[returnLine.variant_id]).toBe("gid://shopify/ReturnLineItem/A");
-    expect(matched[exchangeLine.variant_id]).toBeUndefined();
+    expect(matched[FLI_A]).toBe("gid://shopify/ReturnLineItem/A");
+    expect(matched[FLI_B]).toBeUndefined();
+  });
+
+  it("keeps two lines of the SAME variant apart", () => {
+    // Keyed by variant, both rows got one return line — the second garment was
+    // then settled against the first one's id.
+    const twin = { ...returnLine, fulfillmentLineItemId: FLI_B };
+    const nodes = [
+      { id: "gid://shopify/ReturnLineItem/A", fulfillmentLineItem: { id: FLI_A } },
+      { id: "gid://shopify/ReturnLineItem/B", fulfillmentLineItem: { id: FLI_B } },
+    ];
+    const matched = matchReturnLineItems(nodes, [returnLine, twin]);
+    expect(matched[FLI_A]).toBe("gid://shopify/ReturnLineItem/A");
+    expect(matched[FLI_B]).toBe("gid://shopify/ReturnLineItem/B");
   });
 
   it("survives a response with no fulfillmentLineItem on a node", () => {

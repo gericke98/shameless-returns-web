@@ -2,7 +2,10 @@ import { createShippingLabel } from "@/actions/shipping";
 import { createInternationalReturn } from "@/actions/amphoraReturn";
 import { createSelfBookedReturn } from "@/actions/selfBookedReturn";
 import { alertOps } from "@/actions/opsAlert";
-import { updateFinalOrder } from "@/actions/updateOrder";
+import { confirmSubmission, revertFinalOrder } from "@/actions/updateOrder";
+import { enqueueOpsAlert } from "@/actions/opsAlertOutbox";
+import { acceptPaidSubmission, attachStripeSession, type PaidOutcome } from "@/db/submissions";
+import { proposeCurrentSelection } from "@/lib/submissionProposal";
 import db from "@/db/drizzle";
 import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
@@ -88,7 +91,7 @@ async function alertPaidButNoReturn(
 /**
  * What the revert actually left behind, in the alert's own words.
  *
- * `updateFinalOrder` REFUSES to revert any line already carrying a Shopify
+ * `revertFinalOrder` REFUSES to revert any line already carrying a Shopify
  * return (the #310957 lesson), so "the database has been reverted" is false
  * whenever the return was created before the booking failed — which is the
  * normal ordering. Order #311329 (2026-08-21) was alerted with that text while
@@ -131,6 +134,45 @@ function survivingReturn(
     `Whatever you find, confirm the exchange stock hold is still in place`,
     `(orders.exchange_reservation_id) — a refused revert used to release it.`,
   ];
+}
+
+/**
+ * The customer paid, and we deliberately confirmed nothing: the payment is not
+ * the one the submission asked for. Either it paid an OLD checkout the
+ * customer had already replaced (another tab), or its amount, currency,
+ * status or session do not match what was agreed. Confirming it would create
+ * a return for terms nobody paid for, so a human decides: refund it in
+ * Stripe, or honour it. Nothing here moves money.
+ *
+ * Through the outbox, keyed on the session: a redelivered webhook is one alert.
+ */
+async function alertPaymentNotConfirmed(
+  orderId: string,
+  session: Stripe.Checkout.Session,
+  paymentIntentId: string | null,
+  outcome: Exclude<PaidOutcome, { kind: "accepted" } | { kind: "duplicate" }>
+) {
+  const why =
+    outcome.kind === "superseded"
+      ? `it pays a checkout the customer had already replaced (submission ${outcome.state})`
+      : outcome.kind === "mismatch"
+        ? `it does not match the agreed terms: ${outcome.detail}`
+        : `its submission does not exist`;
+  await enqueueOpsAlert({
+    dedupeKey: `paid-unconfirmed:${session.id}`,
+    subject: `[returns] PAID, NOT CONFIRMED — order ${orderId}`,
+    body: [
+      `Stripe took a payment for order ${orderId} and NO return was created, because ${why}.`,
+      ``,
+      `Session:        ${session.id}`,
+      `Payment intent: ${paymentIntentId ?? "(none)"}`,
+      `Amount:         ${((session.amount_total ?? 0) / 100).toFixed(2)} ${String(session.currency ?? "").toUpperCase()}`,
+      ``,
+      `Nothing was refunded automatically. Check the order's current submission`,
+      `(return_submissions), then either refund this payment in Stripe or`,
+      `honour it by hand — do not do both.`,
+    ].join("\n"),
+  });
 }
 
 export async function POST(req: Request) {
@@ -176,9 +218,6 @@ export async function POST(req: Request) {
       }
       // Una vez se ha procesado el pago vamos con los siguientes pasos
       try {
-        // // First update the database
-        await updateFinalOrder(id, false, isCredit);
-        // // // Then create the return shipment (Correos label or Amphora collection)
         const order = await getOrderById(id);
         // The lane the customer chose, persisted before they left for Stripe.
         // Null on rows created before self-booking existed, which fall back to
@@ -189,6 +228,37 @@ export async function POST(req: Request) {
             order?.shippingCountry,
             process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
           );
+
+        // The submission this session paid for. A session created before
+        // submissions existed carries none: its agreement is built now, from
+        // the rows as they stand — exactly what confirming them used to mean —
+        // and then has to pass the same payment check as any other.
+        let submissionId = metadata.submissionId;
+        if (!submissionId) {
+          const proposal = await proposeCurrentSelection(id, isCredit, method);
+          if (!proposal) throw new Error(`nothing selected on order ${id} to confirm`);
+          await attachStripeSession(proposal.submissionId, session.id);
+          submissionId = proposal.submissionId;
+        }
+
+        // Accept only the payment this submission asked for: this session,
+        // this amount, EUR, paid. A redelivery finds it already accepted and
+        // carries on to the idempotent confirm below.
+        const outcome = await acceptPaidSubmission(submissionId, {
+          sessionId: session.id,
+          amountTotal: session.amount_total ?? null,
+          currency: session.currency ?? null,
+          paymentStatus: session.payment_status ?? null,
+          paymentIntent: paymentIntentId,
+        });
+        if (outcome.kind !== "accepted" && outcome.kind !== "duplicate") {
+          await alertPaymentNotConfirmed(id, session, paymentIntentId, outcome);
+          return NextResponse.json({ received: true });
+        }
+
+        // // First update the database
+        await confirmSubmission(submissionId);
+        // // // Then create the return shipment (Correos label or Amphora collection)
         const statusLabel =
           method === "SELF"
             ? await createSelfBookedReturn(id)
@@ -197,7 +267,7 @@ export async function POST(req: Request) {
               : await createShippingLabel(id);
         if (statusLabel !== 200) {
           // If label creation fails, undo database changes
-          await updateFinalOrder(id, true, isCredit); // Assuming we add a revert parameter
+          await revertFinalOrder(id);
           console.error("Failed to create shipping label");
           await alertPaidButNoReturn(
             id,
@@ -210,7 +280,7 @@ export async function POST(req: Request) {
         console.error("Error in order processing:", error);
         // Attempt to undo database changes if there was an error
         try {
-          await updateFinalOrder(id, true, isCredit);
+          await revertFinalOrder(id);
         } catch (undoError) {
           console.error("Failed to revert database changes:", undoError);
           // Worse than the failure being reported: the money is taken, the

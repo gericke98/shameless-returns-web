@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { acceptedSubmission } from "./submissionFixture";
 
 // The return fee is collected in TWO places, and self-booking has to be
 // subtracted from both.
 //
 //   1. `createStripeUrl` — the pre-payment point. Already correct.
-//   2. settlement — `updateFinalOrder` declares `returnShippingFee` on the
+//   2. settlement — `confirmSubmission` declares `returnShippingFee` on the
 //      Shopify return, and `validateReturn` deducts the leg from the refund or
 //      the gift card.
 //
@@ -35,12 +36,12 @@ vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 const giftCards: number[] = [];
 const refunds: number[] = [];
 
-// ── updateFinalOrder scaffolding ────────────────────────────────────────────
+// ── confirmSubmission scaffolding ───────────────────────────────────────────
 const FULFILLMENT_GID = "gid://shopify/Fulfillment/1";
 const TOTAL_ORDER = {
   id: "13192219558214",
   fulfillments: [
-    { admin_graphql_api_id: FULFILLMENT_GID, line_items: [{ variant_id: 1 }] },
+    { admin_graphql_api_id: FULFILLMENT_GID, line_items: [{ id: 11, variant_id: 1 }] },
   ],
 };
 const FULFILLMENT_LINE_ITEMS = {
@@ -50,7 +51,10 @@ const FULFILLMENT_LINE_ITEMS = {
         {
           node: {
             id: "gid://shopify/FulfillmentLineItem/1",
-            lineItem: { variant: { id: "gid://shopify/ProductVariant/1" } },
+            lineItem: {
+              id: "gid://shopify/LineItem/11",
+              variant: { id: "gid://shopify/ProductVariant/1" },
+            },
           },
         },
       ],
@@ -58,15 +62,24 @@ const FULFILLMENT_LINE_ITEMS = {
   },
 };
 const LINE_ROWS = [
-  { variant_id: "1", confirmed: false, return_id: null, action: "DEVOLUCIÓN", quantity: 1 },
+  { id: 1, lineItemId: "11", variant_id: "1", confirmed: false, return_id: null, action: "DEVOLUCIÓN", quantity: 1 },
 ];
+
+// What was agreed at checkout. The return leg declared to Shopify is read from
+// HERE — the lane and the leg the customer was charged for — never re-derived
+// from the order row afterwards.
+const agreed = { returnMethod: "CORREOS", returnLegCents: 650 };
+vi.mock("@/db/submissions", () => ({
+  getSubmission: async () => acceptedSubmission(ORDER.id, LINE_ROWS, agreed),
+  recordConfirmation: async () => [],
+}));
 const returnInputs: any[] = [];
 
 // `getOrderById` is request-scoped React `cache()`d, and on the FREE path
 // `decideMethod` primes it BEFORE `persistReturnMethod` writes the lane — so the
 // cached snapshot still says `returnMethod: null` while the row says "SELF".
 // Flipping this makes the two readers disagree exactly the way production does,
-// which is the only way a test can tell which one `updateFinalOrder` actually
+// which is the only way a test can tell which one `confirmSubmission` actually
 // calls. Default false, so every other test in this file is unaffected.
 const cachedIsStale = { value: false };
 
@@ -142,11 +155,13 @@ async function settleLine(product: Record<string, any>) {
 }
 
 async function createTheShopifyReturn() {
-  const { updateFinalOrder } = await import("@/actions/updateOrder");
-  await updateFinalOrder(ORDER.id, false, false);
+  const { confirmSubmission } = await import("@/actions/updateOrder");
+  await confirmSubmission("sub-1");
 }
 
 beforeEach(() => {
+  agreed.returnMethod = "CORREOS";
+  agreed.returnLegCents = 650;
   giftCards.length = 0;
   refunds.length = 0;
   returnInputs.length = 0;
@@ -234,7 +249,7 @@ describe("settling a self-booked return", () => {
     // The other half of the same deduction: Shopify applies
     // `returnShippingFee` when the return is refunded, so leaving it at the
     // full leg docks the customer there instead.
-    ORDER.returnMethod = "SELF";
+    agreed.returnMethod = "SELF";
 
     await createTheShopifyReturn();
 
@@ -244,20 +259,14 @@ describe("settling a self-booked return", () => {
     });
   });
 
-  it("reads the lane FRESH, not through the request cache", async () => {
-    // Regression guard for the fix, not for the feature.
-    //
-    // `updateFinalOrder` must call `getOrderByIdFresh`. Every other test here
-    // mocks both readers to the same object, so swapping the call back to the
-    // cached `getOrderById` would leave them all green while silently
-    // re-introducing the settlement double-charge for the headline case: a free
-    // self-booked return on the free path, where `decideMethod` has already
-    // primed the cache with the pre-persist snapshot.
-    //
-    // Here the two readers disagree the way they do in production — cached says
-    // null, the row says SELF. Reading the wrong one declares the full 6.50.
+  it("takes the lane from the submission, not from the order row", async () => {
+    // Regression guard. The order row (and its request-cached snapshot, which
+    // on the free path still says null) can disagree with what the customer
+    // agreed to; the submission is the agreement. Here the row says CORREOS
+    // and the submission says SELF: the declared leg must be the agreed 0.00.
+    ORDER.returnMethod = "CORREOS";
     cachedIsStale.value = true;
-    ORDER.returnMethod = "SELF";
+    agreed.returnMethod = "SELF";
 
     await createTheShopifyReturn();
 
@@ -268,7 +277,7 @@ describe("settling a self-booked return", () => {
   });
 
   it("still declares the full leg for a return we shipped ourselves", async () => {
-    ORDER.returnMethod = "CORREOS";
+    agreed.returnMethod = "CORREOS";
 
     await createTheShopifyReturn();
 

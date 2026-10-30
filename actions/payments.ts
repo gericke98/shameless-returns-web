@@ -1,20 +1,14 @@
 "use server";
 
 import { stripe } from "@/lib/stripe";
-import { getFeeTable } from "@/db/fees";
-import { loadBasket } from "@/lib/loadBasket";
 import { normalizeCountry } from "@/lib/countries";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "@/actions/opsAlert";
-import {
-  centsToEuros,
-  checkoutLines,
-  resolveFee,
-  type CheckoutLine,
-} from "@/lib/fees";
-import { feeLegsForOrder } from "@/lib/feeLegs";
+import { centsToEuros, checkoutLines, type CheckoutLine } from "@/lib/fees";
 import { dictionaries, readLocale } from "@/lib/i18n";
 import type { ReturnMethod } from "@/lib/returnMethods";
+import { attachStripeSession } from "@/db/submissions";
+import { proposeCurrentSelection } from "@/lib/submissionProposal";
 
 function absoluteUrl(path: string) {
   return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
@@ -29,8 +23,11 @@ const returnUrl = absoluteUrl("/");
  * a `total` computed in the browser, which meant the page could set its own
  * price.
  *
- * Returns { data: null } when the basket does not actually owe anything —
- * callers must treat a null URL as "no payment required".
+ * Saves the submission's agreement first (db/submissions.ts) and binds the
+ * session to it. Returns `{ data: null, submissionId }` when nothing is owed to
+ * Stripe — callers must treat a null URL as "no payment required" and accept
+ * the submission themselves — and `submissionId: null` when there is nothing
+ * to submit at all.
  */
 export const createStripeUrl = async (
   id: string,
@@ -44,54 +41,23 @@ export const createStripeUrl = async (
   // actions are addressable endpoints, and bundler behaviour is not a security
   // boundary. Not shared with the Stripe webhook, which consumes sessions
   // rather than creating them, so gating it is safe.
-  if (!(await hasOrderAccess(id))) return { data: null };
+  if (!(await hasOrderAccess(id))) return { data: null, submissionId: null };
 
-  const loaded = await loadBasket(id);
-  if (!loaded) return { data: null };
+  // The agreement — what the customer is shown, what Stripe takes and what is
+  // later owed — saved BEFORE any session exists, so the webhook confirms what
+  // was paid for rather than whatever the rows say by then. Built by the same
+  // function the portal total reads (lib/agreement.ts).
+  const proposal = await proposeCurrentSelection(id, isCredit, method);
+  if (!proposal) return { data: null, submissionId: null };
+  const { submissionId, agreement } = proposal;
+  const { order, basket } = proposal.loaded;
 
-  const { order, basket } = loaded;
-
-  const feeTable = await getFeeTable();
-  // Two legs, two zones. The parcel is collected from `order.shipping*` and the
-  // replacement is delivered to the delivery address, which is the same place
-  // unless the customer named a different one. Before this, both were priced
-  // from the collection country: a Spain-collected exchange delivered to the
-  // US was charged Spain's 8.50 for a journey costing 5.00 + 12.96.
-  const legs = feeLegsForOrder(feeTable, order);
-  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(legs, basket);
-
-  // A self-booked return pays its own courier, so we bill the outbound leg
-  // alone — the replacement garment still travels on our account. This is the
-  // whole of the SELF pricing rule: a subtraction, not a second fee table.
-  //
-  // `method` has already been through resolveReturnMethod on the server, so it
-  // cannot be a client claiming SELF where SELF is not offered.
-  const selfBooked = method === "SELF";
-  const chargeReturnLegCents = selfBooked ? 0 : returnLegCents;
-  const chargeCents = selfBooked ? outboundLegCents : feeCents;
-
+  const chargeCents = agreement.chargedFeeCents;
   // netAmount is what the customer is owed; the fee reduces it. A negative
   // total means the customer owes us that much.
-  const totalEuros = basket.netAmount - centsToEuros(chargeCents);
-  // Only meaningful once totalEuros < 0 (see below), but computed here so the
-  // alert block and the real early return share one number rather than two
-  // copies of the same arithmetic drifting apart.
-  const amountCents = Math.round(-totalEuros * 100);
+  const totalEuros = agreement.netCents / 100;
+  const amountCents = Math.max(0, -agreement.netCents);
 
-  // A degraded basket means at least one replacement was priced from the
-  // order's median discount depth, or from list price, because its original
-  // variant is not in the catalogue getProducts() returns — that filters
-  // Shopify to `status:ACTIVE`, so a product merely set to DRAFT is just as
-  // invisible here as one actually deleted. That has never happened in
-  // production (0 of 289 exchange lines) — so if it does, we want to hear
-  // about it before the customer is charged, not after.
-  //
-  // The body is written AFTER the amount is known and must say only what is
-  // true on THIS path — this repo has already sent someone hunting a refund
-  // that never happened (see app/api/cron/auto-approve/route.ts), so a body
-  // that claims a charge on a path that returns { data: null } is exactly
-  // that mistake again. Every basket-bearing path below still alerts before
-  // its own `return` — this only moves WHAT is said, not WHEN.
   if (basket.degraded) {
     if (totalEuros >= 0) {
       await alertOps(
@@ -120,14 +86,11 @@ export const createStripeUrl = async (
     }
   }
 
-  if (totalEuros >= 0) return { data: null };
-
-  // Stripe rejects a EUR charge below its €0.50 minimum, so a session created
-  // for less would fail at the moment the customer tries to pay. That is now
-  // reachable: per-country fees may legitimately be €0.00, which makes a
-  // one-cent shortfall on an exchange possible. Treat it as "no payment
-  // required" — the same contract as the >= 0 case above.
-  if (amountCents < 50) return { data: null };
+  // Nothing to collect: a refund or a break-even, or a shortfall under
+  // Stripe's €0.50 minimum (per-country fees may legitimately be €0.00, which
+  // makes a one-cent exchange shortfall possible). The agreement records
+  // which, as `waived_cents`.
+  if (agreement.stripeChargeCents === 0) return { data: null, submissionId };
 
   // Itemise the checkout the same way the on-site summary itemises it, so the
   // customer is not asked to approve a single "fee" that silently bundles a
@@ -145,12 +108,15 @@ export const createStripeUrl = async (
 
   const lines = checkoutLines(
     basket,
-    { returnLegCents: chargeReturnLegCents, outboundLegCents },
-    amountCents
+    {
+      returnLegCents: method === "SELF" ? 0 : agreement.returnLegCents,
+      outboundLegCents: agreement.outboundLegCents,
+    },
+    agreement.stripeChargeCents
   );
   const stripeLines = lines.length
     ? lines.map((line) => ({ name: LINE_LABEL[line.kind], amountCents: line.amountCents }))
-    : [{ name: "Returns & Exchanges Fee", amountCents }];
+    : [{ name: "Returns & Exchanges Fee", amountCents: agreement.stripeChargeCents }];
 
   const isCreditMeta = isCredit ? "true" : "false";
   const stripeSession = await stripe.checkout.sessions.create({
@@ -168,12 +134,20 @@ export const createStripeUrl = async (
         unit_amount: line.amountCents,
       },
     })),
+    // The submission id is what the webhook confirms: this session can only
+    // ever accept THIS agreement (db/submissions.ts acceptPaidSubmission).
+    client_reference_id: submissionId,
     metadata: {
       id: id,
       isCredit: isCreditMeta,
+      submission_id: submissionId,
     },
     success_url: returnUrl + "/success",
     cancel_url: returnUrl,
   });
-  return { data: stripeSession.url };
+  if (!(await attachStripeSession(submissionId, stripeSession.id))) {
+    // Superseded between the insert and now: a newer checkout owns the order.
+    throw new Error(`Order ${id}: submission ${submissionId} was superseded before checkout`);
+  }
+  return { data: stripeSession.url, submissionId };
 };

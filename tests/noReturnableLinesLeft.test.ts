@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { acceptedSubmission } from "./submissionFixture";
 
 // The gap between two correct changes.
 //
-// `updateFinalOrder` bails early on "no returnable lines", but it checks that
+// `confirmSubmission` bails early on "no returnable lines", but it checks that
 // BEFORE `buildReturnInput` runs — and `buildReturnInput` is now the thing that
 // drops lines Shopify will not take back (#310828). So an order whose every
 // line has been refunded passes the early guard with lines in hand, and then
@@ -22,7 +23,7 @@ const FULFILLMENT_GID = "gid://shopify/Fulfillment/1";
 const TOTAL_ORDER = {
   id: "13172075168070",
   fulfillments: [
-    { admin_graphql_api_id: FULFILLMENT_GID, line_items: [{ variant_id: 1 }] },
+    { admin_graphql_api_id: FULFILLMENT_GID, line_items: [{ id: 11, variant_id: 1 }] },
   ],
 };
 
@@ -35,6 +36,7 @@ const FULFILLMENT_LINE_ITEMS = {
           node: {
             id: "gid://shopify/FulfillmentLineItem/1",
             lineItem: {
+              id: "gid://shopify/LineItem/11",
               refundableQuantity: 0,
               variant: { id: "gid://shopify/ProductVariant/1" },
             },
@@ -85,15 +87,22 @@ vi.mock("@/actions/exchangeReservation", () => ({
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
-async function updateFinalOrder() {
+const recorded = vi.fn(async () => []);
+vi.mock("@/db/submissions", () => ({
+  getSubmission: async () => acceptedSubmission("13172075168070", state.rows),
+  recordConfirmation: (...args: unknown[]) => (recorded as any)(...args),
+}));
+
+async function confirm() {
   const mod = await import("@/actions/updateOrder");
-  return mod.updateFinalOrder("13172075168070", false, false);
+  return mod.confirmSubmission("sub-1");
 }
 
 beforeEach(() => {
   state.rows = [
     {
       id: 1,
+      lineItemId: "11",
       variant_id: "1",
       quantity: 1,
       action: "DEVOLUCIÓN",
@@ -103,20 +112,22 @@ beforeEach(() => {
   ];
   state.writes = [];
   createReturn.mockClear();
+  recorded.mockClear();
 });
 
-describe("updateFinalOrder when every line has become unreturnable", () => {
+describe("confirmSubmission when every line has become unreturnable", () => {
   it("does not ask Shopify to create an empty return", async () => {
-    await updateFinalOrder();
+    await confirm();
 
     expect(createReturn).not.toHaveBeenCalled();
   });
 
   it("leaves the rows unconfirmed rather than claiming a return exists", async () => {
-    await updateFinalOrder();
+    await confirm();
 
     // Confirming here would make `returnOutcome` report success to a customer
     // whose garments were never booked back.
     expect(state.writes.some((w) => w.confirmed === true)).toBe(false);
+    expect(recorded).not.toHaveBeenCalled();
   });
 });

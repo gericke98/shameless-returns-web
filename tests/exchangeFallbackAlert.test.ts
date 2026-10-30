@@ -96,6 +96,10 @@ let fees = ZERO_FEES;
 const alerts: { subject: string; body: string }[] = [];
 const sessionsCreated: any[] = [];
 
+vi.mock("@/db/submissions", () => ({
+  proposeSubmission: async () => ({ ok: true, id: "sub-1" }),
+  attachStripeSession: async () => true,
+}));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 vi.mock("@/db/queries", () => ({
@@ -176,7 +180,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
 
     const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 
-    expect(result).toEqual({ data: null });
+    expect(result).toEqual({ data: null, submissionId: "sub-1" });
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — no charge");
     expect(alerts[0]?.body).toContain(order.id);
@@ -198,7 +202,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
 
     const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 
-    expect(result).toEqual({ data: null });
+    expect(result).toEqual({ data: null, submissionId: "sub-1" });
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — no charge");
     expect(alerts[0]?.body).toContain(order.id);

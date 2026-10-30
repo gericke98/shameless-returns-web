@@ -11,6 +11,7 @@ import { isInternationalOrder } from "@/lib/countries";
 import { sweepSelfReturns } from "@/actions/selfReturnSweep";
 import { alertOps } from "@/actions/opsAlert";
 import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { abandonExpiredSubmissions } from "@/db/submissions";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -87,6 +88,17 @@ async function conflictsOnOurOrders(
 export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Bookkeeping, before the Amphora call so an Amphora outage does not skip
+  // it: a submission whose Stripe session has expired (24 h) can no longer be
+  // paid. Nothing depends on it for correctness — a newer checkout supersedes
+  // it either way — so a failure is logged, not alerted.
+  let abandonedSubmissions = 0;
+  try {
+    abandonedSubmissions = (await abandonExpiredSubmissions()).length;
+  } catch (error: any) {
+    console.error("[amphora-sync] could not expire submissions:", error?.message || error);
   }
 
   let returns;
@@ -331,6 +343,7 @@ export async function GET(req: Request) {
     conflicts: conflicts.length,
     alertsQueued: alertsToQueue.length - alertsNotQueued,
     alertsNotQueued,
+    abandonedSubmissions,
   });
 }
 

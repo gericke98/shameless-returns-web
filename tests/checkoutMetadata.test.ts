@@ -12,12 +12,12 @@ import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 describe("parseCheckoutMetadata", () => {
   it("reads isCredit true from the string Stripe actually stores", () => {
     const result = parseCheckoutMetadata({ id: "5678901234", isCredit: "true" });
-    expect(result).toEqual({ id: "5678901234", isCredit: true });
+    expect(result).toEqual({ id: "5678901234", isCredit: true, submissionId: null });
   });
 
   it("reads isCredit false", () => {
     const result = parseCheckoutMetadata({ id: "5678901234", isCredit: "false" });
-    expect(result).toEqual({ id: "5678901234", isCredit: false });
+    expect(result).toEqual({ id: "5678901234", isCredit: false, submissionId: null });
   });
 
   it("keeps the order id a string, matching the text column it queries", () => {
@@ -61,6 +61,13 @@ describe("parseCheckoutMetadata", () => {
     expect(parseCheckoutMetadata({ id: "5678901234" })).toEqual({
       id: "5678901234",
       isCredit: false,
+      submissionId: null,
     });
+  });
+
+  it("reads the submission the session pays for", () => {
+    expect(
+      parseCheckoutMetadata({ id: "5678901234", isCredit: "false", submission_id: " sub-1 " })
+    ).toEqual({ id: "5678901234", isCredit: false, submissionId: "sub-1" });
   });
 });

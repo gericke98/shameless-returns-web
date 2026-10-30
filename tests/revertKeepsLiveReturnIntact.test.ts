@@ -54,8 +54,8 @@ vi.mock("@/db/drizzle", () => {
 });
 
 async function revert() {
-  const { updateFinalOrder } = await import("@/actions/updateOrder");
-  return updateFinalOrder("13238997909830", true, false);
+  const { revertFinalOrder } = await import("@/actions/updateOrder");
+  return revertFinalOrder("13238997909830");
 }
 
 beforeEach(() => {

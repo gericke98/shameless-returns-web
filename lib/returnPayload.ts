@@ -21,6 +21,8 @@ import { variantGid } from "@/lib/shopifyIds";
  *  line item resolved from Shopify. Deliberately structural: callers pass
  *  their own rows without reshaping them. */
 export type ReturnableLine = {
+  /** `productsorder.id` — the row this line confirms. */
+  productsorderId?: number;
   variant_id: string;
   fulfillmentLineItemId: string | null;
   quantity?: number | null;
@@ -254,7 +256,9 @@ type ReturnLineItemNode = {
 };
 
 /**
- * Map the returned `ReturnLineItem` ids back onto our rows, keyed by variant id.
+ * Map the returned `ReturnLineItem` ids back onto our lines, keyed by the
+ * fulfillment line item id — the identity Shopify echoes. Not by variant: two
+ * rows can share one, and keying by it gave both the same return line.
  *
  * Matching is on the fulfillment line item, never on array position: Shopify
  * makes no promise to echo the input order, and pairing by index would file one
@@ -278,7 +282,7 @@ export function matchReturnLineItems(
   for (const line of lines) {
     if (!line.fulfillmentLineItemId) continue;
     const returnLineItemId = byFulfillmentId.get(line.fulfillmentLineItemId);
-    if (returnLineItemId) result[line.variant_id] = returnLineItemId;
+    if (returnLineItemId) result[line.fulfillmentLineItemId] = returnLineItemId;
   }
   return result;
 }

@@ -70,51 +70,6 @@ export async function proposeSubmission(input: {
   }
 }
 
-/**
- * Record the agreement for a Stripe session created BEFORE submissions
- * existed, already accepted and bound to that session — what confirming such
- * a payment has always meant: the rows as they stand when it arrives.
- *
- * It touches no other submission (so a legacy payment cannot supersede a
- * checkout the customer opened since) and checks no amount (the session never
- * asked for one). The session id is unique, so a redelivery is `duplicate`.
- * Deleted in S3, once no such session can still be paid.
- */
-export async function recordLegacySubmission(input: {
-  orderId: string;
-  returnMethod: string;
-  agreement: Agreement;
-  lines: readonly SubmissionLineInput[];
-  sessionId: string;
-  paymentIntent: string | null;
-}): Promise<{ kind: "accepted"; id: string } | { kind: "duplicate" }> {
-  const a = input.agreement;
-  const lines = lineRecords(input.agreement, input.lines);
-  try {
-    const result = await db.execute(sql`
-      WITH ins AS (
-        INSERT INTO return_submissions (
-          order_id, state, tender, return_method, return_leg_cents, outbound_leg_cents,
-          charged_fee_cents, returned_value_cents, replacement_value_cents, net_cents,
-          stripe_charge_cents, waived_cents, owed_cents, residual_cents,
-          stripe_session_id, stripe_payment_intent, accepted_at)
-        VALUES (${input.orderId}, 'accepted', ${a.tender}, ${input.returnMethod},
-               ${a.returnLegCents}, ${a.outboundLegCents}, ${a.chargedFeeCents},
-               ${a.returnedValueCents}, ${a.replacementValueCents}, ${a.netCents},
-               ${a.stripeChargeCents}, ${a.waivedCents}, ${a.owedCents}, ${a.residualCents},
-               ${input.sessionId}, ${input.paymentIntent}, now())
-        RETURNING id
-      ),
-      ${insertLines(lines)}
-      SELECT id, (SELECT count(*) FROM lines)::int AS line_count FROM ins
-    `);
-    return { kind: "accepted", id: insertedId(result, lines.length) };
-  } catch (error: any) {
-    if (isUniqueViolation(error)) return { kind: "duplicate" };
-    throw error;
-  }
-}
-
 const isUniqueViolation = (error: any) =>
   (error?.code ?? error?.cause?.code) === "23505";
 

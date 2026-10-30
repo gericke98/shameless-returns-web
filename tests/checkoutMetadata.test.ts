@@ -71,3 +71,16 @@ describe("parseCheckoutMetadata", () => {
     ).toEqual({ id: "5678901234", isCredit: false, submissionId: "sub-1" });
   });
 });
+
+describe("unboundSessions (S3 R3 drain check)", () => {
+  it("names exactly the sessions with no submission_id — the ones a payment would now bind to nothing", async () => {
+    const { unboundSessions } = await import("@/lib/checkoutMetadata");
+    const sessions = [
+      { id: "a", metadata: { id: "1", isCredit: "false", submission_id: "s-1" } },
+      { id: "b", metadata: { id: "2", isCredit: "false" } },
+      { id: "c", metadata: { id: "3", submission_id: "  " } },
+      { id: "d", metadata: null },
+    ];
+    expect(unboundSessions(sessions).map((s) => s.id)).toEqual(["b", "c", "d"]);
+  });
+});

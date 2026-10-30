@@ -52,3 +52,14 @@ export function parseCheckoutMetadata(
     submissionId: metadata?.submission_id?.trim() || null,
   };
 }
+
+/**
+ * S3 R3: the sessions whose payment would now be bound to nothing — those
+ * whose metadata names no submission, read with the same parser the webhook
+ * uses (scripts/check-legacy-stripe-sessions.ts).
+ */
+export function unboundSessions<S extends { metadata?: Record<string, string | undefined> | null }>(
+  sessions: readonly S[]
+): S[] {
+  return sessions.filter((s) => !parseCheckoutMetadata(s.metadata)?.submissionId);
+}

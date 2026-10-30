@@ -248,29 +248,4 @@ describe("db/submissions against Postgres", () => {
 
     expect((await pg.query<any>("SELECT credit FROM productsorder WHERE id = 1")).rows[0].credit).toBe(false);
   });
-
-  it("records a legacy session as accepted without touching the order's newer checkout", async () => {
-    const { recordLegacySubmission } = await repo();
-    const newer = await propose("o1");
-    const lines = [line(1, "CAMBIO", 4000, 6000)];
-    const input = {
-      orderId: "o1",
-      returnMethod: "CORREOS",
-      agreement: agreementFor(lines),
-      lines: [meta(1, "gid://shopify/ProductVariant/9")],
-      sessionId: "cs_legacy",
-      paymentIntent: "pi_legacy",
-    };
-
-    const first = await recordLegacySubmission(input);
-    const again = await recordLegacySubmission(input);
-
-    expect(first.kind).toBe("accepted");
-    expect(again).toEqual({ kind: "duplicate" });
-    expect(await stateOf(newer)).toBe("awaiting_payment");
-    const legacy = (await pg.query<any>(
-      "SELECT state, stripe_payment_intent FROM return_submissions WHERE stripe_session_id = 'cs_legacy'"
-    )).rows;
-    expect(legacy).toEqual([{ state: "accepted", stripe_payment_intent: "pi_legacy" }]);
-  });
 });

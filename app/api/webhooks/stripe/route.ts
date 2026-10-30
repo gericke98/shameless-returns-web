@@ -5,12 +5,11 @@ import { alertOps } from "@/actions/opsAlert";
 import { confirmSubmission, revertFinalOrder } from "@/lib/submissionConfirmation";
 import { enqueueOpsAlert } from "@/actions/opsAlertOutbox";
 import { acceptPaidSubmission, getSubmission, type PaidOutcome } from "@/db/submissions";
-import { acceptLegacySession } from "@/lib/submissionProposal";
 import db from "@/db/drizzle";
 import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
-import { defaultMethodFor, type ReturnMethod } from "@/lib/returnMethods";
+import type { ReturnMethod } from "@/lib/returnMethods";
 import { stripe } from "@/lib/stripe";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -175,6 +174,33 @@ async function alertPaymentNotConfirmed(
   });
 }
 
+/**
+ * A paid session that names no submission (S3 R3): nothing is confirmed.
+ * Through the outbox, keyed on the session: a redelivery is one alert.
+ */
+async function alertPaymentUnbound(
+  orderId: string,
+  session: Stripe.Checkout.Session,
+  paymentIntentId: string | null
+) {
+  await enqueueOpsAlert({
+    dedupeKey: `payment-unbound:${session.id}`,
+    subject: `[returns] PAID, BOUND TO NO SUBMISSION — order ${orderId}`,
+    body: [
+      `Stripe took a payment for order ${orderId} on a checkout session that names no`,
+      `submission — a session from before 2026-10-30, whose confirmation path no longer`,
+      `exists. NO return was created and nothing was confirmed.`,
+      ``,
+      `Session:        ${session.id}`,
+      `Payment intent: ${paymentIntentId ?? "(none)"}`,
+      `Amount:         ${((session.amount_total ?? 0) / 100).toFixed(2)} ${String(session.currency ?? "").toUpperCase()}`,
+      ``,
+      `Nothing was refunded automatically. Refund this payment in Stripe, or have the`,
+      `customer submit the return again in the portal — do not do both.`,
+    ].join("\n"),
+  });
+}
+
 export async function POST(req: Request) {
   const body = await req.text();
   const signature = headers().get("stripe-signature");
@@ -206,38 +232,27 @@ export async function POST(req: Request) {
           : session.payment_intent?.id ?? null;
       // Una vez se ha procesado el pago vamos con los siguientes pasos
       try {
-        let submissionId = metadata.submissionId;
-        let outcome: PaidOutcome;
-        if (submissionId) {
-          // Accept only the payment this submission asked for: this session,
-          // this amount, EUR, paid.
-          outcome = await acceptPaidSubmission(submissionId, {
-            sessionId: session.id,
-            amountTotal: session.amount_total ?? null,
-            currency: session.currency ?? null,
-            paymentStatus: session.payment_status ?? null,
-            paymentIntent: paymentIntentId,
-          });
-        } else {
-          // A session created before submissions existed carries none. It is
-          // confirmed as it always was — the rows as they stand now — but
-          // recorded first, bound to this session, so a redelivery is a
-          // duplicate like any other.
-          const order = await getOrderById(id);
-          const legacyMethod: ReturnMethod =
-            ((order as any)?.returnMethod as ReturnMethod) ??
-            defaultMethodFor(
-              order?.shippingCountry,
-              process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
-            );
-          const legacy = await acceptLegacySession(id, isCredit, legacyMethod, {
-            sessionId: session.id,
-            paymentIntent: paymentIntentId,
-          });
-          if (!legacy) throw new Error(`nothing selected on order ${id} to confirm`);
-          submissionId = legacy.kind === "accepted" ? legacy.id : null;
-          outcome = legacy.kind === "accepted" ? { kind: "accepted" } : { kind: "duplicate" };
+        const submissionId = metadata.submissionId;
+        if (!submissionId) {
+          // A session with no submission was created before S1 (2026-10-30).
+          // Its path is deleted (S3 R3): it confirmed whatever the rows said
+          // when the money arrived. Such a session expired within 24 hours of
+          // S1's deploy, and the drain was checked before this shipped
+          // (scripts/check-legacy-stripe-sessions.ts). One that still pays is
+          // bound to nothing: confirm nothing, and put it in front of a human —
+          // as a payment for a superseded checkout is.
+          await alertPaymentUnbound(id, session, paymentIntentId);
+          return NextResponse.json({ received: true });
         }
+        // Accept only the payment this submission asked for: this session,
+        // this amount, EUR, paid.
+        const outcome: PaidOutcome = await acceptPaidSubmission(submissionId, {
+          sessionId: session.id,
+          amountTotal: session.amount_total ?? null,
+          currency: session.currency ?? null,
+          paymentStatus: session.payment_status ?? null,
+          paymentIntent: paymentIntentId,
+        });
 
         // A redelivery of a payment already accepted: the first delivery owns
         // the confirmation and the booking. Running them again could race it
@@ -249,7 +264,6 @@ export async function POST(req: Request) {
           await alertPaymentNotConfirmed(id, session, paymentIntentId, outcome);
           return NextResponse.json({ received: true });
         }
-        if (!submissionId) throw new Error(`order ${id}: accepted without a submission id`);
 
         // The order's payment is the ACCEPTED one — stored only now, so paying
         // an old checkout cannot overwrite it. A cancellation refunds this

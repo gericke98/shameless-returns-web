@@ -86,17 +86,6 @@ vi.mock("@/db/submissions", () => ({
   }),
 }));
 
-// A session created before submissions existed: recorded as accepted from the
-// rows at webhook time.
-vi.mock("@/lib/submissionProposal", () => ({
-  acceptLegacySession: async (id: string, _c: boolean, _m: string, s: { sessionId: string }) => {
-    calls.push(`legacy:${id}:${s.sessionId}`);
-    return behaviour.outcome.kind === "duplicate"
-      ? { kind: "duplicate" }
-      : { kind: "accepted", id: "sub-legacy" };
-  },
-}));
-
 vi.mock("@/actions/shipping", () => ({
   createShippingLabel: async () => {
     calls.push("book:CORREOS");
@@ -378,24 +367,14 @@ describe("the webhook confirms only the submission the customer paid for", () =>
     delete ORDER.returnMethod;
   });
 
-  it("records a session created before submissions existed as accepted, then confirms it", async () => {
+  it("a paid session naming no submission confirms nothing and alerts payment-unbound (S3 R3)", async () => {
     behaviour.submissionId = null;
 
-    await post();
+    const res = await post();
 
-    expect(calls.slice(0, 3)).toEqual([
-      "legacy:13158935429446:cs_test_1",
-      "store-intent:pi_3U0QOAJSZ88eqCu00q2IRbdy",
-      "confirm:sub-legacy",
-    ]);
-  });
-
-  it("does nothing on a redelivery of a legacy session", async () => {
-    behaviour.submissionId = null;
-    behaviour.outcome = { kind: "duplicate" };
-
-    await post();
-
-    expect(calls).toEqual(["legacy:13158935429446:cs_test_1"]);
+    expect(res.status).toBe(200);
+    // Nothing accepted, stored, confirmed, booked or reverted.
+    expect(calls).toEqual([]);
+    expect(outbox.map((a) => a.dedupeKey)).toEqual(["payment-unbound:cs_test_1"]);
   });
 });

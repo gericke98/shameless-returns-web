@@ -1,17 +1,12 @@
 // Build the agreement for an order's current selection and save it as a
-// submission. Shared by checkout (actions/payments.ts) and by the webhook for
-// a session created before submissions existed.
+// submission, for checkout (actions/payments.ts).
 //
 // Deliberately NOT a "use server" module: every export of one is a callable
 // endpoint, and this writes money terms for any order id it is given. Callers
 // gate access themselves.
 import { getFeeTable } from "@/db/fees";
 import { getOrderTotal } from "@/db/queries";
-import {
-  proposeSubmission,
-  recordLegacySubmission,
-  type SubmissionLineInput,
-} from "@/db/submissions";
+import { proposeSubmission, type SubmissionLineInput } from "@/db/submissions";
 import { buildAgreement, type Agreement } from "@/lib/agreement";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { resolveFulfillmentLineItems } from "@/lib/fulfillmentLines";
@@ -112,26 +107,4 @@ export async function proposeCurrentSelection(
     throw new Error(`Order ${orderId}: a submission is already being saved`);
   }
   return { submissionId: proposed.id, agreement: current.agreement, loaded: current.loaded };
-}
-
-/**
- * A Stripe session created before submissions existed has just been paid:
- * record what it paid for — the rows as they stand, which is what confirming
- * it has always meant — already accepted. See db/submissions.ts.
- */
-export async function acceptLegacySession(
-  orderId: string,
-  isCredit: boolean,
-  method: ReturnMethod,
-  session: { sessionId: string; paymentIntent: string | null }
-) {
-  const current = await currentAgreement(orderId, isCredit, method);
-  if (!current) return null;
-  return recordLegacySubmission({
-    orderId,
-    returnMethod: method,
-    agreement: current.agreement,
-    lines: current.lines,
-    ...session,
-  });
 }

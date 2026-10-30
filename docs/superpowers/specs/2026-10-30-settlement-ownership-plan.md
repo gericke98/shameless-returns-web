@@ -131,12 +131,17 @@ mechanical inventory: 19 sites, listed in the build.
   - A: one constant, `2026-04`, for the whole app now. Every query is re-validated, and the
     non-settlement queries are a mechanical diff.
   - B: settlement only now, the rest later. This leaves the unsupported pin in place.
-- **D2 Return-leg fee per Shopify return.**
-  - A: one fee per parcel, charged against that return's lowest line id. If that line cannot
-    absorb it, the remainder goes to the next line by id. Explicit and deterministic.
-  - B: per line, today's credit-lane behaviour. It double-charges multi-line returns.
-  - Either way, **before building I check `createStripeUrl` and both portal totals** to confirm
-    what the customer was shown, and the rule must equal that.
+- **D2 is no longer a decision; it is a fact (checked 30 Oct).**
+  - The customer was shown `basket.netAmount − fee`, ONCE per basket. The basket is every line
+    confirmed in one portal submission. Sources: `lastWindow.tsx:72` and `createStripeUrl`
+    (`payments.ts:61-73`); credit is that total × 1.15.
+  - When the total is positive, Stripe charges nothing, so settlement is the only place the fee is
+    collected.
+  - So M5 pays per line `unit × qty`, minus that line's share of ONE basket fee. The share is
+    allocated by ascending `productsorder.id` until the fee is used up.
+  - Lanes the customer already paid through Stripe (total ≤ 0) deduct nothing.
+  - Today's per-line deductions over-collect on every multi-line return. That is R4 measured, not a
+    preference.
 - **D3 Exchange inventory.** We need to keep today's stock effect: what `returnClose` does today
   versus `returnProcess` with a disposition.
   - A: first build step is a `returnCalculate` dry run plus a read of one already-closed exchange

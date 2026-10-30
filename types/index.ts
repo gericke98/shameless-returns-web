@@ -94,6 +94,9 @@ export type OrderData = {
   note?: string;
   /** Comma-separated, as Shopify REST returns it. */
   tags?: string;
+  /** REST `source_identifier`: on an exchange order settlement created, the
+   *  id of the `exchange_order` operation that created it. */
+  source_identifier?: string | null;
   name: string;
   contact_email: string;
   subtotal_price: string;
@@ -227,6 +230,9 @@ export type DashboardOrder = {
 
 export type DashboardProduct = {
   id: number;
+  /** Which settlement a click on this row executes: `submission:<id>`, or
+   *  `return:<Shopify return id>` for a row no submission covers yet. */
+  settlementKey: string;
   title: string;
   variant_title: string;
   quantity: number;

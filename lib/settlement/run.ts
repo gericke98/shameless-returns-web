@@ -52,7 +52,13 @@ export type RunResult =
 
 type Judged = Verdict & { lines?: CreatedReplacementLine[] };
 
-const fenceOf = (op: Operation): Fence => ({ state: "dispatched", owner: op.owner, attempt: op.attempt });
+/** The worker fence for recording on a row in the state we observed it in. */
+function fenceOf(op: Operation): Fence {
+  if (op.state !== "dispatched" && op.state !== "claimed") {
+    throw new Error(`fenceOf: op ${op.id} is ${op.state}, not a worker-held state`);
+  }
+  return { state: op.state, owner: op.owner, leaseGen: op.leaseGen };
+}
 
 /** Run one operation from the top. */
 export async function run(opId: string, me: string = randomUUID()): Promise<RunResult> {
@@ -214,9 +220,11 @@ const hoursSince = (date: Date | null) =>
   date ? (Date.now() - date.getTime()) / 3_600_000 : Infinity;
 
 /**
- * Recovery for an operation dispatched over a lease ago with no answer:
+ * Recovery for an operation that has dispatched before and nobody heard back
+ * from — dispatched over a lease ago, or a takeover claim whose lease ran out:
  * re-read the evidence, then follow the L5 table. Only a takeover row
- * authorises a re-send.
+ * authorises a re-send, and it keeps the op's attempt (its idempotency key)
+ * and first-dispatch time.
  */
 export async function recoverDispatched(op: Operation, me: string = randomUUID()): Promise<RunResult> {
   // A gift card is re-sent with its frozen code: the re-send IS the probe

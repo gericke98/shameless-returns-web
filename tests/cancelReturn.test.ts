@@ -33,6 +33,7 @@ const calls = {
   claim: [] as string[],
   release: [] as string[],
   refundKey: [] as string[],
+  refundIntent: [] as string[],
   customerEmail: [] as string[],
   opsAlert: [] as string[],
   // One shared log every mocked primitive pushes its own name onto, so the
@@ -54,10 +55,20 @@ const behaviour = {
   resetFails: false,
   emailFails: false,
   // What the ownership claim answers (S2 plan L2): settlement may hold it.
-  claim: { ok: true, submissionIds: ["sub-1"] } as any,
+  claim: oneMember() as any,
 };
 
 const ORDER: Record<string, any> = {};
+
+/** One submission, its own Shopify return and its own PaymentIntent. */
+function oneMember() {
+  return {
+    ok: true,
+    members: [
+      { submissionId: "sub-1", returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_stored" } },
+    ],
+  };
+}
 
 /** The row as it looks with one live, unsettled return on it. */
 function freshOrder(): Record<string, any> {
@@ -146,16 +157,17 @@ vi.mock("@/actions/amphora", () => ({
     return { id };
   },
 }));
-vi.mock("@/actions/exchangeReservation", () => ({
-  releaseExchangeReservation: async (id: string) => {
+vi.mock("@/lib/settlement/holdRelease", () => ({
+  releaseHoldForCancellation: async (id: string) => {
     calls.releaseHold.push(id);
     calls.sequence.push("release");
-    return !behaviour.releaseFails;
+    return behaviour.releaseFails ? { released: false, reason: "draft still exists" } : { released: true };
   },
 }));
 vi.mock("@/actions/refundPayment", () => ({
   refundOrderPayment: async (order: any, submissionKey: string) => {
     calls.refund.push(order.id);
+    calls.refundIntent.push(order.stripePaymentIntent);
     calls.refundKey.push(submissionKey);
     calls.sequence.push("refund");
     return behaviour.refundOutcome;
@@ -195,7 +207,7 @@ beforeEach(() => {
   behaviour.refundOutcome = { refunded: true };
   behaviour.resetFails = false;
   behaviour.emailFails = false;
-  behaviour.claim = { ok: true, submissionIds: ["sub-1"] };
+  behaviour.claim = oneMember();
   for (const key of Object.keys(ORDER)) delete ORDER[key];
   Object.assign(ORDER, freshOrder());
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
@@ -323,6 +335,41 @@ describe("ownership of the submission (S2 plan L2)", () => {
     await cancel();
     expect(calls.refundKey).toEqual(["sub-1"]);
   });
+
+  it("refuses, before ANY external effect, when membership cannot be established — and alerts (finding 3)", async () => {
+    behaviour.claim = { ok: false, reason: "needs-support", detail: "confirmed row(s) 7 carry no Shopify return line item" };
+    expect(await cancel()).toEqual({ ok: false, reason: "needs-support" });
+    expect(calls.sequence).toEqual(["claim"]);
+    expect(calls.opsAlert.some((a) => a.includes("carry no Shopify return line item"))).toBe(true);
+  });
+
+  it("reverses EACH submission's own Shopify return and own payment, keyed by its own id (finding 3)", async () => {
+    behaviour.claim = {
+      ok: true,
+      members: [
+        { submissionId: "sub-a", returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_a" } },
+        { submissionId: "sub-b", returnId: "gid://shopify/Return/2", payment: { kind: "intent", paymentIntent: "pi_b" } },
+        { submissionId: "sub-c", returnId: "gid://shopify/Return/3", payment: { kind: "none" } },
+      ],
+    };
+    expect(await cancel()).toEqual({ ok: true });
+    expect(calls.shopifyCancel).toEqual(["gid://shopify/Return/1", "gid://shopify/Return/2", "gid://shopify/Return/3"]);
+    expect(calls.refundKey).toEqual(["sub-a", "sub-b"]);
+    expect(calls.refundIntent).toEqual(["pi_a", "pi_b"]);
+    expect(calls.sequence).toEqual([
+      "claim", "amphora", "shopify", "shopify", "shopify", "release", "refund", "refund", "reset", "email",
+    ]);
+  });
+
+  it("a legacy submission's refund is resolved from the order's payment", async () => {
+    behaviour.claim = {
+      ok: true,
+      members: [{ submissionId: "sub-l", returnId: "gid://shopify/Return/1", payment: { kind: "order-payment" } }],
+    };
+    await cancel();
+    expect(calls.refundKey).toEqual(["sub-l"]);
+    expect(calls.refundIntent).toEqual(["pi_stored"]);
+  });
 });
 
 describe("when a step fails", () => {
@@ -418,18 +465,6 @@ describe("when a step fails", () => {
     await cancel();
 
     expect(calls.opsAlert.some((entry) => entry.includes("pi_stored"))).toBe(true);
-  });
-
-  it("alerts a human when a line carries no Shopify return id", async () => {
-    // Skipping the cancel silently leaves an OPEN Shopify return behind after
-    // the customer has already been refunded, and an admin validating it later
-    // refunds the garment on top.
-    ORDER.products = [{ confirmed: true, refunded: false, return_id: null }];
-
-    expect(await cancel()).toEqual({ ok: true });
-    expect(calls.shopifyCancel).toHaveLength(0);
-    expect(calls.opsAlert.some((entry) => entry.includes("13217168851270"))).toBe(true);
-    expect(calls.refund).toEqual(["13217168851270"]);
   });
 
   it("still emails the customer, and alerts a human, when the reset throws", async () => {

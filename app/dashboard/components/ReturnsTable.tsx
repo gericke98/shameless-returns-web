@@ -15,7 +15,7 @@ import {
   countProducts,
   filterGroups,
   groupReturns,
-  pendingExchanges as pendingExchangeLines,
+  exchangeBatches,
   type ReturnGroup,
 } from "@/lib/dashboardGrouping";
 
@@ -281,17 +281,13 @@ function TableHeader() {
 function OrderGroup({ group, status }: { group: Group; status: TrackingStatus }) {
   const { order, products } = group;
 
-  // Exchanges settle as ONE parcel: validateReturn gathers every pending
-  // CAMBIO line on the order, creates a single Shopify order with all the
-  // replacements, and closes each return. So a per-garment Refund button was
-  // misleading in both directions — it looked like you had to press each one,
-  // and like pressing one might ship only that garment. The second press was
-  // in fact a silent no-op.
-  //
-  // Returns are different: each is refunded individually for its own amount,
-  // so those keep their per-garment button.
-  const pendingExchanges = pendingExchangeLines(products, ACTIONS.CHANGE);
-  const batched = pendingExchanges.length > 1;
+  // Settling a row settles the SUBMISSION it belongs to, and a submission's
+  // exchange ships as one replacement order. So each submission's pending
+  // exchange lines are ONE action — one button per submission, never per
+  // order: two submissions on one order are two parcels and two actions
+  // (finding 10). Returns are refunded individually and keep their own button.
+  const batches = exchangeBatches(products, ACTIONS.CHANGE).filter((b) => b.lines.length > 1);
+  const batchedRows = new Set(batches.flatMap((b) => b.lines.map((l) => l.id)));
 
   return (
     <>
@@ -312,17 +308,17 @@ function OrderGroup({ group, status }: { group: Group; status: TrackingStatus })
                 {products.length} garments · one parcel
               </span>
             )}
-            {batched && (
+            {batches.map((batch) => (
               <button
+                key={batch.settlementKey}
                 className="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-md text-sm transition-colors"
-                onClick={() =>
-                  validateReturn(pendingExchanges[0], status.label, order)
-                }
-                aria-label={`Process the exchange for ${order.orderNumber} — ${pendingExchanges.length} garments in one order`}
+                onClick={() => validateReturn(batch.lines[0], status.label, order)}
+                title={batch.settlementKey}
+                aria-label={`Process the exchange ${batch.settlementKey} for ${order.orderNumber} — ${batch.lines.length} garments in one order`}
               >
-                Process exchange · {pendingExchanges.length} garments
+                Process exchange · {batch.lines.length} garments
               </button>
-            )}
+            ))}
           </div>
         </td>
       </tr>
@@ -333,7 +329,7 @@ function OrderGroup({ group, status }: { group: Group; status: TrackingStatus })
           product={product}
           status={status}
           // Suppressed only for the lines the header button already covers.
-          settledTogether={batched && pendingExchanges.includes(product)}
+          settledTogether={batchedRows.has(product.id)}
         />
       ))}
     </>

@@ -48,37 +48,133 @@ export async function claimForCancellation(submissionId: string): Promise<boolea
   return rows.length === 1;
 }
 
+/** One submission a cancellation reverses, with the identities it reverses by. */
+export type CancellationMember = {
+  submissionId: string;
+  /** The Shopify return this submission's lines are on — exactly one. */
+  returnId: string;
+  /** What to refund in Stripe, and by which identity (key `cancel:<submissionId>`). */
+  payment:
+    | { kind: "none" }
+    /** The submission's own PaymentIntent, stored when its payment was verified. */
+    | { kind: "intent"; paymentIntent: string }
+    /** A legacy submission (recorded at this cancellation, D1) has no payment
+     *  of its own on record: the order's single portal payment is resolved
+     *  from the order — allowed only when it is the ONE submission cancelled. */
+    | { kind: "order-payment" };
+};
+
 export type CancellationClaim =
-  | { ok: true; submissionIds: string[] }
-  | { ok: false; reason: "already-settled" | "no-return" };
+  | { ok: true; members: CancellationMember[] }
+  | { ok: false; reason: "already-settled" | "no-return" }
+  /** Membership or a payment could not be established: refused BEFORE any
+   *  external effect, for a human (finding 3). */
+  | { ok: false; reason: "needs-support"; detail: string };
+
+type CancellableRow = {
+  id: number;
+  confirmed?: boolean | null;
+  refunded?: boolean | null;
+  return_line_item_id?: string | null;
+};
+
+/** Each submission's own return(s) and payment, from the database. */
+async function membersOf(submissionIds: readonly string[]): Promise<
+  Array<{ id: string; provenance: string; chargeCents: number; paymentIntent: string | null; returnIds: string[] }>
+> {
+  const rows = rowsOf(
+    await db.execute(sql`
+      SELECT s.id, s.provenance, s.stripe_charge_cents, s.stripe_payment_intent,
+             COALESCE(array_agg(DISTINCT p.return_id) FILTER (WHERE p.return_id IS NOT NULL), '{}') AS return_ids
+        FROM return_submissions s
+        LEFT JOIN submission_lines sl ON sl.submission_id = s.id
+        LEFT JOIN productsorder p
+          ON p.id = sl.productsorder_id AND p.return_line_item_id = sl.return_line_item_id
+       WHERE s.id IN (SELECT (jsonb_array_elements_text(${JSON.stringify(submissionIds)}::jsonb))::uuid)
+       GROUP BY s.id
+    `)
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    provenance: String(r.provenance),
+    chargeCents: Number(r.stripe_charge_cents),
+    paymentIntent: r.stripe_payment_intent ? String(r.stripe_payment_intent) : null,
+    returnIds: (Array.isArray(r.return_ids) ? r.return_ids : []).map(String),
+  }));
+}
 
 /**
- * Take every submission behind the return being cancelled — the accepted
- * submission each confirmed, unsettled row belongs to (a legacy one is
- * recorded first, D1). All or nothing: when settlement holds any of them, the
- * ones already taken are given back and the cancel is refused.
+ * Establish the COMPLETE set of submissions behind the return being cancelled,
+ * with each one's own Shopify return and payment, then take them all. Every
+ * confirmed, unsettled row must belong to a submission (a legacy one is
+ * recorded first, D1); a row that cannot be mapped refuses the whole cancel
+ * rather than being left out of it. All or nothing on the claim too: when
+ * settlement holds any of them, the ones already taken are given back.
+ * Nothing external has happened when this refuses.
  */
-export async function claimOrderForCancellation(
-  rows: ReadonlyArray<{ id: number; confirmed?: boolean | null; refunded?: boolean | null; return_line_item_id?: string | null }>
-): Promise<CancellationClaim> {
-  const current = rows.filter((r) => r.confirmed === true && r.refunded !== true && r.return_line_item_id);
+export async function claimOrderForCancellation(rows: ReadonlyArray<CancellableRow>): Promise<CancellationClaim> {
+  const current = rows.filter((r) => r.confirmed === true && r.refunded !== true);
   if (current.length === 0) return { ok: false, reason: "no-return" };
+  const unmapped = current.filter((r) => !r.return_line_item_id);
+  if (unmapped.length > 0) {
+    return {
+      ok: false,
+      reason: "needs-support",
+      detail: `confirmed row(s) ${unmapped.map((r) => r.id).join(", ")} carry no Shopify return line item`,
+    };
+  }
   const ids = new Set<string>();
   for (const row of current) {
     const found = await submissionForRow(row.id);
-    // A row nothing can record a submission for cannot be proven unsettled.
-    if (!found.ok) return { ok: false, reason: "already-settled" };
+    if (!found.ok) {
+      return { ok: false, reason: "needs-support", detail: `row ${row.id} belongs to no submission (${found.held})` };
+    }
     ids.add(found.submissionId);
   }
+
+  const loaded = await membersOf(Array.from(ids));
+  const members: CancellationMember[] = [];
+  for (const m of loaded) {
+    if (m.returnIds.length !== 1) {
+      return {
+        ok: false,
+        reason: "needs-support",
+        detail: `submission ${m.id} is on ${m.returnIds.length} Shopify returns`,
+      };
+    }
+    let payment: CancellationMember["payment"];
+    if (m.provenance === "legacy") {
+      if (ids.size !== 1) {
+        return {
+          ok: false,
+          reason: "needs-support",
+          detail: `legacy submission ${m.id} has no payment of its own and is cancelled with ${ids.size - 1} other(s)`,
+        };
+      }
+      payment = { kind: "order-payment" };
+    } else if (m.chargeCents > 0) {
+      if (!m.paymentIntent) {
+        return { ok: false, reason: "needs-support", detail: `submission ${m.id} was paid but stores no PaymentIntent` };
+      }
+      payment = { kind: "intent", paymentIntent: m.paymentIntent };
+    } else {
+      payment = { kind: "none" };
+    }
+    members.push({ submissionId: m.id, returnId: m.returnIds[0], payment });
+  }
+  if (members.length !== ids.size) {
+    return { ok: false, reason: "needs-support", detail: "a submission could not be loaded" };
+  }
+
   const taken: string[] = [];
-  for (const id of Array.from(ids)) {
-    if (!(await claimForCancellation(id))) {
+  for (const m of members) {
+    if (!(await claimForCancellation(m.submissionId))) {
       for (const back of taken) await releaseCancellation(back);
       return { ok: false, reason: "already-settled" };
     }
-    taken.push(id);
+    taken.push(m.submissionId);
   }
-  return { ok: true, submissionIds: taken };
+  return { ok: true, members };
 }
 
 /** Amphora refused, so nothing moved: give the submission back. */

@@ -89,8 +89,11 @@ vi.mock("@/actions/replacementOrder", () => ({
 
 const reserved = vi.fn(async (_id: string, _lines: any[]) => {});
 vi.mock("@/actions/exchangeReservation", () => ({
-  releaseExchangeReservation: async () => {},
   reserveExchangeStock: (id: string, lines: any[]) => reserved(id, lines),
+}));
+vi.mock("@/lib/settlement/holdRelease", () => ({
+  releaseHoldForRevert: async () => ({ released: true }),
+  releaseHoldForCancellation: async () => ({ released: true }),
 }));
 
 const recorded = vi.fn(async (_input: any) => [7]);

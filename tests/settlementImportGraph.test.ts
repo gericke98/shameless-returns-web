@@ -44,8 +44,10 @@ const importsEffects = (_path: string, text: string) =>
   new RegExp(`(from|import)\\s*\\(?\\s*["']${EFFECTS}["']`).test(text);
 
 // A mutation's field call, as written in a GraphQL document: `name(arg: $var`.
+// draftOrderDelete included (finding 9): releasing a stock hold, by the
+// ledger, a cancellation or a revert, has one document too.
 const MONEY_MUTATION =
-  /\b(returnProcess|refundCreate|giftCardCreate|orderCreate|returnRefund|returnClose)\s*\(\s*\w+\s*:\s*\$/;
+  /\b(returnProcess|refundCreate|giftCardCreate|orderCreate|returnRefund|returnClose|draftOrderDelete)\s*\(\s*\w+\s*:\s*\$/;
 
 describe("settlement import graph", () => {
   it("finds the use-server modules it guards (sanity)", () => {

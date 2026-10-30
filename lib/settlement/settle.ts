@@ -30,7 +30,9 @@ function runnable(ops: Operation[]): Operation[] {
   return ops.filter(
     (o) =>
       (o.state === "pending" || o.state === "rejected" ||
-        (o.state === "claimed" && !!o.leaseUntil && o.leaseUntil.getTime() < Date.now())) &&
+        // An expired claim that never dispatched. One that did is recovery's,
+        // through evidence and replay — never a fresh send.
+        (o.state === "claimed" && !o.dispatchedAt && !!o.leaseUntil && o.leaseUntil.getTime() < Date.now())) &&
       ready(o)
   );
 }

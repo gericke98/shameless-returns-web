@@ -427,15 +427,17 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
     expect(alertBodies[0]).toContain("no-refund-transaction");
   });
 
-  it("says plainly that no money moved when ADMISSION held it", async () => {
+  it("says THIS run dispatched nothing when ADMISSION held it — never that no money ever moved (finding 11)", async () => {
     state.settleRefusesOn = { variant: "v1", reason: "held:no-refund-transaction:10011" };
 
     await call({ authorization: "Bearer s3cret" });
 
-    // A refusal means the payout did not happen. Saying "money may have moved"
-    // here would send whoever is on call hunting a refund that never existed —
-    // this repo has already done that once.
-    expect(alertBodies[0]).toContain("NO money moved");
+    // A refusal means this run sent nothing. It proves nothing about an earlier
+    // run, which may have paid a sibling effect — so the alert says exactly
+    // that, and points at the ledger rather than at "the customer got nothing".
+    expect(alertBodies[0]).toContain("This run dispatched nothing to Shopify");
+    expect(alertBodies[0]).toContain("check the order's settlement operations");
+    expect(alertBodies[0]).not.toContain("NO money moved");
   });
 
   it("does not claim 'NO money moved' for a rejected effect — a sibling effect may be done", async () => {

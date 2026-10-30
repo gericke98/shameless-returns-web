@@ -23,7 +23,11 @@ export type Operation = {
   amountCents: number;
   currency: string;
   state: OpState;
+  /** The financial attempt: the refundCreate idempotency key is `<id>:<attempt>`.
+   *  Moves only when a new send is proven safe (pending or rejected). */
   attempt: number;
+  /** The worker fence (0008): moves on every claim and takeover. */
+  leaseGen: number;
   owner: string | null;
   leaseUntil: Date | null;
   dispatchedAt: Date | null;
@@ -49,8 +53,11 @@ export type OpRequest =
         returnLineItemId: string;
         reverseFulfillmentLineItemId: string;
         quantity: number;
-        /** process_refund only: the money that must appear on the return. */
-        refund?: { parentTransactionId: string; money: FrozenMoney };
+        /** process_refund only: the money that must appear on the return, and
+         *  the order line item whose refund it is — the refund's identity
+         *  (finding 6): the one refund on this return that refunds this line
+         *  item is this op's, whatever its amount. */
+        refund?: { parentTransactionId: string; money: FrozenMoney; lineItemGid: string };
       };
     }
   | {

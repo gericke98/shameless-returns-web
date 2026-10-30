@@ -12,7 +12,7 @@ import { hasOrderAccess } from "@/lib/orderAccess";
 import { cancelEligibility, type CancelBlockedReason } from "@/lib/cancelEligibility";
 import { readCarrierMovement } from "./shipping";
 import { amphoraOrderIdFromShopifyId, cancelAmphoraReturn } from "./amphora";
-import { releaseExchangeReservation } from "./exchangeReservation";
+import { releaseHoldForCancellation } from "@/lib/settlement/holdRelease";
 import { refundOrderPayment } from "./refundPayment";
 import { alertOps } from "./opsAlert";
 import { dictionaries, readLocale } from "@/lib/i18n";
@@ -21,7 +21,7 @@ const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
 export type CancelResult =
   | { ok: true }
-  | { ok: false; reason: CancelBlockedReason | "carrier-cancel-failed" | "forbidden" };
+  | { ok: false; reason: CancelBlockedReason | "carrier-cancel-failed" | "forbidden" | "needs-support" };
 
 /**
  * Cancel a customer's return or exchange and give them their money back.
@@ -29,11 +29,16 @@ export type CancelResult =
  * The order of reversals is the whole design, and it changes meaning halfway
  * through:
  *
- *   0. Claim        — take the submission(s) from settlement (S2 plan L2).
+ *   0. Claim        — establish EVERY submission behind the return, each with
+ *                      its own Shopify return and payment, and take them all
+ *                      from settlement (S2 plan L2). Refused, before anything
+ *                      external, when any of that cannot be established.
  *   1. Amphora cancel  — FATAL. The only booking either lane lets us release.
- *   2. Shopify cancel  — continue on failure, alert a human.
+ *   2. Shopify cancel  — each submission's OWN return; continue on failure,
+ *                        alert a human.
  *   3. Release hold    — never throws; continue on failure, alert a human.
- *   4. Stripe refund   — continue on failure, alert a human.
+ *   4. Stripe refund   — each submission's OWN payment, key
+ *                        `cancel:<submission id>`; continue on failure, alert.
  *   5. One transaction: submissions `cancelled`, then our rows reset.
  *   6. Email the customer.
  *
@@ -68,11 +73,22 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
   const decision = cancelEligibility(order as any, movement);
   if (!decision.cancellable) return { ok: false, reason: decision.reason };
 
-  // 0. Ownership, BEFORE the first external effect. Settlement that has
-  //    admitted anything owns the submission; then this return is settling.
+  // 0. Ownership and membership, BEFORE the first external effect.
+  //    Settlement that has admitted anything owns the submission; then this
+  //    return is settling. A row or payment nobody can attribute is a human's.
   const claim = await claimOrderForCancellation(((order as any)?.products ?? []) as any[]);
-  if (!claim.ok) return { ok: false, reason: claim.reason };
-  const submissionIds = claim.submissionIds;
+  if (!claim.ok) {
+    if (claim.reason === "needs-support") {
+      await alertOps(
+        `Cancellation REFUSED — cannot attribute the return (${(order as any)?.orderNumber})`,
+        `A customer asked to cancel the return on order ${orderId}. Nothing was cancelled or refunded:\n` +
+          `${claim.detail}\n\nThe customer was asked to email us. Cancel it by hand.`
+      );
+    }
+    return { ok: false, reason: claim.reason };
+  }
+  const members = claim.members;
+  const submissionIds = members.map((m) => m.submissionId);
   const giveBack = async () => {
     for (const id of submissionIds) await releaseCancellation(id);
   };
@@ -101,71 +117,55 @@ export async function cancelReturnFunction(orderId: string): Promise<CancelResul
     );
   }
 
-  // 2. Continue on failure — an open Shopify return is an ops problem, and
-  //    stopping here would leave the customer with no return and no money.
-  const returnId = (order as any)?.products?.find((line: any) => line?.return_id)?.return_id;
-  if (returnId) {
-    const cancelled = await cancelShopifyReturn(returnId);
+  // 2. Each submission's OWN Shopify return. Continue on failure — an open
+  //    Shopify return is an ops problem, and stopping here would leave the
+  //    customer with no return and no money.
+  for (const member of members) {
+    const cancelled = await cancelShopifyReturn(member.returnId);
     if (!cancelled.success) {
       await alertOps(
-        `Shopify return ${returnId} still open after cancellation (${(order as any).orderNumber})`,
-        `Order ${orderId} was cancelled by the customer and refunded, but returnCancel failed:\n` +
-          `${JSON.stringify(cancelled.errors)}\n\n` +
+        `Shopify return ${member.returnId} still open after cancellation (${(order as any).orderNumber})`,
+        `Order ${orderId} (submission ${member.submissionId}) was cancelled by the customer and refunded, ` +
+          `but returnCancel failed:\n${JSON.stringify(cancelled.errors)}\n\n` +
           `Close it by hand, or an admin validating it later will refund the garment too.`
       );
     }
-  } else {
-    // No id to cancel with, which should be impossible for a confirmed return:
-    // `updateFinalOrder` writes `return_id` onto every line at creation. When
-    // it happens anyway — a half-created return, a partial revert — the branch
-    // above is skipped, and skipping it SILENTLY is the harm: the Shopify
-    // return is still open, the customer has been refunded a step later, and
-    // an admin validating it refunds the garment on top. Nothing else would
-    // ever notice, because step 5 drops the row off the dashboard.
-    await alertOps(
-      `Cancelled return had no Shopify return id (${(order as any).orderNumber})`,
-      `Order ${orderId} was cancelled by the customer and refunded, but none of its lines ` +
-        `carried a return_id, so no returnCancel was sent. If a Shopify return exists for ` +
-        `this order it is STILL OPEN — find it and close it by hand, or an admin validating ` +
-        `it later will refund the garment too.`
-    );
   }
 
-  // 3. Never throws, but a `false` means the hold is still live: the
+  // 3. Never throws, but `released: false` means the hold is still live: the
   //    replacement stock stays frozen behind nothing but this alert once
-  //    `resetOrderReturn` (step 5) drops the row from the dashboard.
-  const released = await releaseExchangeReservation(orderId);
-  if (!released) {
+  //    step 5 drops the row from the dashboard.
+  const hold = await releaseHoldForCancellation(orderId, submissionIds);
+  if (!hold.released) {
     await alertOps(
       `Exchange stock hold not released after cancelling ${(order as any).orderNumber}`,
-      `Order ${orderId} was cancelled by the customer, but releaseExchangeReservation failed. ` +
+      `Order ${orderId} was cancelled by the customer, but its stock hold was not released: ${hold.reason}. ` +
         `The replacement garment's stock hold may still be live in Shopify — release it by hand.`
     );
   }
 
-  // 4. `not-found` is not a failure: a free return had nothing to refund.
-  const paymentIntent = (order as any).stripePaymentIntent;
-  const refund = await refundOrderPayment(
-    {
-      id: orderId,
-      email: (order as any).email,
-      stripePaymentIntent: paymentIntent,
-    },
-    // One submission in every real case; several only when two unsettled
-    // returns on one order are cancelled together — sorted, so a retry of the
-    // same cancellation reuses the same key.
-    [...submissionIds].sort().join("+")
-  );
-  if (!refund.refunded && refund.reason === "error") {
-    await alertOps(
-      `Refund FAILED after cancelling ${(order as any).orderNumber}`,
-      `Order ${orderId} was cancelled at the customer's request and their return is gone, ` +
-        `but the refund did not go through. Refund them by hand in Stripe.\n\n` +
-        // Step 5 clears `stripe_payment_intent` from the row, so this line is
-        // the only surviving pointer to the charge that needs reversing.
-        `Payment intent: ${paymentIntent || "not stored — find the Checkout Session by " +
-          `customer_email ${(order as any).email} and metadata.id ${orderId}`}`
+  // 4. Each submission's OWN payment, keyed by its own id: a retry of the same
+  //    cancellation reuses each key, and no payment is refunded on another's
+  //    behalf. `not-found` is not a failure: a free return had nothing to refund.
+  for (const member of members) {
+    if (member.payment.kind === "none") continue;
+    const paymentIntent =
+      member.payment.kind === "intent" ? member.payment.paymentIntent : (order as any).stripePaymentIntent;
+    const refund = await refundOrderPayment(
+      { id: orderId, email: (order as any).email, stripePaymentIntent: paymentIntent },
+      member.submissionId
     );
+    if (!refund.refunded && refund.reason === "error") {
+      await alertOps(
+        `Refund FAILED after cancelling ${(order as any).orderNumber}`,
+        `Order ${orderId} (submission ${member.submissionId}) was cancelled at the customer's request and ` +
+          `their return is gone, but the refund did not go through. Refund them by hand in Stripe.\n\n` +
+          // Step 5 clears `stripe_payment_intent` from the order row; the
+          // submission keeps its own.
+          `Payment intent: ${paymentIntent || "not stored — find the Checkout Session by " +
+            `customer_email ${(order as any).email} and metadata.id ${orderId}`}`
+      );
+    }
   }
 
   // 5. Clean slate — they can start a fresh return immediately.

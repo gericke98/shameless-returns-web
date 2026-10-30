@@ -17,10 +17,9 @@ import {
   presentmentRateFromOrder,
   type ReturnableLine,
 } from "@/lib/returnPayload";
-import {
-  releaseExchangeReservation,
-  reserveExchangeStock,
-} from "@/actions/exchangeReservation";
+import { reserveExchangeStock } from "@/actions/exchangeReservation";
+import { releaseHoldForRevert } from "@/lib/settlement/holdRelease";
+import { alertOps } from "@/actions/opsAlert";
 import { refundSourceFor } from "@/actions/replacementOrder";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -90,7 +89,16 @@ export async function revertFinalOrder(id: string) {
     // confirmation email all survived — and this call, one level outside the
     // loop's result, quietly deleted the draft order holding their Medium.
     if (!refusals.some(Boolean)) {
-      await releaseExchangeReservation(id);
+      // Through the one draftOrderDelete (lib/settlement/effects.ts), and
+      // only once the database proves no live return owns the hold.
+      const hold = await releaseHoldForRevert(id);
+      if (!hold.released) {
+        await alertOps(
+          `Exchange stock hold not released after reverting order ${id}`,
+          `The confirmation of order ${id} failed and was reverted, but its stock hold was not released: ` +
+            `${hold.reason}. The replacement garment may still be held in Shopify — check and release it by hand.`
+        );
+      }
     }
     revalidatePath("/", "layout");
   }

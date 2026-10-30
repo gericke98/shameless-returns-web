@@ -293,8 +293,9 @@ export async function GET(req: Request) {
  * hundred; reaching here means the gate said yes and admission (or Shopify)
  * refused, so a customer is owed money and only a human can unstick it.
  *
- * Says only what the state proves (S2 plan L8): an admission hold sent
- * nothing to Shopify, so NO money moved; a rejected effect did not happen,
+ * Says only what the state proves (S2 plan L8): an admission hold means THIS
+ * run dispatched nothing — it proves nothing about earlier runs, which may
+ * have paid a sibling effect (finding 11); a rejected effect did not happen,
  * but a sibling effect of the same line (its gift card, say) may already be
  * done — and stays done, never repeated.
  */
@@ -307,7 +308,7 @@ async function alertNotSettled(label: string, reason: string) {
       `Reason: ${reason}`,
       rejected
         ? `Shopify REJECTED an effect, so that effect did not happen. Any other effect of the line already recorded done stays done and is never repeated — check the order's settlement operations.`
-        : `NO money moved — admission was refused, so nothing was sent to Shopify.`,
+        : `This run dispatched nothing to Shopify (admission was refused). That says nothing about effects earlier runs may have recorded — check the order's settlement operations before assuming the customer received nothing.`,
       `The customer is still owed. This will keep failing every run until someone looks.`,
     ].join("\n")
   );

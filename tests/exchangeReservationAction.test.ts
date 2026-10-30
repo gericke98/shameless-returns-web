@@ -153,39 +153,5 @@ describe("reserveExchangeStock", () => {
   });
 });
 
-describe("releaseExchangeReservation", () => {
-  it("reports success when there was never a hold", async () => {
-    const { releaseExchangeReservation } = await import("@/actions/exchangeReservation");
-
-    await expect(releaseExchangeReservation("13161229386054")).resolves.toBe(true);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("deletes the draft and clears the pointer", async () => {
-    state.order = { ...state.order, exchangeReservationId: "gid://shopify/DraftOrder/1" };
-    fetchMock.mockResolvedValue({
-      json: async () => ({
-        data: { draftOrderDelete: { deletedId: "gid://shopify/DraftOrder/1", userErrors: [] } },
-      }),
-    });
-    const { releaseExchangeReservation } = await import("@/actions/exchangeReservation");
-
-    await expect(releaseExchangeReservation("13161229386054")).resolves.toBe(true);
-    expect(updates).toContainEqual({ exchangeReservationId: null });
-  });
-
-  it("KEEPS the pointer when the delete fails", async () => {
-    // The column is the only handle on a hold that is still holding stock.
-    // Clearing it strands those units until the reservation lapses on its own.
-    state.order = { ...state.order, exchangeReservationId: "gid://shopify/DraftOrder/1" };
-    fetchMock.mockResolvedValue({
-      json: async () => ({
-        data: { draftOrderDelete: { userErrors: [{ message: "not found" }] } },
-      }),
-    });
-    const { releaseExchangeReservation } = await import("@/actions/exchangeReservation");
-
-    await expect(releaseExchangeReservation("13161229386054")).resolves.toBe(false);
-    expect(updates).toHaveLength(0);
-  });
-});
+// Releasing a hold moved to lib/settlement/holdRelease.ts (finding 9): see
+// tests/settlementHoldRelease.test.ts.

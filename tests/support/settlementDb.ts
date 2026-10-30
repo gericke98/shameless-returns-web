@@ -4,7 +4,7 @@
 // `orders` and `productsorder` predate the hand-written migrations, so their
 // columns are generated from db/schema.ts (names and types only — no FKs, no
 // defaults beyond the primary key). Everything settlement owns comes from the
-// migration files themselves: 0004 (ops_alerts), 0006, 0007.
+// migration files themselves: 0004 (ops_alerts), 0006, 0007, 0008.
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -27,6 +27,7 @@ export const MIGRATIONS = [
   "drizzle/0004_ops_alerts.sql",
   "drizzle/0006_return_submissions.sql",
   "drizzle/0007_settlement_operations.sql",
+  "drizzle/0008_settlement_lease_generation.sql",
 ];
 
 /**

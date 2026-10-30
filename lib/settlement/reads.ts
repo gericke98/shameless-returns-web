@@ -27,6 +27,10 @@ export const RETURN_EVIDENCE_FIELDS = `
         pageInfo { hasNextPage }
         nodes {
           id
+          refundLineItems(first: 50) {
+            pageInfo { hasNextPage }
+            nodes { lineItem { id } }
+          }
           transactions(first: 10) {
             pageInfo { hasNextPage }
             nodes {
@@ -97,6 +101,13 @@ export const ORDER_REFUNDS_QUERY = `
       id
       refunds(first: $first) {${REFUND_EVIDENCE_FIELDS}
       }
+    }
+  }`;
+
+/** One order by id — the operator names the exchange order they found. */
+export const ORDER_BY_ID_QUERY = `
+  query SettlementExchangeOrderById($id: ID!) {
+    order(id: $id) {${ORDER_EVIDENCE_FIELDS}
     }
   }`;
 

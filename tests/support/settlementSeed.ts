@@ -48,9 +48,9 @@ export async function seedSubmission(
       `INSERT INTO submission_lines (submission_id, productsorder_id, shopify_line_item_id, quantity,
          action, new_variant_id, returned_cents, replacement_cents, pay_cents, stripe_funded_cents,
          fulfillment_line_item_id, return_line_item_id)
-       VALUES ($1, $2, 'li', $3, $4, $5, $6, 0, $7, $8, $9, $10)`,
+       VALUES ($1, $2, $11, $3, $4, $5, $6, 0, $7, $8, $9, $10)`,
       [id, l.productsorderId, l.quantity, l.action, l.newVariantId, l.returnedCents, l.payCents,
-       l.stripeFundedCents, l.fulfillmentLineItemId, l.returnLineItemId]
+       l.stripeFundedCents, l.fulfillmentLineItemId, l.returnLineItemId, l.shopifyLineItemId]
     );
   }
   return { id, orderId, lines, tender: opts.tender ?? "refund", residualCents: opts.residualCents ?? 0 };

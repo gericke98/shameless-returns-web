@@ -50,7 +50,12 @@ function matchingTransactions(txs: RefundTx[], parentId: string, money: FrozenMo
   );
 }
 
-/** Judge the money half: one refund carrying one matching transaction. */
+/**
+ * The money predicates over refunds ALREADY KNOWN to be the op's own (by
+ * marker, effect ref, or refunded line item — never by amount): exactly one
+ * transaction, REFUND, against the frozen parent, for the frozen money, and
+ * SUCCESS (PENDING waits).
+ */
 function judgeRefundMoney(
   refunds: Array<{ id: string; transactions?: any }>,
   parentId: string,
@@ -125,13 +130,7 @@ export function judgeReturn(
     };
   }
 
-  const refunds = ret.refunds;
-  if (refunds?.pageInfo?.hasNextPage) return { v: "wait", reason: "return refunds truncated" };
-  const money = judgeRefundMoney(
-    refunds?.nodes ?? [],
-    check.refund!.parentTransactionId,
-    check.refund!.money
-  );
+  const money = judgeOwnRefund(ret.refunds, check.refund!);
   if (money.v === "wait" || money.v === "unresolved") return money;
   if (money.v === "ok" && goodsDone) {
     return { v: "done", effectRef: money.refundId, evidence: { processed, notRestocked, refund: money.refundId } };
@@ -143,6 +142,36 @@ export function judgeReturn(
     v: "unresolved",
     error: `goods ${goodsDone ? "processed" : "unprocessed"} but money ${money.v === "ok" ? "present" : "absent"}`,
   };
+}
+
+/**
+ * Which refund on the return is THIS op's: the one that refunds the frozen
+ * order line item (finding 6). Ownership is that explicit id — never the
+ * amount, so two lines refunding equal amounts against one payment each find
+ * their own refund. None → absent; two → unresolved (something else refunded
+ * this line); exactly one → the money predicates, and a mismatch on our own
+ * refund is unresolved, never "absent".
+ */
+function judgeOwnRefund(
+  refunds: { pageInfo?: { hasNextPage?: boolean }; nodes?: any[] } | null | undefined,
+  frozen: { parentTransactionId: string; money: FrozenMoney; lineItemGid: string }
+): Verdict | { v: "ok"; refundId: string } {
+  if (refunds?.pageInfo?.hasNextPage) return { v: "wait", reason: "return refunds truncated" };
+  const own: any[] = [];
+  for (const refund of refunds?.nodes ?? []) {
+    const lines = refund?.refundLineItems;
+    if (lines?.pageInfo?.hasNextPage) return { v: "wait", reason: `refund ${refund?.id} line items truncated` };
+    if ((lines?.nodes ?? []).some((n: any) => n?.lineItem?.id === frozen.lineItemGid)) own.push(refund);
+  }
+  if (own.length === 0) return { v: "absent", detail: `no refund on the return refunds ${frozen.lineItemGid}` };
+  if (own.length > 1) {
+    return { v: "unresolved", error: `${own.length} refunds on the return refund ${frozen.lineItemGid}` };
+  }
+  const money = judgeRefundMoney(own, frozen.parentTransactionId, frozen.money);
+  if (money.v === "absent") {
+    return { v: "unresolved", error: `refund ${own[0].id} of ${frozen.lineItemGid} does not pay the frozen transaction` };
+  }
+  return money;
 }
 
 /** The refundCreate answer's own refund. */

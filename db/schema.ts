@@ -374,6 +374,9 @@ export const settlementOperations = pgTable("settlement_operations", {
   currency: text("currency").notNull().default("EUR"),
   state: text("state").notNull().default("pending"),
   attempt: integer("attempt").notNull().default(0),
+  // Worker fence (0008): moves on every claim/takeover; `attempt` is the
+  // financial attempt and moves only when a new send is proven safe.
+  leaseGen: integer("lease_gen").notNull().default(0),
   owner: uuid("owner"),
   leaseUntil: timestamp("lease_until", { withTimezone: true }),
   dispatchedAt: timestamp("dispatched_at", { withTimezone: true }),

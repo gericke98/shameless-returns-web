@@ -130,8 +130,11 @@ vi.mock("@/lib/loadBasket", () => ({
   }),
 }));
 vi.mock("@/actions/exchangeReservation", () => ({
-  releaseExchangeReservation: async () => {},
   reserveExchangeStock: async () => {},
+}));
+vi.mock("@/lib/settlement/holdRelease", () => ({
+  releaseHoldForRevert: async () => ({ released: true }),
+  releaseHoldForCancellation: async () => ({ released: true }),
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 

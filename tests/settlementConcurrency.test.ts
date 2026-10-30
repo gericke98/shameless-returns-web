@@ -107,7 +107,7 @@ describe.skipIf(!pg16Available)("settlement races on PostgreSQL 16", () => {
     const [taken] = await Promise.all([claim(id, randomUUID()), dispatch(old, old.owner!)]);
     // The expired holder can no longer dispatch, and anything it records is refused.
     expect(taken).not.toBeNull();
-    const fenced = await recordDone(old, { state: "dispatched", owner: old.owner, attempt: old.attempt }, "x", {});
+    const fenced = await recordDone(old, { state: "dispatched", owner: old.owner, leaseGen: old.leaseGen }, "x", {});
     expect(fenced.done).toBe(false);
   });
 
@@ -124,7 +124,7 @@ describe.skipIf(!pg16Available)("settlement races on PostgreSQL 16", () => {
         tokens.push((await dispatch((await claim(op.id, me))!, me))!);
       }
       const results = await Promise.all(
-        tokens.map((t) => recordDone(t, { state: "dispatched", owner: t.owner, attempt: t.attempt }, "ref", {}))
+        tokens.map((t) => recordDone(t, { state: "dispatched", owner: t.owner, leaseGen: t.leaseGen }, "ref", {}))
       );
       expect(results.every((r) => r.done)).toBe(true);
       // Neither missed the line, and only one of them stamped it.

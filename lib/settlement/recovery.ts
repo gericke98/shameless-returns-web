@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
 import {
   finalize,
+  hasDispatched,
   recoverableOperations,
   stuckCancellations,
   submissionsToFinalize,
@@ -32,7 +33,7 @@ export async function recoverSettlements(options: { deadline: number; limit?: nu
       break;
     }
     const result =
-      op.state === "dispatched" ? await recoverDispatched(op, me) : await run(op.id, me);
+      hasDispatched(op) ? await recoverDispatched(op, me) : await run(op.id, me);
     report.ran.push({ op: op.id, kind: op.kind, from: op.state, result });
   }
 

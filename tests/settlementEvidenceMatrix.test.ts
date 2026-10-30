@@ -122,14 +122,15 @@ describe.each([
     expect((await opState(op.id)).state).toBe("rejected");
   });
 
-  it("no answer → stays dispatched; evidence 0 → re-sent under a new attempt", async () => {
+  it("no answer → stays dispatched; evidence 0 → re-sent under the SAME attempt", async () => {
     const op = await kinds[kind]();
     await unanswered(op);
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(op.request.check, { processed: 0, refunds: [] }) } });
     answers[mutation] = () => ({ data: { [field]: { return: returnObject(op.request.check), userErrors: [] } } });
     expect(await recover(op)).toBe("done");
     expect(sends(mutation)).toHaveLength(2);
-    expect((await opState(op.id)).attempt).toBe(2);
+    // A takeover changes the worker, never the financial attempt (finding 1).
+    expect((await opState(op.id)).attempt).toBe(1);
   });
 
   it("no answer, evidence 1 → done without a re-send", async () => {
@@ -150,7 +151,7 @@ describe.each([
 
 describe("process_refund — the money half of the evidence", () => {
   it.each([
-    ["2 matching refunds", { refunds: [{}, {}] }, "unresolved"],
+    ["2 refunds of this line item", { refunds: [{}, {}] }, "unresolved"],
     ["a refund of another amount", { refunds: [{ amount: "1.00" }] }, "unresolved"],
     ["PENDING", { refunds: [{ status: "PENDING" }] }, "in-flight"],
     ["FAILURE", { refunds: [{ status: "FAILURE" }] }, "unresolved"],
@@ -160,6 +161,45 @@ describe("process_refund — the money half of the evidence", () => {
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(op.request.check, facts as any) } });
     expect(await recover(op)).toBe(expected);
     if (expected === "in-flight") expect((await opState(op.id)).state).toBe("dispatched");
+  });
+
+  // Finding 6: ownership is the refunded line item, never the amount.
+  async function twoEqualGarments() {
+    const { plan } = await admitted({ lines: [line(1), line(2)] }); // both €45 against TX 7
+    const [a, b] = plan.ops.filter((o) => o.kind === "process_refund") as any[];
+    expect(a.request.check.refund.money).toEqual(b.request.check.refund.money);
+    expect(a.request.check.refund.parentTransactionId).toBe(b.request.check.refund.parentTransactionId);
+    return { a, b };
+  }
+
+  it("two garments refunding equal amounts against one payment each find their OWN refund", async () => {
+    const { a, b } = await twoEqualGarments();
+    await unanswered(b);
+    answers.SettlementReturnEvidence = () => ({
+      data: { return: returnObject(b.request.check, { refunds: [{ lineItem: a.request.check.refund.lineItemGid }, {}] }) },
+    });
+    expect(await recover(b)).toBe("done");
+    expect((await opState(b.id)).effect_ref).toBe("gid://shopify/Refund/2");
+  });
+
+  it("an equal refund of ANOTHER line is not this op's: absent, and re-sent", async () => {
+    const { a, b } = await twoEqualGarments();
+    await unanswered(b);
+    answers.SettlementReturnEvidence = () => ({
+      data: {
+        return: returnObject(b.request.check, { processed: 0, refunds: [{ lineItem: a.request.check.refund.lineItemGid }] }),
+      },
+    });
+    answers.SettlementReturnProcess = () => ({
+      data: { returnProcess: { return: returnObject(b.request.check), userErrors: [] } },
+    });
+    expect(await recover(b)).toBe("done");
+    expect(sends("SettlementReturnProcess")).toHaveLength(2);
+  });
+
+  it("freezes the line item it refunds, from the submission line, as a gid", async () => {
+    const { a } = await twoEqualGarments();
+    expect(a.request.check.refund.lineItemGid).toBe("gid://shopify/LineItem/7001");
   });
 });
 

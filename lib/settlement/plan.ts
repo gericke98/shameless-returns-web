@@ -69,6 +69,8 @@ export const scopeKeys = {
 };
 
 const euros = (cents: number) => cents / 100;
+/** S1 freezes the REST (bare) line item id; Shopify's refunds name the gid. */
+const lineItemGid = (id: string) => (id.startsWith("gid://") ? id : `gid://shopify/LineItem/${id}`);
 const shopMoney = (cents: number, currencyCode: string): FrozenMoney => ({
   amount: (cents / 100).toFixed(2),
   currencyCode,
@@ -85,6 +87,14 @@ export function planAdmission(input: PlanInput): Plan {
     scopes.add(op.scope_key);
     ops.push({ currency: s.currency, ...op });
   };
+
+  // Shopify's return lifecycle gates every NEW obligation (finding 2): an
+  // operation may only be created against an OPEN return. A closed or
+  // cancelled return was settled or withdrawn outside this ledger, so creating
+  // money against it could pay twice. Operations admitted while it was OPEN
+  // are untouched by this — recovery executes them after closure.
+  const notOpen = (ret: ReturnFacts, scopeKey: string): Plan | null =>
+    !scopes.has(scopeKey) && ret.status !== "OPEN" ? held(`return-not-open:${ret.status}`) : null;
 
   if (s.state !== "accepted") return held(`not-accepted:${s.state}`);
   if (s.holder === "cancellation") return held("cancelling");
@@ -148,6 +158,8 @@ export function planAdmission(input: PlanInput): Plan {
       const parentId = row.transactionId;
       if (!parentId) return held(`no-refund-transaction:${po}`);
       const money = refundTransactionAmount(euros(line.payCents), ret.presentment);
+      const closed = notOpen(ret, scopeKeys.money(s.id, po));
+      if (closed) return closed;
       const request: OpRequest = {
         kind: "process_refund",
         variables: goodsInput(
@@ -160,7 +172,10 @@ export function planAdmission(input: PlanInput): Plan {
           },
           true
         ),
-        check: { ...goodsCheck, refund: { parentTransactionId: parentId, money } },
+        check: {
+          ...goodsCheck,
+          refund: { parentTransactionId: parentId, money, lineItemGid: lineItemGid(line.shopifyLineItemId) },
+        },
       };
       add({
         id: input.newId(),
@@ -174,6 +189,8 @@ export function planAdmission(input: PlanInput): Plan {
       continue;
     }
 
+    const goodsClosed = notOpen(ret, scopeKeys.goods(s.id, po));
+    if (goodsClosed) return goodsClosed;
     add({
       id: input.newId(),
       kind: "process_goods",
@@ -185,6 +202,8 @@ export function planAdmission(input: PlanInput): Plan {
     });
 
     if (line.payCents > 0) {
+      const moneyClosed = notOpen(ret, scopeKeys.money(s.id, po));
+      if (moneyClosed) return moneyClosed;
       const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po]);
       if ("held" in money) return held(money.held);
       add(money);
@@ -202,6 +221,8 @@ export function planAdmission(input: PlanInput): Plan {
       // The customer the order is created for: the one on the return's order.
       const anyReturn = input.returns.get(input.rows.get(members[0])?.returnId ?? "");
       if (!anyReturn) return held("shopify-unreadable:exchange");
+      const exchangeClosed = notOpen(anyReturn, scopeKeys.exchange(s.id));
+      if (exchangeClosed) return exchangeClosed;
       exchangeId = input.newId();
       const built = buildExchangeOrderVariables({
         opId: exchangeId,
@@ -240,6 +261,10 @@ export function planAdmission(input: PlanInput): Plan {
       });
     }
     if (input.reservation) {
+      const holdReturn = input.returns.get(input.rows.get(members[0])?.returnId ?? "");
+      if (!holdReturn) return held("shopify-unreadable:hold");
+      const holdClosed = notOpen(holdReturn, scopeKeys.hold(s.id));
+      if (holdClosed) return holdClosed;
       add({
         id: input.newId(),
         kind: "release_hold",
@@ -258,15 +283,26 @@ export function planAdmission(input: PlanInput): Plan {
 
   // The submission's own indivisible cents: once, and only when this
   // admission leaves no line that owes money without its money operation.
+  // Its members are EVERY paying line (finding 7): completion is "every op a
+  // line belongs to is done", so no paying line — and so not the return —
+  // reads as settled or refunded while the residual is still owed.
   if (s.residualCents > 0 && !scopes.has(scopeKeys.residual(s.id))) {
-    const everyPayLineAdmitted = lines
-      .filter((l) => l.payCents > 0)
-      .every((l) => scopes.has(scopeKeys.money(s.id, l.productsorderId)));
+    const payLines = lines.filter((l) => l.payCents > 0);
+    if (payLines.length === 0) return held("residual-without-paying-line");
+    const everyPayLineAdmitted = payLines.every((l) => scopes.has(scopeKeys.money(s.id, l.productsorderId)));
     if (everyPayLineAdmitted) {
       const anyLine = lines.find((l) => input.rows.get(l.productsorderId)?.returnId);
       const ret = anyLine ? input.returns.get(input.rows.get(anyLine.productsorderId)!.returnId!) : undefined;
       if (!ret) return held("shopify-unreadable:residual");
-      const money = moneyOperation(input, ret, s.residualCents, scopeKeys.residual(s.id), []);
+      const residualClosed = notOpen(ret, scopeKeys.residual(s.id));
+      if (residualClosed) return residualClosed;
+      const money = moneyOperation(
+        input,
+        ret,
+        s.residualCents,
+        scopeKeys.residual(s.id),
+        payLines.map((l) => l.productsorderId)
+      );
       if ("held" in money) return held(money.held);
       add(money);
     }

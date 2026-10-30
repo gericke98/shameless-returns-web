@@ -103,26 +103,44 @@ export function filterGroups<O extends GroupableOrder, P, S>(
 }
 
 /**
- * The exchange lines a single "Process exchange" action would settle.
+ * The settlement actions an order's pending exchanges form: one per
+ * SUBMISSION (finding 10), never one per order.
  *
- * `validateReturn` gathers every pending CAMBIO line on the order, creates ONE
- * Shopify order with all the replacements, and closes each return. So when more
- * than one is pending, a per-garment button is misleading in both directions:
- * it looks like each must be pressed, and like pressing one might ship only
- * that garment. The second press is in fact a silent no-op.
+ * Settling a row settles the submission it belongs to, and that submission's
+ * whole exchange travels as one replacement order — so its pending CAMBIO
+ * lines are one action. Two submissions on one order are two actions: a
+ * single button would promise both garments and settle only one.
  *
- * Returns (DEVOLUCIÓN) are excluded — each is refunded individually for its own
- * amount and keeps its own button.
+ * `settlementKey` is explicit data computed on the server
+ * (`settlementKeyOf`): the accepted submission's id, or — for a row no
+ * submission covers yet, which a click records as one legacy submission per
+ * Shopify return — that return's id. Order of first appearance is kept.
  *
- * `changeAction` is passed in rather than imported so this module stays free of
- * `@/placeholder`, which is a 350kB catalogue.
+ * Returns (DEVOLUCIÓN) are excluded — each is refunded individually and keeps
+ * its own button. `changeAction` is passed in rather than imported so this
+ * module stays free of `@/placeholder`, a 350kB catalogue.
  */
-export function pendingExchanges<
-  P extends { action?: string | null; refunded?: boolean | null }
->(products: P[], changeAction: string): P[] {
-  return (products ?? []).filter(
-    (product) => product.action === changeAction && !product.refunded
-  );
+export function exchangeBatches<
+  P extends { action?: string | null; refunded?: boolean | null; settlementKey: string }
+>(products: P[], changeAction: string): Array<{ settlementKey: string; lines: P[] }> {
+  const batches = new Map<string, P[]>();
+  for (const product of products ?? []) {
+    if (product.action !== changeAction || product.refunded) continue;
+    const lines = batches.get(product.settlementKey);
+    if (lines) lines.push(product);
+    else batches.set(product.settlementKey, [product]);
+  }
+  return Array.from(batches, ([settlementKey, lines]) => ({ settlementKey, lines }));
+}
+
+/** The settlement identity of a dashboard row (see `exchangeBatches`). */
+export function settlementKeyOf(
+  row: { id: number; return_id?: string | null },
+  submissionByRow: ReadonlyMap<number, string>
+): string {
+  const submission = submissionByRow.get(row.id);
+  if (submission) return `submission:${submission}`;
+  return row.return_id ? `return:${row.return_id}` : `row:${row.id}`;
 }
 
 /**

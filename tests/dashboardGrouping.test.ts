@@ -3,7 +3,8 @@ import {
   countProducts,
   filterGroups,
   groupReturns,
-  pendingExchanges,
+  exchangeBatches,
+  settlementKeyOf,
 } from "@/lib/dashboardGrouping";
 import { ACTIONS } from "@/placeholder";
 
@@ -131,36 +132,54 @@ describe("countProducts", () => {
   });
 });
 
-describe("pendingExchanges", () => {
-  const line = (action: string, refunded = false) => ({ action, refunded });
+describe("exchangeBatches — one settlement action per SUBMISSION (finding 10)", () => {
+  const line = (id: number, action: string, settlementKey = "submission:A", refunded = false) => ({
+    id,
+    action,
+    refunded,
+    settlementKey,
+  });
 
-  it("collects the exchange lines a single action would settle", () => {
-    // validateReturn creates ONE Shopify order for all of them, so they are one
-    // action, not two.
-    const products = [line(ACTIONS.CHANGE), line(ACTIONS.CHANGE)];
-    expect(pendingExchanges(products, ACTIONS.CHANGE)).toHaveLength(2);
+  it("collects one submission's exchange lines into one action", () => {
+    const products = [line(1, ACTIONS.CHANGE), line(2, ACTIONS.CHANGE)];
+    expect(exchangeBatches(products, ACTIONS.CHANGE)).toEqual([
+      { settlementKey: "submission:A", lines: products },
+    ]);
+  });
+
+  it("two submissions on ONE order are two actions, each with its own garments", () => {
+    const products = [
+      line(1, ACTIONS.CHANGE, "submission:A"),
+      line(2, ACTIONS.CHANGE, "submission:B"),
+      line(3, ACTIONS.CHANGE, "submission:A"),
+    ];
+    expect(exchangeBatches(products, ACTIONS.CHANGE).map((b) => [b.settlementKey, b.lines.map((l) => l.id)])).toEqual([
+      ["submission:A", [1, 3]],
+      ["submission:B", [2]],
+    ]);
   });
 
   it("excludes returns — each is refunded for its own amount", () => {
-    const products = [line(ACTIONS.CHANGE), line(ACTIONS.RETURN)];
-    expect(pendingExchanges(products, ACTIONS.CHANGE)).toHaveLength(1);
+    expect(exchangeBatches([line(1, ACTIONS.CHANGE), line(2, ACTIONS.RETURN)], ACTIONS.CHANGE)[0].lines).toHaveLength(1);
   });
 
   it("excludes exchanges that are already settled", () => {
-    // Their replacement has shipped; offering to process them again would mint
-    // a second parcel.
-    const products = [line(ACTIONS.CHANGE, true), line(ACTIONS.CHANGE, false)];
-    expect(pendingExchanges(products, ACTIONS.CHANGE)).toHaveLength(1);
+    const products = [line(1, ACTIONS.CHANGE, "submission:A", true), line(2, ACTIONS.CHANGE)];
+    expect(exchangeBatches(products, ACTIONS.CHANGE)[0].lines.map((l) => l.id)).toEqual([2]);
   });
 
   it("matches the accented DEVOLUCION constant, not a lookalike string", () => {
-    // productsOrder.action stores the accented code. Comparing against an
-    // unaccented "DEVOLUCION" is a mistake this table has made before.
     expect(ACTIONS.RETURN).toBe("DEVOLUCI\u00d3N");
-    expect(pendingExchanges([line("DEVOLUCION")], ACTIONS.CHANGE)).toHaveLength(0);
+    expect(exchangeBatches([line(1, "DEVOLUCION")], ACTIONS.CHANGE)).toEqual([]);
+  });
+});
+
+describe("settlementKeyOf", () => {
+  it("is the accepted submission the row belongs to", () => {
+    expect(settlementKeyOf({ id: 1, return_id: "gid://shopify/Return/1" }, new Map([[1, "s-1"]]))).toBe("submission:s-1");
   });
 
-  it("returns nothing for an order with no exchanges", () => {
-    expect(pendingExchanges([line(ACTIONS.RETURN)], ACTIONS.CHANGE)).toEqual([]);
+  it("for a row no submission covers yet, is its Shopify return — what a click records as one legacy submission", () => {
+    expect(settlementKeyOf({ id: 1, return_id: "gid://shopify/Return/1" }, new Map())).toBe("return:gid://shopify/Return/1");
   });
 });

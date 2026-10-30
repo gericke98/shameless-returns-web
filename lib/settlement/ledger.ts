@@ -38,6 +38,7 @@ function toOperation(row: any): Operation {
     currency: String(row.currency ?? "EUR"),
     state: row.state,
     attempt: Number(row.attempt ?? 0),
+    leaseGen: Number(row.lease_gen ?? 0),
     owner: row.owner ? String(row.owner) : null,
     leaseUntil: row.lease_until ? new Date(row.lease_until) : null,
     dispatchedAt: row.dispatched_at ? new Date(row.dispatched_at) : null,
@@ -80,6 +81,8 @@ export type SubmissionForAdmission = {
 
 export type SubmissionLineRow = {
   productsorderId: number;
+  /** The order line item this line returns, as S1 froze it (bare id or gid). */
+  shopifyLineItemId: string;
   quantity: number;
   action: string;
   newVariantId: string | null;
@@ -118,6 +121,7 @@ export async function loadSubmission(
     },
     lines: lines.map((l) => ({
       productsorderId: Number(l.productsorder_id),
+      shopifyLineItemId: String(l.shopify_line_item_id),
       quantity: Number(l.quantity),
       action: String(l.action),
       newVariantId: l.new_variant_id ?? null,
@@ -155,6 +159,24 @@ export async function submissionOfRow(productsorderId: number): Promise<string |
     throw new Error(`row ${productsorderId} belongs to ${rows.length} accepted submissions`);
   }
   return rows[0] ? String(rows[0].submission_id) : null;
+}
+
+/** `submissionOfRow` for many rows at once (the dashboard's grouping). */
+export async function submissionsOfRows(productsorderIds: readonly number[]): Promise<Map<number, string>> {
+  if (productsorderIds.length === 0) return new Map();
+  const rows = rowsOf(
+    await db.execute(sql`
+      SELECT sl.productsorder_id, sl.submission_id
+        FROM submission_lines sl
+        JOIN return_submissions s ON s.id = sl.submission_id
+        JOIN productsorder p ON p.id = sl.productsorder_id
+       WHERE sl.productsorder_id IN (SELECT (jsonb_array_elements_text(${JSON.stringify(productsorderIds)}::jsonb))::int)
+         AND s.state = 'accepted'
+         AND sl.return_line_item_id IS NOT NULL
+         AND sl.return_line_item_id = p.return_line_item_id
+    `)
+  );
+  return new Map(rows.map((r) => [Number(r.productsorder_id), String(r.submission_id)]));
 }
 
 // ── L3: admission, one statement ───────────────────────────────────────────
@@ -223,16 +245,26 @@ export async function insertAdmission(input: {
 
 // ── L4: claim → dispatch → record ──────────────────────────────────────────
 
-/** Claim a pending/rejected op, or one whose claim lease ran out. */
+/**
+ * Claim an op that may be SENT AFRESH: a pending op (never sent) or a
+ * rejected one (Shopify said no, so nothing happened) — those two start a new
+ * financial attempt and forget any earlier dispatch. A claim whose lease ran
+ * out is reclaimed only if it never dispatched (`dispatched_at IS NULL`), and
+ * keeps its attempt. Anything that ever dispatched is NOT claimable here: it
+ * goes back through evidence and replay via `takeOver` (finding 1).
+ * Every claim moves `lease_gen`, the worker fence.
+ */
 export async function claim(opId: string, me: string): Promise<Operation | null> {
   const rows = rowsOf(
     await db.execute(sql`
       UPDATE settlement_operations o
-         SET state = 'claimed', owner = ${me}, attempt = o.attempt + 1,
-             lease_until = now() + ${lease}, dispatched_at = NULL, updated_at = now()
+         SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
+             attempt = CASE WHEN o.state IN ('pending', 'rejected') THEN o.attempt + 1 ELSE o.attempt END,
+             dispatched_at = CASE WHEN o.state IN ('pending', 'rejected') THEN NULL ELSE o.dispatched_at END,
+             lease_until = now() + ${lease}, updated_at = now()
        WHERE o.id = ${opId}
          AND (o.state IN ('pending', 'rejected')
-              OR (o.state = 'claimed' AND o.lease_until < now()))
+              OR (o.state = 'claimed' AND o.lease_until < now() AND o.dispatched_at IS NULL))
          AND (o.after IS NULL
               OR EXISTS (SELECT 1 FROM settlement_operations d
                           WHERE d.id = o.after AND d.state = 'done'))
@@ -243,24 +275,27 @@ export async function claim(opId: string, me: string): Promise<Operation | null>
 }
 
 /**
- * Recovery takes over an op dispatched long ago with no answer, to re-send it
- * — only for kinds whose re-send is safe (L5). `exchange_order` never; a
- * `root_refund` keeps its attempt, so the re-send carries the SAME idempotency
- * key, and only within 23 h of its first dispatch.
+ * Recovery takes over an op that has dispatched before — dispatched long ago
+ * with no answer, or a takeover claim whose lease ran out before it re-sent —
+ * to re-send it after re-reading the evidence, only for kinds whose re-send is
+ * safe (L5). `exchange_order` never. An ownership change NEVER touches the
+ * financial identity: `attempt` (the idempotency key) and `dispatched_at`
+ * (the start of the 23 h replay window) are kept for every kind; only the
+ * worker fence `lease_gen` moves. A root_refund is re-sent only within 23 h
+ * of its first dispatch.
  */
 export async function takeOver(op: Operation, me: string): Promise<Operation | null> {
   const rows = rowsOf(
     await db.execute(sql`
       UPDATE settlement_operations o
-         SET state = 'claimed', owner = ${me}, lease_until = now() + ${lease},
-             attempt = CASE WHEN o.kind = 'root_refund' THEN o.attempt ELSE o.attempt + 1 END,
-             dispatched_at = CASE WHEN o.kind = 'root_refund' THEN o.dispatched_at ELSE NULL END,
-             updated_at = now()
+         SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
+             lease_until = now() + ${lease}, updated_at = now()
        WHERE o.id = ${op.id}
-         AND o.state = 'dispatched'
-         AND o.attempt = ${op.attempt}
+         AND o.lease_gen = ${op.leaseGen}
          AND o.owner IS NOT DISTINCT FROM ${op.owner}
-         AND o.updated_at < now() - ${lease}
+         AND o.dispatched_at IS NOT NULL
+         AND ((o.state = 'dispatched' AND o.updated_at < now() - ${lease})
+              OR (o.state = 'claimed' AND o.lease_until < now()))
          AND o.kind <> 'exchange_order'
          AND (o.kind <> 'root_refund' OR o.dispatched_at > now() - ${replayWindow})
       RETURNING o.*
@@ -271,7 +306,7 @@ export async function takeOver(op: Operation, me: string): Promise<Operation | n
 
 /**
  * Only a returned row authorises the send: the claim must still be ours, at
- * this attempt, and its lease alive. `dispatched_at` is kept across a
+ * this lease generation, and its lease alive. `dispatched_at` is kept across a
  * root_refund re-send so its 23 h replay window is measured from the first.
  */
 export async function dispatch(op: Operation, me: string): Promise<DispatchToken | null> {
@@ -281,7 +316,7 @@ export async function dispatch(op: Operation, me: string): Promise<DispatchToken
          SET state = 'dispatched', dispatched_at = COALESCE(dispatched_at, now()), updated_at = now()
        WHERE id = ${op.id}
          AND owner = ${me}
-         AND attempt = ${op.attempt}
+         AND lease_gen = ${op.leaseGen}
          AND state = 'claimed'
          AND lease_until > now()
       RETURNING *
@@ -290,32 +325,56 @@ export async function dispatch(op: Operation, me: string): Promise<DispatchToken
   return rows[0] ? (toOperation(rows[0]) as DispatchToken) : null;
 }
 
-/** Which row a record may change: ours at this attempt, still dispatched — or,
- *  for an operator, an unresolved one. */
+/** Which row a record may change: the worker's, at this lease generation, in
+ *  the state it observed (dispatched, or an expired takeover claim recovery
+ *  re-read) — or, for an operator, an unresolved one. */
 export type Fence =
-  | { state: "dispatched"; owner: string | null; attempt: number }
+  | { state: "dispatched" | "claimed"; owner: string | null; leaseGen: number }
   | { state: "unresolved" };
 
 function fenceSql(id: string, fence: Fence): SQL {
-  return fence.state === "dispatched"
-    ? sql`id = ${id} AND state = 'dispatched' AND attempt = ${fence.attempt}
-          AND owner IS NOT DISTINCT FROM ${fence.owner}`
-    : sql`id = ${id} AND state = 'unresolved'`;
+  return fence.state === "unresolved"
+    ? sql`id = ${id} AND state = 'unresolved'`
+    : sql`id = ${id} AND state = ${fence.state} AND lease_gen = ${fence.leaseGen}
+          AND owner IS NOT DISTINCT FROM ${fence.owner}`;
 }
 
-/** Shopify said no: the effect provably did not happen. Claimable again. */
+/**
+ * Shopify said no: the effect provably did not happen. Claimable again — by
+ * the next settlement, or by recovery regardless of admission gates. The state
+ * and a durable alert (one per op) are ONE statement, so a refusal that keeps
+ * repeating is in front of a human, not only in the ledger.
+ */
 export async function recordRejected(op: Operation, fence: Fence, error: string, resolvedBy?: string) {
   const rows = rowsOf(
     await db.execute(sql`
-      UPDATE settlement_operations
-         SET state = 'rejected', error = ${error.slice(0, 2000)}, updated_at = now(),
-             resolved_by = COALESCE(${resolvedBy ?? null}, resolved_by),
-             evidence = COALESCE(${resolvedBy ? JSON.stringify({ operator: error }) : null}::jsonb, evidence)
-       WHERE ${fenceSql(op.id, fence)}
-      RETURNING id
+      WITH r AS (
+        UPDATE settlement_operations
+           SET state = 'rejected', error = ${error.slice(0, 2000)}, updated_at = now(),
+               resolved_by = COALESCE(${resolvedBy ?? null}, resolved_by),
+               evidence = COALESCE(${resolvedBy ? JSON.stringify({ operator: error }) : null}::jsonb, evidence)
+         WHERE ${fenceSql(op.id, fence)}
+        RETURNING id
+      ),
+      a AS (
+        INSERT INTO ops_alerts (dedupe_key, subject, body)
+        SELECT 'settlement-rejected:' || r.id,
+               ${`[returns] SETTLEMENT REFUSED BY SHOPIFY — ${op.kind} ${op.id}`},
+               ${[
+                 `Shopify refused settlement operation ${op.id} (${op.kind}, ${op.scopeKey}).`,
+                 `Why: ${error.slice(0, 1000)}`,
+                 `Amount: ${(op.amountCents / 100).toFixed(2)} ${op.currency}.`,
+                 `A refusal means this effect did not happen. Recovery retries it every run;`,
+                 `if the cause is permanent, fix it in Shopify or resolve the operation by hand.`,
+               ].join("\n")}
+          FROM r
+        ON CONFLICT (dedupe_key) DO NOTHING
+        RETURNING 1
+      )
+      SELECT (SELECT count(*) FROM r)::int AS changed
     `)
   );
-  return rows.length === 1;
+  return Number(rows[0]?.changed ?? 0) === 1;
 }
 
 /**
@@ -365,6 +424,38 @@ export type DoneExtras = {
   resolvedBy?: string;
 };
 
+/**
+ * What a `done` must carry, whoever records it — the runner or an operator
+ * (finding 5). An exchange order's done writes the created order's lines
+ * (real Shopify line ids, source line, quantity, funding) in the same
+ * statement, one per frozen line; a released hold clears the order's pointer
+ * to that draft. A done without them would lose the funding for good, so it
+ * is refused before anything is written.
+ */
+function assertCompletionRecords(op: Operation, extras: DoneExtras): void {
+  const request = op.request;
+  if (request.kind === "exchange_order") {
+    const recorded = extras.replacementLines;
+    const frozen = new Set(request.check.lines.map((l) => l.sourceProductsorderId));
+    const given = new Set((recorded?.lines ?? []).map((l) => l.sourceProductsorderId));
+    if (
+      !recorded?.orderId ||
+      recorded.lines.length !== frozen.size ||
+      given.size !== frozen.size ||
+      Array.from(frozen).some((id) => !given.has(id)) ||
+      recorded.lines.some((l) => !l.lineItemId)
+    ) {
+      throw new Error(`exchange_order ${op.id}: done requires its replacement lines, one per frozen line`);
+    }
+  }
+  if (request.kind === "release_hold") {
+    const hold = extras.clearReservation;
+    if (hold?.orderId !== request.check.orderId || hold?.draftOrderId !== request.check.draftOrderId) {
+      throw new Error(`release_hold ${op.id}: done requires clearing the order's reservation pointer`);
+    }
+  }
+}
+
 /** Statements 3 and 4 of finalization: settle every line whose every op is done. */
 function finalizeStatements(submissionId: string): SQL[] {
   return [
@@ -412,6 +503,7 @@ export async function recordDone(
   evidence: unknown,
   extras: DoneExtras = {}
 ): Promise<{ done: boolean; settled: number[] }> {
+  assertCompletionRecords(op, extras);
   const ctes: SQL[] = [
     sql`d AS (
       UPDATE settlement_operations
@@ -473,13 +565,17 @@ export async function finalize(submissionId: string): Promise<number[]> {
 
 // ── L5: what recovery looks at ─────────────────────────────────────────────
 
-/** Ops recovery must move: pending with their dependency met, claims whose
- *  lease ran out, dispatches unanswered for longer than a lease. */
+/** Ops recovery must move (L5), independent of every admission gate:
+ *  pending and rejected ops with their dependency met (a fresh send — a
+ *  rejection proved nothing happened, and a closed return must not strand it,
+ *  finding 4), claims whose lease ran out, and dispatches unanswered for longer
+ *  than a lease. An expired claim that had dispatched is routed by the caller
+ *  to `recoverDispatched` (evidence first), never to `run`. */
 export async function recoverableOperations(limit: number): Promise<Operation[]> {
   const rows = rowsOf(
     await db.execute(sql`
       SELECT o.* FROM settlement_operations o
-       WHERE (o.state = 'pending'
+       WHERE (o.state IN ('pending', 'rejected')
               AND (o.after IS NULL
                    OR EXISTS (SELECT 1 FROM settlement_operations d
                                WHERE d.id = o.after AND d.state = 'done')))
@@ -491,6 +587,11 @@ export async function recoverableOperations(limit: number): Promise<Operation[]>
   );
   return rows.map(toOperation);
 }
+
+/** An op that has dispatched before may only be re-entered through evidence
+ *  and replay (`recoverDispatched`), never claimed afresh. */
+export const hasDispatched = (op: Operation): boolean =>
+  op.state === "dispatched" || (op.state === "claimed" && op.dispatchedAt !== null);
 
 /** Submissions with a done op and a line still unsettled. */
 export async function submissionsToFinalize(): Promise<string[]> {

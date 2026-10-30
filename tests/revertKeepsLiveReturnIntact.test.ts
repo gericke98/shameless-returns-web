@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Stripe webhook then reverted.
 //
 // The per-line revert did the right thing: every line carried a Shopify
-// return_id, so it refused (the #310957 lesson). But `releaseExchangeReservation`
+// return_id, so it refused (the #310957 lesson). But the hold release
 // ran anyway, one line below the loop and outside its result — so a live
 // exchange lost the stock hold on its replacement garment while the return,
 // the collection and the customer's confirmation email all survived.
@@ -24,12 +24,16 @@ const released: string[] = [];
 const updates: any[] = [];
 
 vi.mock("@/actions/exchangeReservation", () => ({
-  releaseExchangeReservation: async (id: string) => {
-    released.push(id);
-    return true;
-  },
   reserveExchangeStock: async () => {},
 }));
+// The release itself goes through lib/settlement/holdRelease.ts (finding 9).
+vi.mock("@/lib/settlement/holdRelease", () => ({
+  releaseHoldForRevert: async (id: string) => {
+    released.push(id);
+    return { released: true };
+  },
+}));
+vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},

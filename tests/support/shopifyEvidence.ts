@@ -8,7 +8,8 @@ export function returnObject(
   facts: {
     processed?: number;
     notRestocked?: number;
-    refunds?: Array<{ amount?: string; status?: string; parent?: string }>;
+    /** Each refund refunds `lineItem` (default: the op's own frozen line item). */
+    refunds?: Array<{ amount?: string; status?: string; parent?: string; lineItem?: string }>;
   } = {}
 ) {
   const processed = facts.processed ?? check.quantity;
@@ -40,6 +41,10 @@ export function returnObject(
       pageInfo: { hasNextPage: false },
       nodes: (facts.refunds ?? (check.refund ? [{}] : [])).map((r, i) => ({
         id: `gid://shopify/Refund/${i + 1}`,
+        refundLineItems: {
+          pageInfo: { hasNextPage: false },
+          nodes: [{ lineItem: { id: r.lineItem ?? check.refund?.lineItemGid } }],
+        },
         transactions: {
           pageInfo: { hasNextPage: false },
           nodes: [

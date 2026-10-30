@@ -14,6 +14,8 @@ import {
   amphoraTrackingStatus,
   tracksWithCorreos,
 } from "@/lib/trackingStatus";
+import { submissionsOfRows } from "@/lib/settlement/ledger";
+import { settlementKeyOf } from "@/lib/dashboardGrouping";
 
 export const metadata: Metadata = {
   title: "Admin Dashboard | Shameless Returns",
@@ -52,7 +54,20 @@ async function ReturnsList() {
       console.error("Error fetching variant info:", error);
     }
 
-    const flattenedReturns = returns.flatMap((order) => {
+    // Which submission each row's settle button executes (finding 10).
+    const submissionByRow = await submissionsOfRows(
+      returns.flatMap((order) => order.products.map((product) => product.id))
+    );
+
+    const keyed = returns.map((order) => ({
+      ...order,
+      products: order.products.map((product) => ({
+        ...product,
+        settlementKey: settlementKeyOf(product, submissionByRow),
+      })),
+    }));
+
+    const flattenedReturns = keyed.flatMap((order) => {
       // The initial status, before the client asks the carrier.
       //
       // For an Amphora collection that IS the final answer — its status comes

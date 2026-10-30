@@ -6,9 +6,15 @@
 // giftCardCreate, orderCreate and draftOrderDelete — all on SHOPIFY_API_VERSION
 // and each validated against the 2026-04 schema with validate.mjs.
 //
-// Its single export is `send(op, dispatchToken)`. The token is the row the
-// ledger's dispatch UPDATE returned (lib/settlement/ledger.ts): a caller that
-// does not hold a dispatched row for this exact op and attempt cannot send.
+// Its exports that post are `send(op, dispatchToken)` and
+// `releaseHoldDraft(authority)`. The dispatch token is the row the ledger's
+// dispatch UPDATE returned (lib/settlement/ledger.ts): a caller that does not
+// hold a dispatched row for this exact op, attempt and lease generation cannot
+// send. The hold-release authority is minted only by lib/settlement/
+// holdRelease.ts after it verified, in the database, that a cancellation or a
+// failed confirmation owns the hold — the two callers outside the ledger that
+// may delete a stock-hold draft (finding 9). Same document, same transport,
+// same API version as the ledger's release_hold.
 // Variables are the op's frozen request, posted verbatim — nothing is built or
 // recomputed here.
 import "server-only";
@@ -66,6 +72,23 @@ export const DRAFT_ORDER_DELETE = `
     }
   }`;
 
+declare const holdAuthority: unique symbol;
+/** Proof that a cancellation or a reverted confirmation owns this hold. */
+export type HoldReleaseAuthority = {
+  readonly orderId: string;
+  readonly draftOrderId: string;
+  readonly by: "cancellation" | "revert";
+  readonly [holdAuthority]: true;
+};
+
+/** Delete a stock-hold draft outside the ledger, with verified authority. */
+export async function releaseHoldDraft(authority: HoldReleaseAuthority): Promise<ShopifyAnswer> {
+  if (!authority?.draftOrderId || !authority.orderId) {
+    throw new Error("releaseHoldDraft: no hold-release authority");
+  }
+  return shopifyGraphQL(DRAFT_ORDER_DELETE, { input: { id: authority.draftOrderId } });
+}
+
 /** The refundCreate idempotency key: one per (op, attempt). */
 export function idempotencyKeyOf(op: Pick<Operation, "id" | "attempt">): string {
   return `${op.id}:${op.attempt}`;
@@ -76,6 +99,7 @@ export async function send(op: Operation, token: DispatchToken): Promise<Shopify
     token.state !== "dispatched" ||
     token.id !== op.id ||
     token.attempt !== op.attempt ||
+    token.leaseGen !== op.leaseGen ||
     !token.owner ||
     token.owner !== op.owner
   ) {

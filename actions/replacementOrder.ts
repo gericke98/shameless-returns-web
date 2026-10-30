@@ -10,7 +10,7 @@ import {
   type OriginalRow,
 } from "@/lib/replacementOrigin";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
-import { replacementFundingOf } from "@/db/replacementLines";
+import { replacementFundingOf, unitPriceOf } from "@/db/replacementLines";
 import type { OrderData } from "@/types";
 
 export type ReplacementPlan =
@@ -18,7 +18,8 @@ export type ReplacementPlan =
   | {
       kind: "replacement";
       exchangeOf: string;
-      /** The paid price of one unit, by the line item's bare Shopify id. */
+      /** The paid price of one unit, by the line item's bare Shopify id. For
+       *  an S2 order it is the exact (unrounded) quotient of the line total. */
       priceByLineItem: Record<string, string>;
     }
   | { kind: "refused"; reason: string };
@@ -26,14 +27,23 @@ export type ReplacementPlan =
 export async function planReplacementOrder(order: OrderData): Promise<ReplacementPlan> {
   const live = order.line_items.filter((item) => item.quantity > 0);
 
-  // Created by settlement (S2): the funding of every line is explicit data.
-  const funding = await replacementFundingOf(String(order.id));
-  if (funding) {
+  // Created by settlement (S2), known by the operation id it carries as its
+  // source_identifier: valued from that operation's records, or not at all —
+  // never from tags (finding 5).
+  const found = await replacementFundingOf({ id: String(order.id), sourceIdentifier: order.source_identifier });
+  if (found.kind === "unfunded") {
+    return refuseWith(order, found.sourceOrderId ?? "(unknown)", `settlement-order-unfunded:${found.reason}`);
+  }
+  if (found.kind === "funded") {
+    const { funding } = found;
     const priceByLineItem: Record<string, string> = {};
     for (const item of live) {
-      const cents = funding.unitCentsByLineItem.get(`gid://shopify/LineItem/${item.id}`);
-      if (cents === undefined) return refuseWith(order, funding.sourceOrderId, `unfunded-line:${item.id}`);
-      priceByLineItem[String(item.id)] = (cents / 100).toFixed(2);
+      const line = funding.lineByLineItem.get(`gid://shopify/LineItem/${item.id}`);
+      if (!line) return refuseWith(order, funding.sourceOrderId, `unfunded-line:${item.id}`);
+      if (line.quantity !== Number(item.quantity)) {
+        return refuseWith(order, funding.sourceOrderId, `funded-quantity:${item.id}`);
+      }
+      priceByLineItem[String(item.id)] = unitPriceOf(line);
     }
     return { kind: "replacement", exchangeOf: funding.sourceOrderId, priceByLineItem };
   }

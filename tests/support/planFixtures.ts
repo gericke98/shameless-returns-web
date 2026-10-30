@@ -24,6 +24,7 @@ export const submission = (over: Partial<SubmissionForAdmission> = {}): Submissi
 
 export const line = (po: number, over: Partial<SubmissionLineRow> = {}): SubmissionLineRow => ({
   productsorderId: po,
+  shopifyLineItemId: String(7000 + po),
   quantity: 1,
   action: "DEVOLUCIÓN",
   newVariantId: null,

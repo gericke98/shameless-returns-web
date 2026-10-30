@@ -1,137 +1,123 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { judgeRootRefund, judgeRootRefundsOnOrder } from "@/lib/settlement/evidence";
+import { planAdmission, type PayingOrder } from "@/lib/settlement/plan";
+import { REFUND_CREATE } from "@/lib/settlement/effects";
+import { line, planInput, TX } from "./support/planFixtures";
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, cache: (fn: unknown) => fn };
+// `refundOnOrder` (refundCreate on the order holding the real payment, guarded
+// by a note-marker replay check) is now the `root_refund` operation. Its
+// variables are frozen at admission; refundCreate carries
+// `@idempotent(key: "<op id>:<attempt>")`; and "did we already refund?" is the
+// L5 evidence predicate over the root order's refunds. `getOrderRefundNotes`
+// is gone: the evidence read returns whole refunds, not notes.
+
+const ROOT = "gid://shopify/Order/1";
+
+const paying = (over: Partial<PayingOrder> = {}): PayingOrder => ({
+  orderGid: ROOT,
+  presentment: null,
+  gateways: new Map([[TX, "paypal"]]),
+  transactionId: TX,
+  ...over,
 });
-vi.mock("@/db/drizzle", () => ({ default: {} }));
 
-const bodies: any[] = [];
-let READ: any;
-let WRITE: any;
+function rootRefund(over: Partial<PayingOrder> = {}) {
+  const plan = planAdmission(planInput([line(1, { payCents: 4703 })], { isReplacement: true, paying: paying(over) }));
+  if (!plan.ok) return plan;
+  return plan.ops.find((o) => o.kind === "root_refund")!;
+}
 
-beforeEach(() => {
-  bodies.length = 0;
-  process.env.NEXT_PUBLIC_SHOP_URL = "https://shop.test";
-  process.env.NEXT_PUBLIC_ACCESS_TOKEN = "t";
-  READ = {
-    data: { order: {
-      refunds: [],
-      transactions: [
-        { id: "gid://shopify/OrderTransaction/9", gateway: "shopify_payments", kind: "SALE", status: "SUCCESS" },
-      ],
-      totalPriceSet: {
-        shopMoney: { amount: "93.28", currencyCode: "EUR" },
-        presentmentMoney: { amount: "93.28", currencyCode: "EUR" },
+const refundFor = (op: any, over: Record<string, unknown> = {}) => ({
+  id: "gid://shopify/Refund/1",
+  note: `${op.request.check.marker} Return on #311000`,
+  transactions: {
+    pageInfo: { hasNextPage: false },
+    nodes: [
+      {
+        kind: "REFUND",
+        status: "SUCCESS",
+        parentTransaction: { id: TX },
+        amountSet: { presentmentMoney: op.request.check.money },
       },
-    } },
-  };
-  WRITE = { data: { refundCreate: { refund: { id: "r1" }, userErrors: [] } } };
-  vi.stubGlobal("fetch", async (_url: string, init: any) => {
-    const body = JSON.parse(init.body);
-    bodies.push(body);
-    return { ok: true, json: async () => (body.query.includes("refundCreate") ? WRITE : READ) };
-  });
+    ],
+  },
+  ...over,
 });
-afterEach(() => vi.unstubAllGlobals());
 
-async function refund() {
-  return refundWithMarker("rli-MARK");
-}
+describe("root_refund — the request frozen at admission", () => {
+  it("refunds the paying order once, carrying the marker in the note", () => {
+    const op: any = rootRefund();
+    const input = op.request.variables.input;
+    expect(input.orderId).toBe(ROOT);
+    expect(input.note.startsWith(`[${op.id}]`)).toBe(true);
+    expect(input.transactions).toEqual([
+      { orderId: ROOT, parentId: TX, amount: "47.03", gateway: "paypal", kind: "REFUND" },
+    ]);
+  });
 
-async function refundWithMarker(marker: string) {
-  const { refundOnOrder } = await import("@/db/queries");
-  return refundOnOrder("13282550841670", "gid://shopify/OrderTransaction/9", 42.03, marker, "note");
-}
+  it("is sent with an idempotency key", () => {
+    expect(REFUND_CREATE).toMatch(/refundCreate\(input: \$input\) @idempotent\(key: \$idempotencyKey\)/);
+  });
 
-describe("refundOnOrder", () => {
-  it("refunds once, carrying the marker in the note", async () => {
-    await expect(refund()).resolves.toEqual({ success: true, alreadyRefunded: false });
-    const write = bodies.find((b) => b.query.includes("refundCreate"));
-    expect(write.variables.input.transactions[0]).toMatchObject({
-      parentId: "gid://shopify/OrderTransaction/9",
-      amount: "42.03",
-      kind: "REFUND",
-      gateway: "shopify_payments",
+  it("converts to the paying order's presentment currency and declares it", () => {
+    const op: any = rootRefund({
+      presentment: {
+        shop_money: { amount: "100.00", currency_code: "EUR" },
+        presentment_money: { amount: "110.00", currency_code: "USD" },
+      } as any,
     });
-    expect(write.variables.input.currency).toBe("EUR");
-    expect(write.variables.input.note).toContain("rli-MARK");
-    expect(write.variables.input.note.startsWith("[rli-MARK]")).toBe(true);
+    expect(op.request.variables.input.currency).toBe("USD");
+    expect(op.request.variables.input.transactions[0].amount).toBe("51.73");
   });
 
-  it("does not refund again when a refund already carries the exact bracketed marker", async () => {
-    READ.data.order.refunds = [{ note: "[rli-MARK] some earlier note" }];
-    await expect(refund()).resolves.toEqual({ success: true, alreadyRefunded: true });
-    expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(false);
+  it("uses the parent transaction's own gateway, not a hardcoded one", () => {
+    expect((rootRefund() as any).request.variables.input.transactions[0].gateway).toBe("paypal");
   });
 
-  it("does not false-positive on a marker that is a prefix of an existing bracketed marker", async () => {
-    // A root order can accumulate one refund per replacement order. A bare
-    // substring match would let "gid://.../9167" match inside the bracketed
-    // "[gid://.../91677131078]" note and wrongly skip a real refund.
-    READ.data.order.refunds = [
-      { note: "[gid://shopify/ReturnLineItem/91677131078] earlier refund" },
-    ];
-    const out = await refundWithMarker("gid://shopify/ReturnLineItem/9167");
-    expect(out).toEqual({ success: true, alreadyRefunded: false });
-    expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(true);
-  });
-
-  it("refuses to move money when the order cannot be read", async () => {
-    READ = { errors: [{ message: "boom" }] };
-    const out = await refund();
-    expect(out.success).toBe(false);
-    expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(false);
-  });
-
-  it("converts to the root order's presentment currency and declares it on RefundInput.currency", async () => {
-    READ.data.order.totalPriceSet.presentmentMoney = { amount: "80.00", currencyCode: "GBP" };
-    await refund();
-    const write = bodies.find((b) => b.query.includes("refundCreate"));
-    expect(write.variables.input.transactions[0].amount).toBe((42.03 * (80 / 93.28)).toFixed(2));
-    expect(write.variables.input.currency).toBe("GBP");
-  });
-
-  it("reports Shopify userErrors as a failure", async () => {
-    WRITE = { data: { refundCreate: { refund: null, userErrors: [{ message: "no" }] } } };
-    await expect(refund()).resolves.toMatchObject({ success: false });
-  });
-
-  it("refuses when the parent transaction is absent from the order's transactions", async () => {
-    READ.data.order.transactions = [
-      { id: "gid://shopify/OrderTransaction/999", gateway: "shopify_payments", kind: "SALE", status: "SUCCESS" },
-    ];
-    const out = await refund();
-    expect(out).toMatchObject({ success: false });
-    expect(bodies.some((b) => b.query.includes("refundCreate"))).toBe(false);
-  });
-
-  it("uses the parent transaction's own gateway, not a hardcoded one", async () => {
-    READ.data.order.transactions = [
-      { id: "gid://shopify/OrderTransaction/9", gateway: "paypal", kind: "SALE", status: "SUCCESS" },
-    ];
-    await refund();
-    const write = bodies.find((b) => b.query.includes("refundCreate"));
-    expect(write.variables.input.transactions[0].gateway).toBe("paypal");
-  });
-});
-
-describe("getOrderRefundNotes", () => {
-  it("returns every refund note on the order", async () => {
-    READ.data.order.refunds = [{ note: "Refund for #312061" }, { note: null }];
-    const { getOrderRefundNotes } = await import("@/db/queries");
-    await expect(getOrderRefundNotes("1")).resolves.toEqual({
-      success: true,
-      notes: ["Refund for #312061", ""],
+  it("holds, moving nothing, when the parent transaction is absent from the paying order", () => {
+    expect(rootRefund({ gateways: new Map() })).toEqual({
+      ok: false,
+      held: "refund-transaction-not-on-paying-order",
     });
   });
 
-  it("reports failure when the order cannot be read — the caller must refuse", async () => {
-    READ = { errors: [{ message: "boom" }] };
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { getOrderRefundNotes } = await import("@/db/queries");
-    const out = await getOrderRefundNotes("1");
-    errors.mockRestore();
-    expect(out.success).toBe(false);
+  it("holds, moving nothing, when the paying order has no refundable transaction", () => {
+    expect(rootRefund({ transactionId: null })).toEqual({ ok: false, held: "no-refund-transaction" });
+  });
+});
+
+describe("root_refund — evidence on the paying order", () => {
+  it("is done when exactly one refund carries the exact bracketed marker and matches", () => {
+    const op: any = rootRefund();
+    expect(judgeRootRefundsOnOrder(op.request, [refundFor(op)], 100)).toMatchObject({
+      v: "done",
+      effectRef: "gid://shopify/Refund/1",
+    });
+  });
+
+  it("does not false-positive on a marker that is a prefix of another bracketed marker", () => {
+    const op: any = rootRefund();
+    const other = refundFor(op, { note: `${op.request.check.marker.replace("]", "0]")} other` });
+    expect(judgeRootRefundsOnOrder(op.request, [other], 100).v).toBe("absent");
+  });
+
+  it("waits, deciding nothing, when the order cannot be read or its refunds are truncated", () => {
+    const op: any = rootRefund();
+    expect(judgeRootRefundsOnOrder(op.request, null, 100).v).toBe("wait");
+    expect(judgeRootRefundsOnOrder(op.request, new Array(100).fill({ note: "" }), 100).v).toBe("wait");
+  });
+
+  it("is unresolved when two refunds carry the marker", () => {
+    const op: any = rootRefund();
+    expect(judgeRootRefundsOnOrder(op.request, [refundFor(op), refundFor(op)], 100).v).toBe("unresolved");
+  });
+
+  it("is unresolved when the marked refund moved a different amount", () => {
+    const op: any = rootRefund();
+    const wrong = refundFor(op);
+    wrong.transactions.nodes[0].amountSet.presentmentMoney = { amount: "1.00", currencyCode: "EUR" };
+    // Something carrying OUR marker moved money: never "absent", so never re-sent.
+    expect(judgeRootRefund(op.request, wrong).v).toBe("unresolved");
+    expect(judgeRootRefundsOnOrder(op.request, [wrong], 100).v).toBe("unresolved");
   });
 });

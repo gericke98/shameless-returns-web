@@ -3,7 +3,6 @@ import {
   originalOrderNumberFromTags,
   planReplacementPricing,
   resolveRootOrderId,
-  wasProductSwap,
 } from "@/lib/replacementOrigin";
 
 const row = (over: Partial<Record<string, unknown>> = {}) => ({
@@ -84,17 +83,5 @@ describe("resolveRootOrderId", () => {
   it("throws on a cycle instead of looping", async () => {
     const links: Record<string, string> = { A: "B", B: "A" };
     await expect(resolveRootOrderId("A", async (id) => links[id])).rejects.toThrow(/cycle/);
-  });
-});
-
-describe("wasProductSwap", () => {
-  it("is false for a size swap of the same product", () => {
-    expect(wasProductSwap([row()], "54623384404294", "14958568177990")).toBe(false);
-  });
-  it("is true when the replacement is a different product", () => {
-    expect(wasProductSwap([row()], "54623384404294", "15296978026822")).toBe(true);
-  });
-  it("is false when no original row matches", () => {
-    expect(wasProductSwap([row()], "1", "2")).toBe(false);
   });
 });

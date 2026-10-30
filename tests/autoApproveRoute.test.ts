@@ -24,10 +24,10 @@ const state = {
   /** Which variant a settle call REFUSES (returns settled:false) and with what
    *  reason. A refusal is not a throw: the payout simply did not happen. */
   settleRefusesOn: null as { variant: string; reason: string } | null,
-  /** Which `productsorder` row ids a settle call reports it flipped, by the
-   *  variant it was asked about. The exchange lane settles a whole order in
-   *  one call, so this is not always the single line the route asked for. */
-  lineIdsFor: {} as Record<string, string[]>,
+  /** Rows admission adds to the one asked for (a whole exchange). */
+  siblingsOf: {} as Record<number, number[]>,
+  /** A non-paid ledger status per variant (in-flight, unresolved). */
+  statusOf: {} as Record<string, string>,
   /** Virtual milliseconds each settle call consumes, so the wall-clock budget
    *  can be driven without real waiting. */
   msPerSettle: 0,
@@ -44,19 +44,40 @@ vi.mock("@/db/queries", () => ({
   getReturnStatusesByIds: async () => state.shopifyStatuses,
   getVariantSkusByIds: async () => state.skus,
 }));
-vi.mock("@/lib/settleReturn", () => ({
-  settleReturnLine: async (product: any) => {
+// Settlement executes a SUBMISSION (S2). Each order here has one submission,
+// `sub-<order id>`; the route groups the gate's rows by it and calls
+// `settleSubmission` once per submission, which reports every admitted row.
+const rowVariant: Record<number, string> = {};
+const rowOrder: Record<number, string> = {};
+const settleCalls: Array<[string, number[]]> = [];
+const lookups: number[] = [];
+vi.mock("@/lib/settlement/legacy", () => ({
+  submissionForRow: async (id: number) => {
+    lookups.push(id);
+    return { ok: true, submissionId: `sub-${rowOrder[id]}` };
+  },
+}));
+vi.mock("@/lib/settlement/ledger", () => ({
+  submissionOfRow: async (id: number) => `sub-${rowOrder[id]}`,
+}));
+vi.mock("@/lib/settlement/settle", () => ({
+  settleSubmission: async (submissionId: string, ids: number[]) => {
     clock.t += state.msPerSettle;
-    if (state.settleThrowsOn === product.variant_id) throw new Error("shopify down");
-    const refusal = state.settleRefusesOn;
-    if (refusal && refusal.variant === product.variant_id) {
-      return { settled: false, reason: refusal.reason };
-    }
-    settled.push(product.variant_id);
+    settleCalls.push([submissionId, ids]);
+    const variants = ids.map((id) => rowVariant[id]);
+    if (state.settleThrowsOn && variants.includes(state.settleThrowsOn)) throw new Error("shopify down");
+    // Admission admits the whole exchange from either row.
+    const admitted = Array.from(new Set([...ids, ...(state.siblingsOf[ids[0]] ?? [])]));
     return {
-      settled: true,
-      lane: "refund",
-      lineIds: state.lineIdsFor[product.variant_id] ?? [String(product.id)],
+      submissionId,
+      lines: admitted.map((id) => {
+        const refusal = state.settleRefusesOn;
+        if (refusal && refusal.variant === rowVariant[id]) {
+          return { productsorderId: id, status: refusal.reason };
+        }
+        settled.push(rowVariant[id]);
+        return { productsorderId: id, status: state.statusOf[rowVariant[id]] ?? "paid" };
+      }),
     };
   },
 }));
@@ -77,12 +98,19 @@ vi.mock("@/actions/opsAlert", () => ({
   },
 }));
 
+function rowIdOf(orderId: string, v: string) {
+  const id = Number(orderId) * 10 + Number(v.slice(1));
+  rowVariant[id] = v;
+  rowOrder[id] = orderId;
+  return id;
+}
+
 function order(id: string, variantIds: string[]) {
   return {
     id,
     orderNumber: `#${id}`,
     products: variantIds.map((v) => ({
-      id: `line-${v}`, variant_id: v, quantity: 1, confirmed: true, refunded: false,
+      id: rowIdOf(id, v), variant_id: v, quantity: 1, confirmed: true, refunded: false,
       return_id: `gid://shopify/Return/${v}`, price: "50", action: "DEVOLUCIÓN", credit: false,
     })),
   };
@@ -106,7 +134,10 @@ beforeEach(() => {
   alerts.length = 0;
   queued.length = 0;
   alertBodies.length = 0;
-  state.lineIdsFor = {};
+  state.siblingsOf = {};
+  state.statusOf = {};
+  settleCalls.length = 0;
+  lookups.length = 0;
   state.msPerSettle = 0;
   clock.t = 0;
   // The route measures its own wall clock with `Date.now()`. Driving that from
@@ -298,23 +329,20 @@ describe("auto-approve cron — throttles", () => {
 
 describe("auto-approve cron — honest reporting", () => {
   it("counts a batched exchange once per line and holds nothing", async () => {
-    // The exchange lane settles EVERY pending exchange line of an order in one
-    // call. The route loops per line, so without the returned line ids the
-    // sibling comes back around, is refused as already-refunded, and lands in
-    // `held` — reported as a failure moments after being paid.
+    // Settlement executes the submission, not a row: the route groups the
+    // gate's rows by submission so a sibling is never asked about again and
+    // reported as a failure moments after being paid.
     state.orders = [order("1001", ["v1", "v2"])];
     state.skus = { v1: "SKU1", v2: "SKU2" };
     state.shopifyStatuses = {
       "gid://shopify/Return/v1": "OPEN", "gid://shopify/Return/v2": "OPEN",
     };
     state.returns = [amphoraReturn("1001", ["SKU1", "SKU2"])];
-    // One call settles both rows.
-    state.lineIdsFor = { v1: ["line-v1", "line-v2"] };
-
+    // Both rows belong to one submission: ONE settleSubmission call.
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
-    expect(settled).toEqual(["v1"]); // the sibling is never asked again
-    expect(body.settled).toBe(2); // but both lines are counted
+    expect(settleCalls).toEqual([["sub-1001", [10011, 10012]]]);
+    expect(body.settled).toBe(2); // both lines are counted
     expect(body.held).toEqual([]);
   });
 
@@ -355,7 +383,8 @@ describe("auto-approve cron — resilience", () => {
     await call({ authorization: "Bearer s3cret" });
 
     expect(alerts[0]).toContain("AUTO-APPROVE FAILED");
-    expect(alertBodies[0]).toContain("Money may have moved partially");
+    // The ledger makes a mid-settlement throw safe to say plainly.
+    expect(alertBodies[0]).toContain("nothing is paid twice");
   });
 
   it("does not claim money moved when the throw came before any payout", async () => {
@@ -371,7 +400,7 @@ describe("auto-approve cron — resilience", () => {
     expect(body.held).toContainEqual({ order: "#1001", reason: "threw" });
     expect(alerts[0]).toContain("AUTO-APPROVE HELD");
     expect(alertBodies[0]).toContain("NO MONEY MOVED");
-    expect(alertBodies[0]).not.toContain("Money may have moved");
+    expect(alertBodies[0]).not.toContain("nothing is paid twice");
   });
 });
 
@@ -381,7 +410,7 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
   // attempt, the route recorded `settle-refused:refund-failed` in a 200 body
   // and told nobody. It retried and failed every morning for five days.
   it("alerts ops when a settlement is refused", async () => {
-    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+    state.settleRefusesOn = { variant: "v1", reason: "held:rejected:process_refund" };
 
     await call({ authorization: "Bearer s3cret" });
 
@@ -391,15 +420,15 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
   });
 
   it("names the refusal reason in the alert body", async () => {
-    state.settleRefusesOn = { variant: "v1", reason: "no-refund-transaction" };
+    state.settleRefusesOn = { variant: "v1", reason: "held:no-refund-transaction:10011" };
 
     await call({ authorization: "Bearer s3cret" });
 
     expect(alertBodies[0]).toContain("no-refund-transaction");
   });
 
-  it("says plainly that no money moved", async () => {
-    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+  it("says plainly that no money moved when ADMISSION held it", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "held:no-refund-transaction:10011" };
 
     await call({ authorization: "Bearer s3cret" });
 
@@ -409,27 +438,36 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
     expect(alertBodies[0]).toContain("NO money moved");
   });
 
-  it.each(["claim-stuck", "root-has-unmarked-refund"])(
-    "does not claim 'still owed, no money moved' for %s — its own alert says what is true",
-    async (reason) => {
-      state.settleRefusesOn = { variant: "v1", reason };
+  it("does not claim 'NO money moved' for a rejected effect — a sibling effect may be done", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "held:rejected:process_goods" };
 
-      await call({ authorization: "Bearer s3cret" });
+    await call({ authorization: "Bearer s3cret" });
 
-      expect(alertBodies[0]).toContain(reason);
-      expect(alertBodies[0]).not.toContain("NO money moved");
-      expect(alertBodies[0]).not.toContain("keep failing every run");
+    expect(alertBodies[0]).toContain("REJECTED");
+    expect(alertBodies[0]).not.toContain("NO money moved");
+  });
+
+  it.each(["in-flight", "unresolved", "goods-pending"])(
+    "does not alert or hold a %s line — the ledger owns it, and an unresolved op raised its own alert",
+    async (status) => {
+      state.statusOf = { v1: status };
+
+      const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+      expect(alerts).toHaveLength(0);
+      expect(body.held).toEqual([]);
+      expect(body.unfinished).toEqual([{ order: "#1001", row: 10011, status }]);
     }
   );
 
   it("still reports the refusal in the held list", async () => {
-    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+    state.settleRefusesOn = { variant: "v1", reason: "held:rejected:process_refund" };
 
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
     expect(body.held).toContainEqual({
       order: "#1001",
-      reason: "settle-refused:refund-failed",
+      reason: "held:rejected:process_refund",
     });
     expect(body.settled).toBe(0);
   });
@@ -444,13 +482,16 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
     expect(alerts).toHaveLength(0);
   });
 
-  it("does not alert in a dry run — nothing was refused, nothing was tried", async () => {
-    state.settleRefusesOn = { variant: "v1", reason: "refund-failed" };
+  it("does not alert, record or settle in a dry run — nothing was tried", async () => {
+    state.settleRefusesOn = { variant: "v1", reason: "held:rejected:process_refund" };
     process.env.AUTO_APPROVE_ENABLED = "false";
 
     await call({ authorization: "Bearer s3cret" });
 
     expect(alerts).toHaveLength(0);
+    // A dry run never records a legacy submission, and never settles.
+    expect(lookups).toHaveLength(0);
+    expect(settleCalls).toHaveLength(0);
   });
 });
 

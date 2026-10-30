@@ -1,202 +1,92 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// `validateReturn` mints Shopify gift cards and issues refunds, and had no
-// authentication of any kind. It is a "use server" action, so it is an
-// independently addressable HTTP endpoint — `middleware.ts` matches the ROUTES
-// `/dashboard/:path*` and `/login`, which does not cover server actions.
-//
-// Both `product` and `order` are `any` and caller-supplied, and the gift-card
-// value is computed straight from `product.price`, so a single unauthenticated
-// call could mint a card of arbitrary value.
-//
-// These tests pin that the money-moving path is unreachable without an admin
-// session.
+// `validateReturn` is a "use server" action: an independently addressable
+// HTTP endpoint that `middleware.ts` does not cover. It settles money, so it
+// must be unreachable without an admin session (kept IN ADDITION to the
+// ledger's ownership, S2 plan L7), and nothing the caller sends may decide
+// what is paid: only the clicked row's id is read, and settlement executes the
+// submission that row belongs to.
 
 const session = { value: null as unknown };
-
-vi.mock("next-auth", () => ({
-  getServerSession: async () => session.value,
-}));
+vi.mock("next-auth", () => ({ getServerSession: async () => session.value }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
+vi.mock("next/cache", () => ({ revalidatePath: () => {}, revalidateTag: () => {} }));
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, cache: (fn: unknown) => fn };
-});
-vi.mock("next/cache", () => ({
-  revalidatePath: () => {},
-  revalidateTag: () => {},
-  unstable_cache: (fn: unknown) => fn,
+const calls = { lookup: [] as number[], settle: [] as Array<[string, number[]]> };
+const lookup = { value: { ok: true, submissionId: "sub-1" } as any };
+
+vi.mock("@/lib/settlement/legacy", () => ({
+  submissionForRow: async (id: number) => {
+    calls.lookup.push(id);
+    return lookup.value;
+  },
+}));
+vi.mock("@/lib/settlement/settle", () => ({
+  settleSubmission: async (submissionId: string, ids: number[]) => {
+    calls.settle.push([submissionId, ids]);
+    return { submissionId, lines: ids.map((id) => ({ productsorderId: id, status: "paid" })) };
+  },
 }));
 
-const calls = { giftCard: 0, refund: 0, order: 0, orderTotal: 0 };
+const product = { id: 7, variant_id: "v1", price: "9999.00", credit: true, return_id: "r-evil" };
 
-vi.mock("@/db/queries", () => ({
-  getOrderById: async () => ({ id: "1", shippingCountry: "ES", products: [] }),
-  // Reached via loadBasket, which validateReturn uses to weigh the return
-  // parcel — the weight picks the fee band. An empty catalogue is enough:
-  // these tests assert authorisation, not pricing.
-  getProducts: async () => [],
-  getOrderTotal: async () => {
-    calls.orderTotal++;
-    return { id: "1", customer: { id: "c1" } };
-  },
-  processGiftCardReturn: async () => {
-    calls.giftCard++;
-    return { success: true };
-  },
-  createRefund: async () => {
-    calls.refund++;
-    return { success: true };
-  },
-  createStoreCreditRefund: async () => ({ success: true }),
-  noteStoreCreditOnOrder: async () => ({ success: true }),
-  createOrder: async () => {
-    calls.order++;
-    return { success: true };
-  },
-  closeReturn: async () => ({ success: true }),
-}));
-
-export const dbLine = {
-  value: null as null | Record<string, unknown>,
-};
-
-vi.mock("@/db/drizzle", () => {
-  const chain: Record<string, unknown> = {};
-  chain.update = () => chain;
-  chain.set = () => chain;
-  chain.where = () => Promise.resolve();
-  // db/fees.ts reads the fee table with db.select().from(...)
-  chain.select = () => chain;
-  chain.from = () => Promise.resolve([]);
-  // validateReturn reloads the line it is about to pay out.
-  chain.query = {
-    productsOrder: { findFirst: async () => dbLine.value },
-  };
-  return { default: chain };
-});
+async function click(p: any = product) {
+  const { validateReturn } = await import("@/actions/refund");
+  await validateReturn(p, "any", { id: "1", total: "9999" });
+}
 
 beforeEach(() => {
-  calls.giftCard = 0;
-  calls.refund = 0;
-  calls.order = 0;
-  calls.orderTotal = 0;
+  calls.lookup.length = 0;
+  calls.settle.length = 0;
   session.value = null;
-  dbLine.value = {
-    id: 7,
-    orderId: "1",
-    variant_id: "v1",
-    price: "30.00",
-    credit: true,
-    action: "DEVOLUCIÓN",
-    refunded: false,
-    return_id: "r1",
-  };
+  lookup.value = { ok: true, submissionId: "sub-1" };
   vi.resetModules();
 });
 
 describe("validateReturn authorization", () => {
-  // The exploit this test exists to prevent: an anonymous caller passing an
-  // inflated `price` to mint a gift card worth whatever they chose.
-  it("mints nothing for an unauthenticated caller", async () => {
-    session.value = null;
-    const { validateReturn } = await import("@/actions/refund");
-
-    await validateReturn(
-      { credit: true, price: 100000, variant_id: "v1" },
-      "any",
-      { id: "1", shippingCountry: "ES" }
-    );
-
-    expect(calls.giftCard).toBe(0);
-    expect(calls.orderTotal).toBe(0);
+  it("settles nothing for an unauthenticated caller", async () => {
+    await click();
+    expect(calls.lookup).toHaveLength(0);
+    expect(calls.settle).toHaveLength(0);
   });
 
-  it("mints nothing for a signed-in non-admin", async () => {
-    session.value = { user: { role: "customer" } };
-    const { validateReturn } = await import("@/actions/refund");
-
-    await validateReturn(
-      { credit: true, price: 100000, variant_id: "v1" },
-      "any",
-      { id: "1", shippingCountry: "ES" }
-    );
-
-    expect(calls.giftCard).toBe(0);
-  });
-
-  it("issues no refund for an unauthenticated caller", async () => {
-    session.value = null;
-    const { validateReturn } = await import("@/actions/refund");
-
-    await validateReturn({ credit: false, price: 50, variant_id: "v1" }, "any", {
-      id: "1",
-      shippingCountry: "ES",
-    });
-
-    expect(calls.refund).toBe(0);
-    expect(calls.order).toBe(0);
+  it("settles nothing for a signed-in non-admin", async () => {
+    session.value = { user: { role: "user" } };
+    await click();
+    expect(calls.settle).toHaveLength(0);
   });
 
   it("proceeds for an admin session", async () => {
     session.value = { user: { role: "admin" } };
-    const { validateReturn } = await import("@/actions/refund");
-
-    await validateReturn(
-      { credit: true, price: 50, variant_id: "v1" },
-      "any",
-      { id: "1", shippingCountry: "ES" }
-    );
-
-    // Reaching getOrderTotal proves the gate opened; what happens after is the
-    // pre-existing refund logic, not this test's concern.
-    expect(calls.orderTotal).toBe(1);
+    await click();
+    expect(calls.settle).toEqual([["sub-1", [7]]]);
   });
 });
 
 describe("validateReturn does not trust caller-supplied money", () => {
-  it("ignores an inflated price and uses the stored one", async () => {
-    // The remaining risk after the auth gate: an admin session was also
-    // permission to name the gift-card value. It now comes from the database.
+  it("passes settlement the row id and nothing else the caller sent", async () => {
     session.value = { user: { role: "admin" } };
-    dbLine.value = { ...dbLine.value!, price: "30.00" };
-
-    const { validateReturn } = await import("@/actions/refund");
-    await validateReturn(
-      { credit: true, price: 100000, variant_id: "v1" },
-      "any",
-      { id: "1", shippingCountry: "ES" }
-    );
-
-    // Reached the payout path using the stored line, not the caller's numbers.
-    expect(calls.giftCard).toBe(1);
+    await click();
+    expect(calls.lookup).toEqual([7]);
+    // No price, credit flag, return id or order object crosses into settlement.
+    expect(JSON.stringify(calls.settle)).not.toContain("9999");
+    expect(JSON.stringify(calls.settle)).not.toContain("r-evil");
   });
 
-  it("pays nothing for a line that does not exist", async () => {
+  it("pays nothing for a row id that is not a positive integer", async () => {
     session.value = { user: { role: "admin" } };
-    dbLine.value = null;
-
-    const { validateReturn } = await import("@/actions/refund");
-    await validateReturn({ credit: true, price: 50, variant_id: "nope" }, "any", {
-      id: "1",
-      shippingCountry: "ES",
-    });
-
-    expect(calls.giftCard).toBe(0);
+    await click({ ...product, id: "7; DROP TABLE" });
+    await click({ ...product, id: -1 });
+    expect(calls.lookup).toHaveLength(0);
+    expect(calls.settle).toHaveLength(0);
   });
 
-  it("refuses to pay a line that is already refunded", async () => {
-    // Without this, replaying the same call mints a second gift card.
+  it("pays nothing for a line no submission can be found or recorded for", async () => {
+    // A missing row, an unconfirmed one, or one already refunded: the lookup
+    // holds it, and settlement is never started.
     session.value = { user: { role: "admin" } };
-    dbLine.value = { ...dbLine.value!, refunded: true };
-
-    const { validateReturn } = await import("@/actions/refund");
-    await validateReturn({ credit: true, price: 50, variant_id: "v1" }, "any", {
-      id: "1",
-      shippingCountry: "ES",
-    });
-
-    expect(calls.giftCard).toBe(0);
+    lookup.value = { ok: false, held: "already-refunded" };
+    await click();
+    expect(calls.settle).toHaveLength(0);
   });
 });

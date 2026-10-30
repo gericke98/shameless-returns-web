@@ -197,56 +197,49 @@ beforeEach(() => {
   };
 });
 
+// Under S2 settlement EXECUTES the agreement: what is paid is the line's
+// `pay_cents`, fixed when the customer accepted, so the self-booked lane is
+// decided once, by `buildAgreement`, and settlement cannot re-dock it. These
+// replace the pre-S2 tests that drove `validateReturn` into the old
+// `- 5` / `- centsToEuros(returnLeg)` deduction (removed behaviour).
+async function paidFor(selfBooked: boolean, tender: "refund" | "credit") {
+  const { buildAgreement } = await import("@/lib/agreement");
+  const { planAdmission } = await import("@/lib/settlement/plan");
+  const { line, planInput, submission } = await import("./support/planFixtures");
+  const agreement = buildAgreement({
+    lines: [{ id: 1, action: "DEVOLUCIÓN", quantity: 1, returnedCents: 5000, replacementCents: 0, degraded: false }],
+    returnLegCents: 650,
+    outboundLegCents: 0,
+    feeCents: 650,
+    selfBooked,
+    tender,
+  });
+  const plan = planAdmission(
+    planInput([line(1, { payCents: agreement.lines[0].payCents })], {
+      submission: submission({ tender, residualCents: agreement.residualCents }),
+    })
+  );
+  if (!plan.ok) throw new Error(plan.held);
+  return plan.ops.filter((o) => o.amount_cents > 0).map((o) => [o.kind, o.amount_cents]);
+}
+
 describe("settling a self-booked return", () => {
   it("refunds the full price — the return leg was never charged", async () => {
-    ORDER.returnMethod = "SELF";
-
-    await settleLine({
-      variant_id: "1",
-      price: "50.00",
-      return_id: "r1",
-      return_line_item_id: "rli1",
-      transaction_id: "t1",
-    });
-
-    expect(refunds).toEqual([50]);
+    expect(await paidFor(true, "refund")).toEqual([["process_refund", 5000]]);
   });
 
   it("still deducts the leg from a return we shipped ourselves", async () => {
-    // The control half. Same order, same price, only the lane differs — so
-    // together these two prove SELF actually changes the outcome rather than
-    // the two lanes coincidentally agreeing.
-    ORDER.returnMethod = "CORREOS";
-
-    await settleLine({
-      variant_id: "1",
-      price: "50.00",
-      return_id: "r1",
-      return_line_item_id: "rli1",
-      transaction_id: "t1",
-    });
-
-    expect(refunds).toEqual([45]);
+    // The control half: same price, only the lane differs.
+    expect(await paidFor(false, "refund")).toEqual([["process_refund", 4350]]);
   });
 
   it("mints a gift card on the undocked price", async () => {
-    ORDER.returnMethod = "SELF";
-    dbLine.value = { ...(dbLine.value as any), credit: true };
-
-    await settleLine({ variant_id: "1", price: "50.00", credit: true, return_id: "r1" });
-
-    expect(giftCards).toHaveLength(1);
-    expect(giftCards[0]).toBeCloseTo(50 * 1.15, 6);
+    expect(await paidFor(true, "credit")).toEqual([["gift_card", 5750]]);
   });
 
   it("still docks the gift card of a return we shipped ourselves", async () => {
-    ORDER.returnMethod = "AMPHORA";
-    dbLine.value = { ...(dbLine.value as any), credit: true };
-
-    await settleLine({ variant_id: "1", price: "50.00", credit: true, return_id: "r1" });
-
-    expect(giftCards).toHaveLength(1);
-    expect(giftCards[0]).toBeCloseTo((50 - 6.5) * 1.15, 6);
+    const { creditTotal } = await import("@/lib/agreement");
+    expect(await paidFor(false, "credit")).toEqual([["gift_card", creditTotal(4350)]]);
   });
 
   it("declares a zero return-shipping fee on the Shopify return", async () => {

@@ -1,267 +1,74 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { planAdmission } from "@/lib/settlement/plan";
+import { line, planInput, submission, RETURN } from "./support/planFixtures";
 
-// Settling a store-credit return has to leave TWO systems correct, and until
-// now it only left one.
+// The store-credit lane under S2: settlement EXECUTES the agreement. The
+// gift card's value is the line's agreed `pay_cents` — already the credit
+// amount (×1.15, leg once per basket) when the customer accepted it — and the
+// goods are booked by their own returnProcess.
 //
-//   1. The customer is paid — `giftCardCreate` mints a card. Always worked.
-//   2. Shopify is told the goods came back. Never happened at all.
-//
-// With only (1), the order keeps reading `PAID` with `totalRefunded 0.00` and
-// `refunds: []` forever, so the returned garment still counts as revenue. The
-// money lane does this correctly via `returnRefund`; the credit lane simply
-// skipped it. Order #311449 (Borja Bueno, settled 2026-08-24) is the row that
-// showed it: gift card EUR 37.41 issued, Shopify refund record absent.
-//
-// The refund that fixes it must move NO money — the customer was paid in store
-// credit, and charging the card as well would pay them twice.
+// Replaces the pre-S2 tests of `processGiftCardReturn`: the zero-transaction
+// `returnRefund` record and the `orderUpdate` note it wrote are removed
+// behaviour (the plan's `returnProcess` books the goods, and the gift card's
+// own note carries the operation marker).
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, cache: (fn: unknown) => fn };
-});
-vi.mock("next/cache", () => ({
-  revalidatePath: () => {},
-  revalidateTag: () => {},
-  unstable_cache: (fn: unknown) => fn,
-}));
-
-const ORDER: Record<string, any> = {};
-const session = { value: { user: { role: "admin" } } as unknown };
-vi.mock("next-auth", () => ({ getServerSession: async () => session.value }));
-vi.mock("@/lib/auth", () => ({ authOptions: {} }));
-
-const giftCards: Array<{ value: number; orderId: string; variantId: string }> = [];
-const moneyRefunds: number[] = [];
-const creditRefunds: Array<{ returnId: string; returnLineItemId: string }> = [];
-const closed: string[] = [];
-const orderNotes: Array<{ orderId: string; value: number; giftCardId: string }> = [];
-
-const creditRefundResult = { value: { success: true } as { success: boolean } };
-
-vi.mock("@/db/queries", () => ({
-  getOrderById: async () => ORDER,
-  getOrderByIdFresh: async () => ORDER,
-  getOrderTotal: async () => ({ id: ORDER.id, customer: { id: "c1" } }),
-  processGiftCardReturn: async (
-    _customerId: string,
-    value: number,
-    variantId: string,
-    orderId: string
-  ) => {
-    giftCards.push({ value, orderId, variantId });
-    return { success: true, data: { id: "gid://shopify/GiftCard/1310634049862" } };
-  },
-  createRefund: async (_r: string, _l: string, _t: string, amount: number) => {
-    moneyRefunds.push(amount);
-    return { success: true };
-  },
-  createStoreCreditRefund: async (returnId: string, returnLineItemId: string) => {
-    creditRefunds.push({ returnId, returnLineItemId });
-    return creditRefundResult.value;
-  },
-  noteStoreCreditOnOrder: async (
-    orderId: string,
-    value: number,
-    giftCardId: string
-  ) => {
-    orderNotes.push({ orderId, value, giftCardId });
-    return { success: true };
-  },
-  createOrder: async () => ({ success: true }),
-  closeReturn: async (id: string) => {
-    closed.push(id);
-    return { success: true };
-  },
-}));
-
-const BANDS = [{ maxGrams: 2147483647, returnFeeCents: 500, exchangeFeeCents: 850 }];
-vi.mock("@/db/fees", () => ({ getFeeTable: async () => ({ "*": BANDS }) }));
-vi.mock("@/lib/loadBasket", () => ({
-  loadBasket: async () => ({
-    order: ORDER,
-    catalogue: [],
-    basket: { hasItems: true, netAmount: 37.53, grams: 423 },
-  }),
-}));
-vi.mock("@/actions/exchangeReservation", () => ({
-  releaseExchangeReservation: async () => {},
-  reserveExchangeStock: async () => {},
-}));
-vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
-
-const opsAlerts: Array<{ subject: string; body: string }> = [];
-vi.mock("@/actions/opsAlert", () => ({
-  alertOps: async (subject: string, body: string) => {
-    opsAlerts.push({ subject, body });
-  },
-}));
-
-const dbLine = { value: null as null | Record<string, unknown> };
-vi.mock("@/db/drizzle", () => {
-  const chain: any = {
-    update: () => chain,
-    set: () => chain,
-    where: () => Promise.resolve(),
-    select: () => chain,
-    from: () => Promise.resolve([]),
-    query: {
-      productsOrder: {
-        findFirst: async () => dbLine.value,
-        findMany: async () => [],
-      },
-    },
-  };
-  return { default: chain };
-});
-
-async function settleLine(product: Record<string, any>) {
-  const { validateReturn } = await import("@/actions/refund");
-  await validateReturn(product, "any", { id: ORDER.id });
-}
-
-const LINE = {
-  variant_id: "55865099551046",
-  price: "37.53",
-  return_id: "gid://shopify/Return/57102303558",
-  return_line_item_id: "gid://shopify/ReturnLineItem/88545198406",
-  transaction_id: "gid://shopify/OrderTransaction/14867690783046",
-};
-
-beforeEach(() => {
-  giftCards.length = 0;
-  moneyRefunds.length = 0;
-  creditRefunds.length = 0;
-  closed.length = 0;
-  orderNotes.length = 0;
-  opsAlerts.length = 0;
-  creditRefundResult.value = { success: true };
-  session.value = { user: { role: "admin" } };
-  for (const key of Object.keys(ORDER)) delete ORDER[key];
-  Object.assign(ORDER, {
-    id: "13253700485446",
-    orderNumber: "#311449",
-    shippingCountry: "Spain",
-    shippingZip: "46530",
-    returnMethod: null,
-    products: [],
-  });
-  dbLine.value = {
-    id: 976,
-    orderId: "13253700485446",
-    variant_id: "55865099551046",
-    price: "37.53",
-    credit: true,
-    action: "DEVOLUCIÓN",
-    refunded: false,
-    return_id: LINE.return_id,
-    return_line_item_id: LINE.return_line_item_id,
-  };
-});
+const credit = (lines = [line(1, { payCents: 5175 })]) =>
+  planAdmission(planInput(lines, { submission: submission({ tender: "credit" }) }));
 
 describe("settling a store-credit return", () => {
-  it("records the return as refunded on Shopify", async () => {
-    // The whole point. Without this call the order stays PAID at 0.00
-    // refunded even though the garment is back on the shelf.
-    await settleLine(LINE);
+  it("books the goods with a returnProcess that moves no money", () => {
+    const plan = credit();
+    if (!plan.ok) throw new Error(plan.held);
+    const goods = plan.ops.find((o) => o.kind === "process_goods")! as any;
+    expect(goods.request.variables.input.returnId).toBe(RETURN);
+    expect(goods.request.variables.input).not.toHaveProperty("financialTransfer");
+    expect(goods.amount_cents).toBe(0);
+  });
 
-    expect(creditRefunds).toEqual([
-      {
-        returnId: LINE.return_id,
-        returnLineItemId: LINE.return_line_item_id,
-      },
+  it("mints the gift card at exactly the agreed pay_cents — nothing recomputed", () => {
+    const plan = credit();
+    if (!plan.ok) throw new Error(plan.held);
+    const card = plan.ops.find((o) => o.kind === "gift_card")! as any;
+    expect(card.amount_cents).toBe(5175);
+    expect(card.request.variables.input.initialValue).toBe("51.75");
+  });
+
+  it("never refunds a card as well — store credit moves no card money", () => {
+    const plan = credit();
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops.map((o) => o.kind).sort()).toEqual(["gift_card", "process_goods"]);
+  });
+
+  it("scopes the gift card to this submission's line, by its own id", () => {
+    const plan = credit([line(1, { payCents: 5175 }), line(2, { payCents: 1000 })]);
+    if (!plan.ok) throw new Error(plan.held);
+    const cards = plan.ops.filter((o) => o.kind === "gift_card");
+    expect(cards.map((c) => c.members)).toEqual([[1], [2]]);
+    expect(cards.map((c) => c.scope_key)).toEqual([
+      `money:${submission().id}:1`,
+      `money:${submission().id}:2`,
     ]);
   });
 
-  it("still mints the gift card, at the price less the return leg plus 15%", async () => {
-    // The control: recording the refund must not disturb what the customer is
-    // actually paid. (37.53 - 5.00) * 1.15 = 37.41, the figure the portal
-    // showed and the card Shopify issued.
-    await settleLine(LINE);
-
-    expect(giftCards).toHaveLength(1);
-    expect(giftCards[0].value).toBeCloseTo(37.41, 2);
+  it("freezes a code we generated, and names the card's customer and marker", () => {
+    const plan = credit();
+    if (!plan.ok) throw new Error(plan.held);
+    const card = plan.ops.find((o) => o.kind === "gift_card")!;
+    const req = card.request as any;
+    expect(req.variables.input.code).toBe(req.check.code);
+    expect(req.variables.input.customerId).toBe("gid://shopify/Customer/9");
+    expect(req.variables.input.note).toContain(`[${card.id}]`);
   });
 
-  it("never charges the card as well — store credit moves no money", async () => {
-    // `createRefund` is the money lane. Calling it here would refund the
-    // customer to their card AND hand them a gift card for the same garment.
-    await settleLine(LINE);
-
-    expect(moneyRefunds).toEqual([]);
+  it("mints nothing for a line that owes nothing", () => {
+    const plan = credit([line(1, { payCents: 0 })]);
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops.map((o) => o.kind)).toEqual(["process_goods"]);
   });
 
-  it("records the refund before closing the return", async () => {
-    await settleLine(LINE);
-
-    expect(creditRefunds).toHaveLength(1);
-    expect(closed).toEqual([LINE.return_id]);
-  });
-
-  it("scopes the gift card to this order, not to every order sharing the variant", async () => {
-    // `processGiftCardReturn` used to stamp `gift_card_id` by variant alone.
-    // Settling #311449 wrote Borja's card id onto Marcos G. Merino's row on
-    // #310927 — a different customer, a settled money refund, same garment.
-    await settleLine(LINE);
-
-    expect(giftCards[0]).toMatchObject({
-      orderId: "13253700485446",
-      variantId: "55865099551046",
-    });
-  });
-});
-
-describe("when Shopify refuses the refund record", () => {
-  // The card is already minted at this point, so the choice is between a
-  // wrong revenue figure and a second gift card. It must never be the second.
-  beforeEach(() => {
-    creditRefundResult.value = { success: false };
-  });
-
-  it("still closes and marks the line, so a retry cannot mint a second card", async () => {
-    await settleLine(LINE);
-
-    expect(closed).toEqual([LINE.return_id]);
-  });
-
-  it("tells ops by email, with the ids needed to fix it by hand", async () => {
-    // `console.error` is not a record — Vercel drops runtime logs after about
-    // an hour, and this one needs a human tomorrow.
-    await settleLine(LINE);
-
-    expect(opsAlerts).toHaveLength(1);
-    expect(opsAlerts[0].subject).toContain("13253700485446");
-    expect(opsAlerts[0].body).toContain(LINE.return_id);
-    expect(opsAlerts[0].body).toContain(LINE.return_line_item_id);
-  });
-
-  it("does not fall back to charging the card", async () => {
-    await settleLine(LINE);
-
-    expect(moneyRefunds).toEqual([]);
-  });
-});
-
-describe("explaining the store credit on the order itself", () => {
-  // The refund record carries no money, so the order header still says PAID.
-  // Someone opening it sees a fully paid order with a return against it and
-  // nothing saying the customer was already paid in credit. This is that.
-  it("notes the gift card against the order", async () => {
-    await settleLine(LINE);
-
-    expect(orderNotes).toEqual([
-      {
-        orderId: "13253700485446",
-        value: expect.closeTo(37.41, 2),
-        giftCardId: "gid://shopify/GiftCard/1310634049862",
-      },
-    ]);
-  });
-
-  it("still notes it when the refund record failed — that is when it matters most", async () => {
-    creditRefundResult.value = { success: false };
-
-    await settleLine(LINE);
-
-    expect(orderNotes).toHaveLength(1);
+  it("holds, moving nothing, when the return has no customer to give a card to", () => {
+    const input = planInput([line(1)], { submission: submission({ tender: "credit" }) });
+    input.returns.get(RETURN)!.customerGid = null;
+    expect(planAdmission(input)).toEqual({ ok: false, held: "no-customer-for-gift-card" });
   });
 });

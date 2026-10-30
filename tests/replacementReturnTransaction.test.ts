@@ -13,6 +13,7 @@ vi.mock("@/db/queries", () => ({
   getOrderTransactions: async (id: string) => TX[id] ?? null,
 }));
 vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/db/replacementLines", () => ({ replacementFundingOf: async () => null }));
 
 const PLACEHOLDER = { transactionId: "gid://shopify/OrderTransaction/0", transactionAmount: "0.01" };
 

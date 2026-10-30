@@ -241,8 +241,9 @@ export async function confirmSubmission(submissionId: string) {
   // Letting a `resolveRootOrderId` cycle or a failed `getOrderByIdFresh` throw
   // out of this function would leave that guard blind, so a webhook
   // redelivery would create a SECOND Shopify return for the same parcel. Null
-  // degrades safely instead: `settleReturn` refuses a null transaction with
-  // `no-refund-transaction`, which the cron alerts on.
+  // degrades safely instead: settlement admission (lib/settlement/plan.ts)
+  // holds a money line with no transaction as `no-refund-transaction`, which
+  // the cron alerts on.
   let refundSource: { transactionId: string | null; transactionAmount: string | null };
   try {
     refundSource = await refundSourceFor(dbOrder, result.data);

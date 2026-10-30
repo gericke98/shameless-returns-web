@@ -1,197 +1,93 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { planAdmission } from "@/lib/settlement/plan";
+import { SOURCE_LINE_PROPERTY } from "@/lib/settlement/types";
+import { line, planInput, submission } from "./support/planFixtures";
 
-// An order with two exchanged garments produced TWO Shopify orders.
+// One exchange order per submission (S2 plan L3/L6), now decided by admission
+// rather than by a loop in validateReturn.
 //
-// `validateReturn` is called once per dashboard ROW, and its CAMBIO branch
-// called `createOrder(order, product)` with a single-element lineItems array.
-// Two rows, two clicks, two orders — two parcels to the same address, two
-// shipping charges, two deliveries for one customer to wait on.
-//
-// The rows are separate in the UI; the shipment is not.
+// Replaces the pre-S2 "releases the stock hold BEFORE creating the real
+// order": the hold is now released only AFTER the replacement order exists
+// (`release_hold.after = exchange_order`), so stock is never unheld while no
+// order holds it either. "closes the shared return once" is removed behaviour
+// (returnClose is gone; returnProcess closes a fully processed return).
 
-vi.mock("next-auth", () => ({ getServerSession: async () => ({ user: { role: "admin" } }) }));
-vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("next/cache", () => ({
-  revalidatePath: () => {},
-  revalidateTag: () => {},
-  unstable_cache: (fn: unknown) => fn,
-}));
+vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [] }));
 
-const createOrderCalls: any[][] = [];
-const closeReturnCalls: string[] = [];
-const sequence: string[] = [];
-
-const release = { fails: false };
-vi.mock("@/actions/exchangeReservation", () => ({
-  reserveExchangeStock: async () => {},
-  releaseExchangeReservation: async () => {
-    sequence.push("release");
-    return !release.fails;
-  },
-}));
-
-vi.mock("@/db/queries", () => ({
-  getOrderById: async () => ({ id: "1", shippingCountry: "ES", products: [] }),
-  getProducts: async () => [],
-  getOrderTotal: async () => ({ id: "1", customer: { id: "c1" } }),
-  processGiftCardReturn: async () => ({ success: true }),
-  createRefund: async () => ({ success: true }),
-  createOrder: async (_order: any, products: any[]) => {
-    sequence.push("createOrder");
-    createOrderCalls.push(products);
-    return { success: true, data: { id: "gid://shopify/Order/999" } };
-  },
-  closeReturn: async (id: string) => {
-    closeReturnCalls.push(id);
-    return { success: true };
-  },
-}));
-
-// Two CAMBIO lines on one order, sharing one batched return.
-const LINES = [
-  {
-    id: 1,
-    orderId: "1",
-    variant_id: "111",
-    new_variant_id: "aaa",
-    action: "CAMBIO",
-    confirmed: true,
-    refunded: false,
-    credit: false,
-    price: "29.00",
-    return_id: "gid://shopify/Return/1",
-  },
-  {
-    id: 2,
-    orderId: "1",
-    variant_id: "222",
-    new_variant_id: "bbb",
-    action: "CAMBIO",
-    confirmed: true,
-    refunded: false,
-    credit: false,
-    price: "45.00",
-    return_id: "gid://shopify/Return/1",
-  },
+const V1 = "gid://shopify/ProductVariant/11";
+const V2 = "gid://shopify/ProductVariant/22";
+const exchangeLines = () => [
+  line(1, { action: "CAMBIO", newVariantId: V1, payCents: 0 }),
+  line(2, { action: "CAMBIO", newVariantId: V2, payCents: 0, quantity: 2 }),
 ];
 
-const state = { lines: [] as any[], lookupVariant: "111" };
-const updates: any[] = [];
+describe("admission — one exchange order per submission", () => {
+  it("creates ONE Shopify order carrying BOTH replacement garments", () => {
+    const plan = planAdmission(planInput(exchangeLines()));
+    if (!plan.ok) throw new Error(plan.held);
+    const orders = plan.ops.filter((o) => o.kind === "exchange_order");
+    expect(orders).toHaveLength(1);
+    const items = (orders[0].request.variables as any).order.lineItems;
+    expect(items.map((i: any) => [i.variantId, i.quantity])).toEqual([[V1, 1], [V2, 2]]);
+    expect(orders[0].members).toEqual([1, 2]);
+  });
 
-vi.mock("@/db/drizzle", () => {
-  const chain: any = {
-    update: () => chain,
-    set: (values: unknown) => {
-      updates.push(values);
-      return chain;
-    },
-    where: () => Promise.resolve(),
-    query: {
-      productsOrder: {
-        // Faithful to the real query: scoped by variant, NOT by refunded —
-        // otherwise the "already settled" case short-circuits on a missing row
-        // and never reaches the guard it is meant to exercise.
-        findFirst: async () =>
-          state.lines.find((l) => l.variant_id === state.lookupVariant) ?? null,
-        findMany: async () => state.lines,
-      },
-    },
-  };
-  return { default: chain };
-});
-
-vi.mock("@/db/fees", () => ({ getFeeTable: async () => [] }));
-
-beforeEach(() => {
-  createOrderCalls.length = 0;
-  closeReturnCalls.length = 0;
-  updates.length = 0;
-  sequence.length = 0;
-  release.fails = false;
-  state.lines = LINES.map((l) => ({ ...l }));
-  state.lookupVariant = "111";
-});
-
-async function validate(variantId: string) {
-  state.lookupVariant = variantId;
-  const { validateReturn } = await import("@/actions/refund");
-  await validateReturn(
-    { variant_id: variantId, action: "CAMBIO", return_id: "gid://shopify/Return/1" },
-    "Entregado",
-    { id: "1", orderNumber: "#310756" }
-  );
-}
-
-describe("validateReturn — one exchange order per submission", () => {
-  it("creates ONE Shopify order carrying BOTH replacement garments", async () => {
-    await validate("111");
-
-    expect(createOrderCalls).toHaveLength(1);
-    expect(createOrderCalls[0].map((p: any) => p.new_variant_id)).toEqual([
-      "aaa",
-      "bbb",
+  it("tags every replacement line with the productsorder id it replaces", () => {
+    const plan = planAdmission(planInput(exchangeLines()));
+    if (!plan.ok) throw new Error(plan.held);
+    const items = (plan.ops.find((o) => o.kind === "exchange_order")!.request.variables as any).order.lineItems;
+    expect(items.map((i: any) => i.properties)).toEqual([
+      [{ name: SOURCE_LINE_PROPERTY, value: "1" }],
+      [{ name: SOURCE_LINE_PROPERTY, value: "2" }],
     ]);
   });
 
-  it("settles every exchange line, so the sibling row is already done", async () => {
-    await validate("111");
-
-    // One update covering both rows — the second click finds nothing pending.
-    expect(updates).toContainEqual({ refunded: true });
+  it("names the order with the operation's own id as sourceIdentifier", () => {
+    const plan = planAdmission(planInput(exchangeLines()));
+    if (!plan.ok) throw new Error(plan.held);
+    const op = plan.ops.find((o) => o.kind === "exchange_order")!;
+    expect((op.request.variables as any).order.sourceIdentifier).toBe(op.id);
   });
 
-  it("closes the shared return once, not once per line", async () => {
-    await validate("111");
-
-    // Batched lines share a return_id; closing per line would call returnClose
-    // twice on the same return.
-    expect(closeReturnCalls).toEqual(["gid://shopify/Return/1"]);
+  it("does not create a second order when the exchange is already admitted", () => {
+    const plan = planAdmission(
+      planInput(exchangeLines(), {
+        existing: [{ id: "op-x", kind: "exchange_order", scopeKey: `exchange:${submission().id}` }],
+      })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops.filter((o) => o.kind === "exchange_order")).toHaveLength(0);
   });
 
-  it("does not create a second order when the lines are already settled", async () => {
-    // A replayed click — the row exists and is found, but is already refunded.
-    // Without this guard the same exchange mints a second parcel.
-    state.lines = LINES.map((l) => ({ ...l, refunded: true }));
-    await validate("111");
-
-    expect(createOrderCalls).toHaveLength(0);
+  it("admits the whole exchange from EITHER row", async () => {
+    const { expandAdmission } = await import("@/lib/settlement/admission");
+    const lines = [...exchangeLines(), line(3)];
+    expect(expandAdmission(lines, [1])).toEqual([1, 2]);
+    expect(expandAdmission(lines, [2])).toEqual([1, 2]);
+    expect(expandAdmission(lines, [3])).toEqual([3]);
   });
 
-  it("settles the whole exchange from EITHER row", async () => {
-    // The admin may click the second garment's row first; the outcome must be
-    // the same single order.
-    await validate("222");
-
-    expect(createOrderCalls).toHaveLength(1);
-    expect(createOrderCalls[0].map((p: any) => p.new_variant_id)).toEqual([
-      "aaa",
-      "bbb",
-    ]);
+  it("releases the stock hold only AFTER the replacement order exists", () => {
+    const plan = planAdmission(
+      planInput(exchangeLines(), { reservation: { draftOrderId: "gid://shopify/DraftOrder/5", existed: true } })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    const order = plan.ops.find((o) => o.kind === "exchange_order")!;
+    const hold = plan.ops.find((o) => o.kind === "release_hold")!;
+    expect(hold.after).toBe(order.id);
+    // The held stock is already committed by the draft: the order must not
+    // be refused for it.
+    expect((order.request.variables as any).options.inventoryBehaviour).toBe("DECREMENT_IGNORING_POLICY");
   });
 
-  it("releases the stock hold BEFORE creating the real order", async () => {
-    // Both would otherwise claim the same unit. With
-    // DECREMENT_OBEYING_POLICY the last garment in stock would refuse to sell
-    // to the very customer it is being held for.
-    await validate("111");
-
-    expect(sequence).toEqual(["release", "createOrder"]);
-  });
-
-  it("skips a CAMBIO line whose replacement variant was never recorded", async () => {
-    state.lines = [
-      { ...LINES[0] },
-      { ...LINES[1], new_variant_id: null },
-    ];
-    await validate("111");
-
-    // Sending variantId: null would fail the whole orderCreate, costing the
-    // customer the garment we COULD ship.
-    expect(createOrderCalls[0]).toHaveLength(1);
-    expect(createOrderCalls[0][0].new_variant_id).toBe("aaa");
+  it("holds the whole admission when a replacement variant was never recorded", () => {
+    const plan = planAdmission(
+      planInput([line(1, { action: "CAMBIO", newVariantId: null, payCents: 0 })])
+    );
+    expect(plan).toEqual({ ok: false, held: "bad-replacement-variant:1" });
   });
 });

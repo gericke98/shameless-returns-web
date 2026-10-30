@@ -13,6 +13,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/settlement-recovery",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/auto-approve",
       "schedule": "0 7 * * *"
     },

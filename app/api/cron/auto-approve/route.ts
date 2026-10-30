@@ -7,12 +7,11 @@ import {
 } from "@/db/queries";
 import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { decideAutoApprove, type GateLine } from "@/lib/autoApproveGate";
-import { settleReturnLine } from "@/lib/settleReturn";
+import { submissionForRow } from "@/lib/settlement/legacy";
+import { submissionOfRow } from "@/lib/settlement/ledger";
+import { settleSubmission } from "@/lib/settlement/settle";
 import { alertOps } from "@/actions/opsAlert";
 import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
-
-// Settlement refusals that already sent their own, more specific alert.
-const SELF_EXPLAINED_REFUSALS = new Set(["claim-stuck", "root-has-unmarked-refund"]);
 
 /**
  * Settle the returns that are already sitting in the warehouse.
@@ -26,21 +25,17 @@ const SELF_EXPLAINED_REFUSALS = new Set(["claim-stuck", "root-has-unmarked-refun
  * euro moves, so deploying this route does nothing until someone deliberately
  * arms it.
  */
-// 300, not the 60 copied from `amphora-sync`. A settled line costs roughly six
-// Shopify round trips plus five database ones, so a full run of the cap does
-// not fit in a minute — and a run killed mid-flight is not merely slow. If the
-// process dies between the payout and the `refunded` flag a few lines later,
-// nothing records that we paid: `refunded` is still false, the Shopify return
-// still reads OPEN, Amphora still reads RECEIVED, and the next run mints a
-// SECOND gift card for the same garment. The wall-clock budget below is the
-// real guard; this only widens the window it works inside.
+// 300 gives the run room; it is no longer what keeps a payout from happening
+// twice. Every external effect is an operation in the settlement ledger,
+// claimed and dispatched through conditional UPDATEs before Shopify is called
+// (lib/settlement/), so a run killed mid-flight leaves a `dispatched` row that
+// the recovery cron judges from Shopify's own evidence — never a second card.
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-/** Stop STARTING new settlements this long into the run. Well inside
- *  `maxDuration` so the settlement already in flight can finish writing its
- *  `refunded` flag rather than being cut in half, and so the response still
- *  gets sent. Bound the window rather than gambling on it. */
+/** Stop STARTING new settlements this long into the run, well inside
+ *  `maxDuration`, so the response still gets sent. Anything admitted and not
+ *  yet run is finished by /api/cron/settlement-recovery. */
 const BUDGET_MS = 40_000;
 
 /** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
@@ -135,6 +130,8 @@ export async function GET(req: Request) {
   }
 
   const held: Array<{ order: string; reason: string }> = [];
+  /** Admitted, not yet paid: in flight, goods pending, or unresolved. */
+  const unfinished: Array<{ order: string; row: number; status: string }> = [];
   let scanned = 0;
   let settledCount = 0;
   let capped = false;
@@ -181,71 +178,57 @@ export async function GET(req: Request) {
         continue;
       }
 
-      // The exchange lane settles EVERY pending exchange line of an order in
-      // one call. Without this, the siblings it just paid come back around the
-      // loop, get refused as already-refunded, and land in `held` as if they
-      // had failed — which would make the one report this job produces lie.
-      const alreadySettled = new Set<string>();
-
-      for (const line of verdict.lines) {
-        if (alreadySettled.has(line.id)) continue;
-        if (settledCount >= cap) {
-          capped = true;
-          break;
+      // Group the eligible lines by the agreement they belong to: settlement
+      // executes a SUBMISSION, never a row. Rows confirmed before submissions
+      // existed get a legacy one recorded at admission (S2 plan, D1) — only
+      // when armed: a dry run writes nothing.
+      const bySubmission = new Map<string, number[]>();
+      const lineIds = verdict.lines.map((line) => Number(line.id));
+      if (lineIds.length > cap - settledCount) capped = true;
+      for (const id of lineIds.slice(0, Math.max(0, cap - settledCount))) {
+        if (dry) {
+          const existing = await submissionOfRow(id);
+          settledCount += 1;
+          console.log(
+            `[auto-approve] WOULD settle ${label} / row ${id} (${existing ? `submission ${existing}` : "legacy submission to record"})`
+          );
+          continue;
         }
+        const found = await submissionForRow(id);
+        if (!found.ok) {
+          held.push({ order: label, reason: `held:${found.held}` });
+          await alertNotSettled(label, `held:${found.held}`);
+          continue;
+        }
+        bySubmission.set(found.submissionId, [...(bySubmission.get(found.submissionId) ?? []), id]);
+      }
+
+      for (const [submissionId, ids] of Array.from(bySubmission)) {
         if (Date.now() - startedAt >= BUDGET_MS) {
           budgetExhausted = true;
           break;
         }
-        if (dry) {
-          settledCount += 1;
-          console.log(`[auto-approve] WOULD settle ${label} / ${line.variant_id}`);
-          continue;
-        }
-        // The core re-reads the line from the database and refuses one already
-        // marked refunded, which is what makes settling in a loop safe.
-        //
-        // Count only confirmed settlements. If this call throws, the outer
-        // catch below reports the order as held without this line ever having
-        // been counted — there is nothing to undo.
         enteredSettle = true;
-        const outcome = await settleReturnLine(
-          order.products.find((p: any) => String(p.id) === line.id),
-          order
-        );
-        if (outcome.settled) {
-          // Count what was actually flipped, not the one line we asked about.
-          settledCount += outcome.lineIds.length;
-          for (const id of outcome.lineIds) alreadySettled.add(id);
-          console.log(`[auto-approve] settled ${label} / ${line.variant_id} (${outcome.lane}, ${outcome.lineIds.length} line(s))`);
-        } else {
-          held.push({ order: label, reason: `settle-refused:${outcome.reason}` });
-          // A REFUSAL is not a gate hold. The gate holds for ordinary reasons
-          // by the hundred — the goods are still in transit, Amphora has no
-          // record yet — and alerting on those would bury this. Reaching here
-          // means the gate said yes, we tried to pay, and the payout did not
-          // happen: a customer is owed money and only a human can unstick it.
-          //
-          // This path used to be silent. #311882 was refused every morning for
-          // five days because its stored transaction was the customer's FAILED
-          // payment attempt, and the run reported 200 each time.
-          await alertOps(
-            `[returns] AUTO-APPROVE NOT SETTLED — order ${label}`,
-            [
-              `The daily auto-approve run judged ${label} eligible and then could not pay it.`,
-              `Reason: ${outcome.reason}`,
-              // These two send their own specific alert, and the generic
-              // lines below would contradict it: a stuck claim will NOT be
-              // retried by later runs, and an unmarked root refund means the
-              // customer may already have been paid by hand.
-              ...(SELF_EXPLAINED_REFUSALS.has(outcome.reason)
-                ? [`A separate alert for this order says exactly what to check — follow that one.`]
-                : [
-                    `NO money moved — the payout was refused before it completed, so there is nothing to reverse.`,
-                    `The customer is still owed. This will keep failing every run until someone looks.`,
-                  ]),
-            ].join("\n")
-          );
+        const report = await settleSubmission(submissionId, ids, {
+          deadline: startedAt + BUDGET_MS,
+        });
+        for (const line of report.lines) {
+          if (line.status.startsWith("held:")) {
+            held.push({ order: label, reason: line.status });
+            continue;
+          }
+          settledCount += 1;
+          if (line.status !== "paid") {
+            // In flight or unresolved: the ledger owns it now. Recovery
+            // finishes what is in flight; an unresolved op already raised its
+            // own durable alert.
+            unfinished.push({ order: label, row: line.productsorderId, status: line.status });
+          }
+          console.log(`[auto-approve] ${label} / row ${line.productsorderId}: ${line.status}`);
+        }
+        const refused = report.lines.filter((l) => l.status.startsWith("held:"));
+        if (refused.length) {
+          await alertNotSettled(label, refused.map((l) => `row ${l.productsorderId}: ${l.status}`).join(", "));
         }
       }
     } catch (error: any) {
@@ -253,7 +236,7 @@ export async function GET(req: Request) {
       // money.
       console.error(`[auto-approve] ${label} failed:`, error?.message || error);
       held.push({ order: label, reason: "threw" });
-      // Say only what is true. A throw BEFORE the first `settleReturnLine`
+      // Say only what is true. A throw BEFORE the first `settleSubmission`
       // cannot have moved a cent, and an alert that says otherwise sends
       // whoever is on call hunting a refund that never happened — this repo
       // has already done that once.
@@ -264,7 +247,8 @@ export async function GET(req: Request) {
         enteredSettle
           ? [
               `The daily auto-approve run threw while settling ${label}.`,
-              `Money may have moved partially. Check the order in Shopify before re-running.`,
+              `Every effect is an operation in the settlement ledger, so nothing is paid twice: anything dispatched is judged from Shopify's evidence by the recovery cron.`,
+              `Check the order's settlement operations if this repeats.`,
               `Error: ${error?.message || error}`,
             ].join("\n")
           : [
@@ -295,10 +279,36 @@ export async function GET(req: Request) {
     scanned,
     settled: settledCount,
     held,
+    unfinished,
     capped,
     budgetExhausted,
     dry,
     conflicts: conflicts.length,
     alertsNotQueued,
   });
+}
+
+/**
+ * A REFUSAL is not a gate hold. The gate holds for ordinary reasons by the
+ * hundred; reaching here means the gate said yes and admission (or Shopify)
+ * refused, so a customer is owed money and only a human can unstick it.
+ *
+ * Says only what the state proves (S2 plan L8): an admission hold sent
+ * nothing to Shopify, so NO money moved; a rejected effect did not happen,
+ * but a sibling effect of the same line (its gift card, say) may already be
+ * done — and stays done, never repeated.
+ */
+async function alertNotSettled(label: string, reason: string) {
+  const rejected = reason.includes("held:rejected:");
+  await alertOps(
+    `[returns] AUTO-APPROVE NOT SETTLED — order ${label}`,
+    [
+      `The daily auto-approve run judged ${label} eligible and then could not pay it.`,
+      `Reason: ${reason}`,
+      rejected
+        ? `Shopify REJECTED an effect, so that effect did not happen. Any other effect of the line already recorded done stays done and is never repeated — check the order's settlement operations.`
+        : `NO money moved — admission was refused, so nothing was sent to Shopify.`,
+      `The customer is still owed. This will keep failing every run until someone looks.`,
+    ].join("\n")
+  );
 }

@@ -3,8 +3,10 @@
 // Pure — no db, no env, no network — because these rules decide what a
 // returned garment is worth and which order pays for it.
 //
-// `createOrder` (db/queries.ts) gives every replacement the tags `Change` and
-// `Order #NNN`, a €0.01 `manual` payment, and LIST prices. So a line on a
+// Before S2, `createOrder` (db/queries.ts, now removed) gave every replacement
+// the tags `Change` and `Order #NNN`, a €0.01 `manual` payment, and LIST
+// prices. Orders created from S2 on carry their funding in `replacement_lines`
+// (db/replacementLines.ts); this tag reconstruction serves the older ones. So a line on a
 // replacement order says nothing true about money: its value is the price the
 // customer paid on the original order's exchange row, and a refund must go to
 // the order that holds the real payment. #312061 (replacement for #311749)
@@ -93,48 +95,4 @@ export async function resolveRootOrderId(
     seen.add(next);
     current = next;
   }
-}
-
-/**
- * Did the customer swap to a DIFFERENT product for this replacement? Only then
- * can they have paid a Stripe top-up that the original line price does not
- * cover. False when nothing matches — the caller has already failed closed.
- */
-export function wasProductSwap(
-  originalRows: OriginalRow[],
-  replacementVariantId: string,
-  replacementProductId: string
-): boolean {
-  const [match] = exchangeRowsFor(originalRows, replacementVariantId);
-  return !!match && String(match.productId) !== String(replacementProductId);
-}
-
-// The exact prefix `refundOnOrder` puts on every refund it creates.
-const SETTLEMENT_NOTE = /^\[gid:\/\/shopify\/ReturnLineItem\/\d+\]/;
-
-/**
- * Does the root order already carry a refund that NAMES this replacement order
- * but was not made by settlement? That is a hand refund (how #312061 was
- * handled), and settling again would pay the customer twice: the replacement's
- * Shopify Return stays OPEN and `refunded` stays NULL, so nothing else sees it.
- *
- * A note carrying this line's own bracketed marker is ours — `refundOnOrder`
- * handles that replay. A note starting with ANY settlement marker is ours too:
- * a sibling line of the same replacement, settled earlier, legitimately names
- * the same order number under a different marker.
- */
-export function hasUnmarkedRefundFor(
-  notes: string[],
-  replacementOrderNumber: string,
-  marker: string
-): boolean {
-  const digits = String(replacementOrderNumber ?? "").replace(/\D/g, "");
-  if (!digits) return false;
-  const mentions = new RegExp(`(?<!\\d)${digits}(?!\\d)`);
-  const bracketed = `[${marker}]`;
-  return notes.some((note) => {
-    const n = String(note ?? "");
-    if (n.includes(bracketed) || SETTLEMENT_NOTE.test(n.trim())) return false;
-    return mentions.test(n);
-  });
 }

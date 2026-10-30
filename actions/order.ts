@@ -258,7 +258,7 @@ async function insertOrderItems(
       // guaranteed every line has one, so there is no fallback here.
       const priceWithDiscount =
         replacement.kind === "replacement"
-          ? Number(replacement.priceByVariant[String(item.variant_id)])
+          ? Number(replacement.priceByLineItem[String(item.id)])
           : calculatePriceWithDiscount(item);
 
       // Insert item into database

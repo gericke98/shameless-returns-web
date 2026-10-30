@@ -1,88 +1,42 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
-import { productsOrder } from "@/db/schema";
+import { describe, expect, it } from "vitest";
+import { judgeGiftCard } from "@/lib/settlement/evidence";
+import { planAdmission } from "@/lib/settlement/plan";
+import { line, planInput, submission } from "./support/planFixtures";
 
-// `processGiftCardReturn` writes the new card's id back onto the line that
-// earned it. It used to scope that write by `variant_id` alone — which is not
-// an identity. Every customer who ever returned the same garment shares that
-// value, so one mint stamped its id across all of their rows.
-//
-// Settling #311449 (Borja Bueno, 2026-08-24) wrote his card id onto #310927
-// (Marcos G. Merino) — a different customer, a settled MONEY refund, same
-// crewneck. At the time this was found, 30 of the 150 stamped rows in
-// production were sharing an id with an unrelated order.
-//
-// This has to be asserted against the `where` the query actually builds. A
-// test that only checks the gift card's value and the row it meant to hit
-// passes just as happily while 149 other rows are overwritten.
+// Pre-S2, `processGiftCardReturn` stamped `productsorder.gift_card_id` scoped
+// by variant alone and wrote one customer's card onto every order sharing the
+// garment. Under S2 the card belongs to its OPERATION: its members are explicit
+// productsorder ids, and the card's gid is that operation's `effect_ref`,
+// recorded only after the card is proven to be the one we froze. Nothing is
+// keyed by variant, and `gift_card_id` is no longer written (removed
+// behaviour; nothing reads it).
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, cache: (fn: unknown) => fn };
-});
+const plan = () => {
+  const p = planAdmission(
+    planInput([line(1), line(2)], { submission: submission({ tender: "credit" }) })
+  );
+  if (!p.ok) throw new Error(p.held);
+  return p;
+};
 
-const setCalls: Array<Record<string, any>> = [];
-const whereCalls: any[] = [];
-
-vi.mock("@/db/drizzle", () => {
-  const chain: any = {
-    update: () => chain,
-    set: (values: Record<string, any>) => {
-      setCalls.push(values);
-      return chain;
-    },
-    where: (condition: any) => {
-      whereCalls.push(condition);
-      return Promise.resolve();
-    },
-  };
-  return { default: chain };
-});
-
-const GIFT_CARD_GID = "gid://shopify/GiftCard/1310634049862";
-
-global.fetch = (async () => ({
-  json: async () => ({
-    data: {
-      giftCardCreate: { giftCard: { id: GIFT_CARD_GID }, userErrors: [] },
-    },
-  }),
-})) as any;
-
-beforeEach(() => {
-  setCalls.length = 0;
-  whereCalls.length = 0;
-  process.env.NEXT_PUBLIC_ACCESS_TOKEN = "token";
-  process.env.NEXT_PUBLIC_SHOP_URL = "https://shop.example.com";
-});
-
-describe("stamping the gift card onto the line", () => {
-  it("scopes the write to one order's line, not to every order sharing the variant", async () => {
-    const { processGiftCardReturn } = await import("@/db/queries");
-
-    await processGiftCardReturn("c1", 37.41, "55865099551046", "13253700485446");
-
-    const stamp = setCalls.findIndex((c) => "gift_card_id" in c);
-    expect(stamp).toBeGreaterThanOrEqual(0);
-    expect(setCalls[stamp]).toEqual({ gift_card_id: GIFT_CARD_GID });
-    expect(whereCalls[stamp]).toEqual(
-      and(
-        eq(productsOrder.orderId, "13253700485446"),
-        eq(productsOrder.variant_id, "55865099551046")
-      )
-    );
+describe("a gift card belongs to its operation", () => {
+  it("is scoped to one line of one submission by id, not by variant", () => {
+    const cards = plan().ops.filter((o) => o.kind === "gift_card");
+    expect(cards.map((c) => c.members)).toEqual([[1], [2]]);
+    expect(JSON.stringify(cards.map((c) => c.request))).not.toContain("variant");
   });
 
-  it("does not scope by variant alone", async () => {
-    // Spelled out separately because it is the exact regression: a `where`
-    // naming only the variant matches another customer's row.
-    const { processGiftCardReturn } = await import("@/db/queries");
-
-    await processGiftCardReturn("c1", 37.41, "55865099551046", "13253700485446");
-
-    const stamp = setCalls.findIndex((c) => "gift_card_id" in c);
-    expect(whereCalls[stamp]).not.toEqual(
-      eq(productsOrder.variant_id, "55865099551046")
-    );
+  it("records the card as done only when it is provably the frozen one", () => {
+    const op = plan().ops.find((o) => o.kind === "gift_card")!;
+    const req = op.request as any;
+    const card = {
+      id: "gid://shopify/GiftCard/1",
+      customer: { id: req.check.customerGid },
+      initialValue: req.check.money,
+      lastCharacters: req.check.code.slice(-4),
+      note: `x ${req.check.noteMarker}`,
+    };
+    expect(judgeGiftCard(req, card)).toMatchObject({ v: "done", effectRef: "gid://shopify/GiftCard/1" });
+    expect(judgeGiftCard(req, { ...card, customer: { id: "gid://shopify/Customer/OTHER" } }).v).toBe("unresolved");
   });
 });

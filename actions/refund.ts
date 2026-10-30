@@ -2,19 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import { isAdmin } from "@/lib/requireAdmin";
-import { settleReturnLine } from "@/lib/settleReturn";
+import { submissionForRow } from "@/lib/settlement/legacy";
+import { settleSubmission } from "@/lib/settlement/settle";
+
+/** Leave the request room to answer; recovery finishes anything admitted. */
+const BUDGET_MS = 45_000;
 
 /**
  * The dashboard's settle button.
  *
- * This action mints gift cards and issues refunds, with `product` and `order`
- * supplied by the caller. It is a server action, so being rendered inside
- * /dashboard protects the BUTTON, not this endpoint: middleware matches routes,
- * and an action is not a route. Without this gate an anonymous caller could mint
- * a card of any value. Return silently rather than throwing — the caller ignores
- * the result, and an unauthenticated caller should learn nothing.
+ * A server action is a public endpoint whatever renders it, so the admin check
+ * stays — IN ADDITION to the settlement ledger's own ownership, never instead
+ * of it (S2 plan L7). The caller's objects decide nothing: only the clicked
+ * row's id is read, and what is paid is the submission that row belongs to,
+ * executed by lib/settlement/. One click admits that row, plus the whole
+ * exchange when it is one (one parcel, one replacement order).
  *
- * `status` is unused and kept only because ReturnsTable passes it.
+ * `status` and `order` are unused and kept only because ReturnsTable passes them.
  */
 export async function validateReturn(product: any, status: string, order: any) {
   "use server";
@@ -24,6 +28,20 @@ export async function validateReturn(product: any, status: string, order: any) {
     return;
   }
 
-  const outcome = await settleReturnLine(product, order);
-  if (outcome.settled) revalidatePath("/", "layout");
+  const rowId = Number(product?.id);
+  if (!Number.isInteger(rowId) || rowId <= 0) return;
+
+  const found = await submissionForRow(rowId);
+  if (!found.ok) {
+    console.error(`validateReturn: row ${rowId} not settled — held:${found.held}`);
+    return;
+  }
+  const report = await settleSubmission(found.submissionId, [rowId], {
+    deadline: Date.now() + BUDGET_MS,
+  });
+  console.log(
+    `validateReturn: submission ${found.submissionId}: ` +
+      report.lines.map((l) => `row ${l.productsorderId} ${l.status}`).join(", ")
+  );
+  revalidatePath("/", "layout");
 }

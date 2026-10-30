@@ -417,6 +417,26 @@ on the order. This path goes in S3, once no such session can still be paid.
 
 **Status: applied 2026-10-30** (verified: 34 columns, `return_submissions_one_awaiting_per_order` present).
 
+### Applying the settlement-ledger migrations (0007, 0008)
+
+`drizzle/0007_settlement_operations.sql` adds the submission holder
+(settlement vs cancellation), `settlement_operations` (one row per Shopify
+effect, with its frozen request) and `replacement_lines` (how each exchange
+order line was funded). `drizzle/0008_settlement_lease_generation.sql` adds
+`settlement_operations.lease_gen`, the worker fence kept separate from the
+refund idempotency attempt. Both additive and idempotent. **Apply both before
+deploying** — settlement, cancellation and the recovery cron all read them.
+
+```sh
+psql "$DATABASE_URL" -f drizzle/0007_settlement_operations.sql
+psql "$DATABASE_URL" -f drizzle/0008_settlement_lease_generation.sql
+```
+
+Verify: `return_submissions` 24 columns, `submission_lines` 16,
+`settlement_operations` 21, `replacement_lines` 9.
+
+**Status: both applied 2026-10-30** (verified as above).
+
 ## Deploy prerequisites for this branch
 
 This branch requires a database migration and a one-time data seed before

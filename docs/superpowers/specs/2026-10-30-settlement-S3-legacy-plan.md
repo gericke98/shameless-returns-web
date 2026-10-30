@@ -1,6 +1,6 @@
 # Settlement foundation S3: legacy reconciliation and cutover
 
-Status: PLAN v1 — APPROVED, decisions D1=A, D2=A, D3=A (Santi, 30 Oct). Tier: **HEAVY** (money, historical payouts). Base: `main` at `c830d3e`
+Status: PLAN v1 — APPROVED, decisions D1=A, D2=A, D3=A (Santi, 30 Oct), plus D4–D7 (Santi, 30 Oct, below). Tier: **HEAVY** (money, historical payouts). Base: `main` at `c830d3e`
 (S2 deployed 2026-10-30; migrations 0006–0008 applied; auto-approve armed).
 
 Parent: `2026-10-30-settlement-ownership-plan.md`. Its post-r2 decisions are binding: no Codex plan round,
@@ -73,7 +73,8 @@ So `refunded` is **not** evidence of payment.
 
 ## R1 — Reconciliation script (dry-run by default, CSV, then `--write` after Santi approves)
 
-`scripts/reconcile-legacy.ts` walks every confirmed line that has no S2 operation. It groups lines by
+`scripts/reconcile-legacy.ts` walks every **settled** confirmed line (`refunded = true`) that has no S2
+operation (D5: pending lines are not R1's; they settle through S2 admission). It groups lines by
 `return_id`, the Shopify return, which is explicit identity: one return is one historical submission. For
 each line it reads the Shopify evidence for its lane:
 
@@ -96,9 +97,10 @@ Each line is assigned one class:
 | Class | Meaning | `--write` effect |
 |---|---|---|
 | **paid** | Evidence found, recipient and currency verified | `done` legacy operation (`effect_ref`, evidence); `refunded=true` |
-| **unpaid** | Settled or pending, return processed or open, and no evidence after a complete read | goes on the approval CSV, see D2 |
+| **unpaid** | Settled, return processed or open, and no evidence after a complete read | goes on the approval CSV, see D2 |
 | **ambiguous** | Several matches, unreadable, or recipient mismatch | `unresolved` operation + alert; a human runs `resolve-operation.ts` |
 | **null-action** | No lane can be derived | listed with its Shopify return's state; a human decides (D3) |
+| **needs-human** | No `return_id` / return line on the row: no identity to read evidence by (D7) | listed only; no write path takes it |
 
 Rules for the script:
 
@@ -108,15 +110,22 @@ Rules for the script:
 
 ## R2 — Past cheaper swaps (parent: "owed, paid in tender; past ones audited in S3")
 
-For each settled exchange line, the script computes:
+**Superseded by D4 (Santi, 30 Oct: "You set each amount").** The fee in force on a line's confirmation
+date is not recoverable, so nothing computes what is owed. For each settled exchange line (including the
+ones R1 already recorded as paid by an exchange order) the CSV lists:
 
-- `returned` = line price × quantity, as the customer paid it;
-- `replacement` = the variant price on the created exchange order, read from Shopify;
-- `fee` = the return fee **from the fee table in force on the line's confirmation date**.
-  - Fees are row-versioned since 2026-07-28. Before that date the flat-rate rows apply, and those are
-    recorded in git (`db/fees` seeds).
-- `owed = returned − replacement − fee`. It is listed only when greater than 0 and when no matching refund
-  or gift card exists.
+- `returned_cents` = line price × quantity, as the customer paid it;
+- `replacement_cents` = the variant price on the created exchange order, read from Shopify;
+- `fee_today_reference_cents` = today's fee for that return, labelled a **reference only**;
+- the evidence status (`class`, `reason`, `effect_ref`);
+- `approval_basis` and `approval_cap_cents` = `returned − replacement` (`swap`), or `returned` (`unpaid`).
+
+Santi writes an approval file `productsorder_id,amount_cents,approved_by` and runs
+`--approve-file <csv> --write`. Each amount must be an integer > 0 and ≤ its cap, re-checked on that run's
+fresh reads; one bad row refuses the whole file. Per Shopify return, the approved lines become one accepted
+`legacy` submission whose `pay_cents` is exactly the stated amount, and each approval is a
+`settlement_approvals` row (migration 0010: line, submission, basis, amount, cap, approved_by, approved_at)
+written in the same statement. The same input serves D2 (`unpaid`, no default amount).
 
 What happens to that list → **D1**.
 
@@ -160,14 +169,38 @@ The script prints each one with its Shopify return state, refunds and exchange o
     settle through the ledger, and the settled ones go through R1 like any other line.
   - **B:** treat them all as refunds.
 
+- **D4 — R2 amount source (Santi, 30 Oct: "You set each amount").** The approver states each amount;
+  nothing computes owed. See R2.
+- **D5 — R1 scope (Santi, 30 Oct: "Reconcile settled lines only").** R1 classifies only `refunded = true`
+  lines. Pending lines are untouched by R1 and keep settling through S2 admission.
+- **D6 — an approved payment on a closed return (Santi, 30 Oct).** A `settlement_approvals` row is the
+  explicit human finding, after a complete read, that nothing was settled outside the ledger. It replaces
+  the OPEN gate for that line only; a line without one is still held `return-not-open`. Its money is never
+  folded into a `returnProcess`: a `root_refund` on the paying order, or a gift card for credit. A
+  `process_goods` operation is created only when the return is OPEN and the line is not processed at all
+  (`processedQuantity = 0`); a processed line or a non-OPEN return gets none (Shopify would refuse it
+  forever), and a partly processed line is held `approval-partly-processed`. An approved CAMBIO is money
+  only: never a second replacement order. A `swap` approval may pass a `done` reconciled exchange_order
+  record; nothing else passes a standing record.
+- **D7 — a line with no `return_id` (Santi, 30 Oct).** Listed in the CSV as `needs-human`. No write path
+  takes it: R1 records nothing for it, an approval and the legacy recorder refuse it (`not-confirmed`), D3
+  refuses it, and admission holds `no-return`.
+
 ## Tests
 
 - **R1 classifier, pure:** each lane × {evidence 0/1/2, recipient mismatch, wrong currency, unreadable,
   pagination}, plus grouping by `return_id`.
 - **R1 `--write`, on PGlite with real migrations:** `paid` → `done` operation, idempotent on re-run;
   `ambiguous` → `unresolved` + alert; `unpaid` → nothing without approval.
-- **R2:** fee by confirmation date, using fixtures from both fee regimes; quantity; no evidence vs found
-  evidence.
+- **R2 (D4):** the approval basis and cap per class (`unpaid` → returned; cheaper exchange → returned −
+  replacement; anything else none); the approval file parsed strictly; amount > 0, ≤ cap, approver
+  required, enforced in code and by 0010; `pay_cents` equals the stated amount; approval row written with
+  its submission.
+- **D5:** the R1 population is `refunded = true` lines only.
+- **D6:** approved line on a CLOSED/CANCELED/DECLINED return → money only; OPEN + unprocessed → goods +
+  money outside them; OPEN + processed → money only; partly processed → held; amount mismatch → held;
+  approved CAMBIO → no exchange order; unapproved line beside it → `return-not-open`.
+- **D7:** needs-human classification; no record, approval, legacy submission or D3 decision for it.
 - **R3:** the webhook without `submission_id` → alert, nothing confirmed.
 - **R4:** pricing reads `replacement_lines` only; a missing row refuses rather than falls back.
 - Revert-it-and-watch-it-fail for each.
@@ -177,5 +210,7 @@ The script prints each one with its Shopify return state, refunds and exchange o
 1. Deploy the R3/R4 code only after R1 `--write` has run, so the R4 refusal never meets an un-backfilled
    order.
 2. Run R1 dry-run. Santi reviews the CSV, then R1 `--write`.
-3. Pay the approved D1/D2 lines through the dashboard, which runs the ledger.
+3. Apply migration 0010 (DDL before deploy). Santi writes the approval file; run
+   `--approve-file <csv>` dry, then with `--write`: it records and admits the approved lines, and the
+   ledger's recovery cron sends the payments.
 4. Deploy R3/R4. Verify the Stripe open-session check first.

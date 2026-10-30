@@ -470,6 +470,16 @@ export const replacementFundingDecisions = pgTable("replacement_funding_decision
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** drizzle/0012: an operator voided a reconciled record built on a foreign return. */
+export const reconciliationVoids = pgTable("reconciliation_voids", {
+  submissionId: uuid("submission_id").primaryKey(),
+  returnId: text("return_id").notNull(),
+  returnOrderId: text("return_order_id").notNull(),
+  voidedBy: text("voided_by").notNull(),
+  evidence: text("evidence").notNull(),
+  voidedAt: timestamp("voided_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const legacyReplacementCensus = pgTable("legacy_replacement_census", {
   id: serial("id").primaryKey(),
   ordersFound: integer("orders_found").notNull(),

@@ -433,6 +433,31 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
     ]);
   });
 
+  it("refuses a line whose return Shopify says is another order's (stamped by variant): nothing recorded", async () => {
+    shopify("CLOSED", 1);
+    const own = answers.SettlementAdmissionReturn;
+    answers.SettlementAdmissionReturn = (v: any) => {
+      const body = own(v);
+      body.data.return.order = { ...body.data.return.order, id: "gid://shopify/Order/11700404060486" };
+      return body;
+    };
+    await seedRow(20);
+    expect(await approve(20)).toEqual({ ok: false, held: "return-of-other-order:gid://shopify/Order/11700404060486" });
+    expect(await q(`SELECT * FROM return_submissions`)).toEqual([]);
+    expect(await q(`SELECT * FROM settlement_approvals`)).toEqual([]);
+    // The S2 legacy recorder's terms refuse it the same way, before valuing anything.
+    const { legacyTerms } = await import("@/lib/settlement/legacyTerms");
+    const { default: db } = await import("@/db/drizzle");
+    const { productsOrder, orders } = await import("@/db/schema");
+    const rows = await db.select().from(productsOrder);
+    const [order] = await db.select().from(orders);
+    const never = async () => { throw new Error("valued a foreign return"); };
+    expect(await legacyTerms(order, rows, rows, { feeTable: never as any, catalogue: never as any })).toEqual({
+      ok: false,
+      held: "return-of-other-order:gid://shopify/Order/11700404060486",
+    });
+  });
+
   it("refuses an amount over the cap, zero, or with no approver — and 0010 refuses it again", async () => {
     shopify("CLOSED", 1, [21]);
     await seedRow(21);
@@ -1008,5 +1033,137 @@ describe("0011 holds a funding decision to its session", () => {
     const [idx] = await q(`SELECT indexdef FROM pg_indexes WHERE indexname = 'replacement_funding_decisions_line_idx'`);
     expect(idx.indexdef).toContain("UNIQUE INDEX");
     expect(idx.indexdef).toContain("(order_id, source_productsorder_id)");
+  });
+});
+
+// Production, 30 Oct: R1 recorded #34911's return (Return/37215633734) as a
+// reconciled submission of #34700 for row 181, because the pre-S1 confirm write
+// stamped that return_id on rows of three orders sharing variant 46943269945670.
+describe("voiding a reconciled record built on another order's return", () => {
+  const RET = "gid://shopify/Return/37215633734";
+  const OWNER = "gid://shopify/Order/11700404060486";
+  const ORDERS = [
+    { id: "11625720185158", number: "#34700", po: 181 },
+    { id: "11700404060486", number: "#34911", po: 189 },
+    { id: "11793110000000", number: "#34934", po: 184 },
+  ];
+  const evidence = (orderGid: string) => async () => ({
+    ok: true as const,
+    value: { id: RET, status: "CLOSED", order: { id: orderGid, name: "#34911" } } as any,
+  });
+
+  /** The three rows, then the wrong record exactly as R1 wrote it: one unresolved gift_card op on 181. */
+  async function wrongRecord() {
+    for (const o of ORDERS) {
+      await q(`INSERT INTO orders (id, order_number) VALUES ($1, $2)`, [o.id, o.number]);
+      await q(
+        `INSERT INTO productsorder (id, order_id, line_item, product_id, title, variant_title, variant_id, price,
+           quantity, changed, action, confirmed, return_id, return_line_item_id, transaction_id, refunded, credit, new_variant_id)
+         VALUES ($1, $2, $3, 'p', 't', 'M', '46943269945670', '50.00', 1, false, 'CAMBIO', true, $4, $5, null, true, true,
+                 'gid://shopify/ProductVariant/42')`,
+        [o.po, o.id, String(700 + o.po), RET, `gid://shopify/ReturnLineItem/${o.po}`]
+      );
+    }
+    const { reconciliationRecord, recordReconciliation } = await import("@/lib/settlement/reconcileLedger");
+    const t = terms([181], "CAMBIO");
+    t.tender = "credit" as any;
+    const facts = lineFacts(181, { orderId: "11625720185158", orderNumber: "#34700", returnId: RET, action: "CAMBIO", newVariantId: "42", credit: true });
+    const record = reconciliationRecord(
+      t,
+      [{ line: facts, classification: { productsorderId: 181, lane: "credit", cls: "ambiguous", reason: "no gift card", returnStatus: "CLOSED" } as any, customerGid: CUSTOMER }],
+      "santi"
+    );
+    const [order] = await q(`SELECT * FROM orders WHERE id = '11625720185158'`);
+    const done = await recordReconciliation({ ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record);
+    expect(done.recorded).toBe(true);
+    const [sub] = await q(`SELECT id::text AS id FROM return_submissions`);
+    const [op] = await q(`SELECT id::text AS id, kind, state FROM settlement_operations`);
+    expect(op).toMatchObject({ kind: "gift_card", state: "unresolved" });
+    return { submissionId: sub.id, opId: op.id };
+  }
+
+  it("--write voids it with who and why, keeps all history, and frees row 181", async () => {
+    const { submissionId, opId } = await wrongRecord();
+    const { reconciliationCoverage } = await import("@/lib/settlement/reconcileLedger");
+    const { standingReconciliations } = await import("@/lib/settlement/ledger");
+    expect((await reconciliationCoverage()).covered.has(181)).toBe(true);
+
+    const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
+    const out = await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "R1 grouped #34911-R1 across orders" }, evidence(OWNER), { write: true });
+    expect(out).toMatchObject({ ok: true, written: true });
+
+    expect(await q(`SELECT state FROM return_submissions`)).toEqual([{ state: "voided" }]);
+    expect(await q(`SELECT state FROM settlement_operations`)).toEqual([{ state: "void" }]);
+    expect(await q(`SELECT submission_id::text AS s, return_id, return_order_id, voided_by, evidence FROM reconciliation_voids`)).toEqual([
+      { s: submissionId, return_id: RET, return_order_id: OWNER, voided_by: "santi", evidence: "R1 grouped #34911-R1 across orders" },
+    ]);
+    // History stays: the submission line and the alert are not deleted.
+    expect((await q(`SELECT count(*)::int AS n FROM submission_lines`))[0].n).toBe(1);
+    expect((await q(`SELECT count(*)::int AS n FROM ops_alerts`))[0].n).toBe(1);
+
+    // Row 181 is free: nothing covers it or stands on it any more.
+    expect((await reconciliationCoverage()).covered.has(181)).toBe(false);
+    expect((await standingReconciliations([181])).size).toBe(0);
+
+    // And the void operation matches no fence: never claimed, done or rejected.
+    const { claim, getOperation, recordReconciliationRejected } = await import("@/lib/settlement/ledger");
+    expect(await claim(opId, "00000000-0000-0000-0000-000000000001")).toBeNull();
+    expect(await recordReconciliationRejected(opId, "x", "santi")).toBe(false);
+    const { resolveOperation } = await import("@/lib/settlement/operator");
+    expect(await resolveOperation((await getOperation(opId))!, { verdict: "done", evidence: "x", by: "santi" } as any, { write: true })).toMatchObject({ ok: false });
+    expect(await q(`SELECT state FROM settlement_operations`)).toEqual([{ state: "void" }]);
+
+    // Voided once: a second run finds no reconciled record.
+    expect(await voidForeignReconciliation({ submissionId }, { by: "santi", evidence: "again" }, evidence(OWNER), { write: true })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("0 reconciled records"),
+    });
+  });
+
+  it("a voided record no longer blocks a new record on its row", async () => {
+    await wrongRecord();
+    const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
+    await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "foreign" }, evidence(OWNER), { write: true });
+    const { reconciliationRecord, recordReconciliation } = await import("@/lib/settlement/reconcileLedger");
+    const t = terms([181], "CAMBIO");
+    const facts = lineFacts(181, { orderId: "11625720185158", returnId: RET, action: "CAMBIO", newVariantId: "42" });
+    const record = reconciliationRecord(t, [{ line: facts, classification: { ...ambiguous(181), lane: "exchange" } as any, customerGid: CUSTOMER }], "test");
+    const [order] = await q(`SELECT * FROM orders WHERE id = '11625720185158'`);
+    expect((await recordReconciliation({ ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record)).recorded).toBe(true);
+  });
+
+  it("a voided record never sends, and holds no D3 decision on its row", async () => {
+    const { opId } = await wrongRecord();
+    const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
+    await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "foreign" }, evidence(OWNER), { write: true });
+    // Its operations are still records of a reconciliation: even forced back to
+    // a sendable state, recovery never lists them.
+    await q(`UPDATE settlement_operations SET state = 'pending'`);
+    const { recoverableOperations } = await import("@/lib/settlement/ledger");
+    expect((await recoverableOperations(10)).map((o) => o.id)).not.toContain(opId);
+    await q(`UPDATE settlement_operations SET state = 'void'`);
+    // A void operation does not hold the row from an action decision (D3).
+    await q(`UPDATE productsorder SET action = NULL, new_variant_id = NULL, refunded = false WHERE id = 181`);
+    const { decideLineAction } = await import("@/lib/settlement/lineAction");
+    expect(await decideLineAction({ productsorderId: 181, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).toEqual({ ok: true });
+  });
+
+  it("dry-run writes nothing; refuses a return that IS the record's order's, missing evidence, or a done record", async () => {
+    const { submissionId } = await wrongRecord();
+    const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
+    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "x" }, evidence(OWNER), { write: false })).toMatchObject({ ok: true, written: false });
+    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "x" }, evidence("gid://shopify/Order/11625720185158"), { write: true })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("not foreign"),
+    });
+    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: " " }, evidence(OWNER), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("--evidence") });
+    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "x" }, async () => ({ ok: false as const, error: "timeout" }), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("unreadable") });
+    await q(`UPDATE settlement_operations SET state = 'done'`);
+    expect(await voidForeignReconciliation({ submissionId }, { by: "santi", evidence: "x" }, evidence(OWNER), { write: true })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("done operation"),
+    });
+    expect(await q(`SELECT state FROM return_submissions`)).toEqual([{ state: "reconciled" }]);
+    expect(await q(`SELECT * FROM reconciliation_voids`)).toEqual([]);
   });
 });

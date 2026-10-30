@@ -30,6 +30,7 @@
 // `null-action` (no lane: a human decides, D3) or `needs-human` (no Shopify
 // return on the line: nothing to read, nothing any write path may record).
 import { lineTotalCents } from "@/lib/basket";
+import { returnOwnerProblem } from "./returnOwnership";
 import { variantGid } from "@/lib/shopifyIds";
 
 export type Lane = "refund" | "root_refund" | "credit" | "exchange";
@@ -228,9 +229,24 @@ export function sharedIdentity(
   };
 }
 
-/** Group lines by explicit identity: one Shopify return and one tender is one historical submission. */
-export function groupKey(line: Pick<LineFacts, "returnId" | "credit">): string {
-  return `${line.returnId ?? "(none)"}|${line.credit ? "credit" : "refund"}`;
+/**
+ * Group lines by explicit identity: one order, one Shopify return and one
+ * tender is one historical submission. The order is part of the key because a
+ * legacy return_id was stamped across orders (lib/settlement/returnOwnership);
+ * a line whose return is another order's never reaches a group that records —
+ * classifyLine makes it needs-human, and `returnOwnedRead` gates the write.
+ */
+export function groupKey(line: Pick<LineFacts, "orderId" | "returnId" | "credit">): string {
+  return `${line.orderId}|${line.returnId ?? "(none)"}|${line.credit ? "credit" : "refund"}`;
+}
+
+/**
+ * R1 records a line only on a return Shopify READ and confirmed is the line's
+ * own order's: an unreadable or missing return proves no ownership, so its
+ * return_id is not identity yet (the next run reads it again).
+ */
+export function returnOwnedRead(line: Pick<LineFacts, "orderId">, ret: Read<ReturnEvidence | null>): boolean {
+  return ret.ok && !!ret.value && returnOwnerProblem(line.orderId, ret.value.order?.id) === null;
 }
 
 const PROCESSED_OR_OPEN = new Set(["OPEN", "CLOSED"]);
@@ -324,6 +340,12 @@ export function classifyLine(line: LineFacts, reads: LineReads, shared: SharedId
   // submission could name. Listed for a human — whatever its action — and no
   // write path takes it (not R1's record, an approval, D3, nor admission).
   if (!line.returnId || !line.returnLineItemId) return out("needs-human", "no Shopify return on the line");
+  // The return Shopify read belongs to another order: this row's return_id was
+  // stamped across orders, so it identifies nothing here. Never grouped,
+  // never recorded — a human decides what this row's return is.
+  if (ret && returnOwnerProblem(line.orderId, ret.order?.id)) {
+    return out("needs-human", `return id belongs to order ${ret.order?.name ?? ret.order?.id ?? "(none)"} (${ret.order?.id ?? "no order"})`);
+  }
   if (!lane) return out("null-action", "action is NULL");
   if (!reads.ret.ok) return ambiguous(`return unreadable: ${reads.ret.error}`);
   if (!ret) return ambiguous(`return ${line.returnId} not found`);

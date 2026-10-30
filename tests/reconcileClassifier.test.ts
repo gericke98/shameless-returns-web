@@ -8,6 +8,7 @@ import {
   parseApprovalFile,
   reconcilePopulation,
   groupKey,
+  returnOwnedRead,
   judgeLegacyExchangeOrder,
   sharedIdentity,
   type LineFacts,
@@ -221,9 +222,48 @@ describe("null action and grouping", () => {
     expect(classify(line({ action: null }), reads())).toMatchObject({ cls: "null-action", lane: null });
   });
   it("groups by Shopify return and tender — explicit ids, nothing else", () => {
-    expect(groupKey(line())).toBe("gid://shopify/Return/9|refund");
-    expect(groupKey(line({ credit: true }))).toBe("gid://shopify/Return/9|credit");
+    expect(groupKey(line())).toBe("100|gid://shopify/Return/9|refund");
+    expect(groupKey(line({ credit: true }))).toBe("100|gid://shopify/Return/9|credit");
     expect(groupKey(line({ returnId: "gid://shopify/Return/10" }))).not.toBe(groupKey(line()));
+    // One return id on two orders' rows is never one group.
+    expect(groupKey(line({ orderId: "101" }))).not.toBe(groupKey(line()));
+  });
+});
+
+// Production, 30 Oct: the pre-S1 confirm write keyed rows by VARIANT, so
+// #34911's return was stamped on rows of #34700 and #34934 sharing the
+// variant. A return_id is identity only for the order Shopify says owns it.
+describe("a return stamped across orders (#34911-R1 on #34700, #34911, #34934)", () => {
+  const RET = "gid://shopify/Return/37215633734";
+  const owner = { id: "gid://shopify/Order/11700404060486", name: "#34911", presentmentCurrencyCode: "EUR", customer: { id: CUSTOMER } };
+  const shared = (productsorderId: number, orderId: string, orderNumber: string) =>
+    line({ productsorderId, orderId, orderNumber, returnId: RET, action: "CAMBIO", newVariantId: "46943269945670", refunded: true });
+  const r181 = shared(181, "11625720185158", "#34700");
+  const r189 = shared(189, "11700404060486", "#34911");
+  const r184 = shared(184, "11793110000000", "#34934");
+  const evidence = { ok: true as const, value: ret({ id: RET, order: owner }) };
+
+  it("only the owning order's row is classified; the others are needs-human naming the owner", () => {
+    const all = [r181, r189, r184];
+    for (const foreign of [r181, r184]) {
+      const c = classify(foreign, { ret: evidence }, all);
+      expect(c.cls).toBe("needs-human");
+      expect(c.reason).toBe("return id belongs to order #34911 (gid://shopify/Order/11700404060486)");
+    }
+    expect(classify(r189, { ret: evidence }, all).cls).not.toBe("needs-human");
+  });
+
+  it("a NULL-action row on another order's return is needs-human too, not null-action (#35036-R1)", () => {
+    const c = classify({ ...r181, action: null }, { ret: evidence });
+    expect(c.cls).toBe("needs-human");
+  });
+
+  it("R1 records only on a return read and owned: never foreign, unreadable or missing", () => {
+    expect(returnOwnedRead(r189, evidence)).toBe(true);
+    expect(returnOwnedRead(r181, evidence)).toBe(false);
+    expect(returnOwnedRead(r189, { ok: false, error: "timeout" })).toBe(false);
+    expect(returnOwnedRead(r189, { ok: true, value: null })).toBe(false);
+    expect(new Set([r181, r189, r184].map(groupKey)).size).toBe(3);
   });
 });
 

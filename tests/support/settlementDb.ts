@@ -31,6 +31,7 @@ export const MIGRATIONS = [
   "drizzle/0009_settlement_reconciliation.sql",
   "drizzle/0010_settlement_approvals.sql",
   "drizzle/0011_reconciliation_identity.sql",
+  "drizzle/0012_reconciliation_void.sql",
 ];
 
 /**
@@ -66,7 +67,7 @@ export function settlementDatabase() {
     await pg.exec(`
       DELETE FROM line_action_decisions; DELETE FROM settlement_approvals;
       DELETE FROM reconciliation_effect_decisions; DELETE FROM legacy_replacement_orders;
-      DELETE FROM legacy_replacement_census; DELETE FROM replacement_funding_decisions;
+      DELETE FROM legacy_replacement_census; DELETE FROM replacement_funding_decisions; DELETE FROM reconciliation_voids;
       DELETE FROM replacement_lines; DELETE FROM settlement_operations;
       DELETE FROM submission_lines; DELETE FROM return_submissions;
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);

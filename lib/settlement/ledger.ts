@@ -58,7 +58,7 @@ const lease = sql.raw(`interval '${LEASE_MINUTES} minutes'`);
  * `o` is the settlement_operations alias of every statement that uses it.
  */
 const notReconciliation = sql`NOT EXISTS (SELECT 1 FROM return_submissions rs
-                                           WHERE rs.id = o.submission_id AND rs.state = 'reconciled')`;
+                                           WHERE rs.id = o.submission_id AND rs.state IN ('reconciled', 'voided'))`;
 const replayWindow = sql.raw(`interval '${ROOT_REFUND_REPLAY_HOURS} hours'`);
 
 // ── reads ──────────────────────────────────────────────────────────────────

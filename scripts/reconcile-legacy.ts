@@ -40,6 +40,14 @@
  *                      a census exists the portal refuses to call any order
  *                      ordinary.
  *
+ * A row's return_id is identity only for the order Shopify says owns that
+ * return (lib/settlement/returnOwnership): the pre-S1 confirm write stamped
+ * returns across orders sharing a variant. A row on another order's return is
+ * needs-human ("return id belongs to order X"); groups are per order, return
+ * and tender; and --write records only on a return read and owned. A record
+ * already written on a foreign return is voided with
+ * scripts/void-reconciliation.ts.
+ *
  * Every effect a row could have is read whatever its action (Codex #2); a
  * refund that moved money and names no line keeps every line it could have
  * paid ambiguous until scripts/decide-effect.ts binds or excludes it (#1).
@@ -387,8 +395,12 @@ async function main() {
     const orderOfLine = new Map(facts.map((f) => [f.productsorderId, f.orderId]));
     for (const members of Array.from(groups.values())) {
       // An already-recorded exchange is listed for R2 only: never recorded twice.
+      // Only on a return Shopify confirmed is this order's (returnOwnership).
       const recorded = members.filter(
-        (m) => (m.c.cls === "paid" || m.c.cls === "ambiguous") && !swapCandidates.has(m.line.productsorderId)
+        (m) =>
+          (m.c.cls === "paid" || m.c.cls === "ambiguous") &&
+          !swapCandidates.has(m.line.productsorderId) &&
+          rec.returnOwnedRead(m.line, returnReads.get(m.line.returnId ?? "") ?? { ok: false, error: "not read" })
       );
       if (recorded.length === 0) continue;
       const t = await termsFor(recorded);

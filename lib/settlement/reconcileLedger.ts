@@ -246,7 +246,8 @@ export async function recordReconciliation(
            SELECT 1 FROM settlement_operations o
              JOIN return_submissions s ON s.id = o.submission_id
             WHERE o.members && ARRAY${ids}
-              AND NOT (s.state = 'reconciled' AND o.state = 'rejected'))`;
+              AND NOT (s.state = 'reconciled' AND o.state = 'rejected')
+              AND s.state <> 'voided')`;
   const ctes = legacySubmissionCtes(order, recordedTerms, "reconciled", guard, record.submissionId);
   const [, main, settledLines] = await transact([
     sql`SELECT id FROM productsorder WHERE id IN ${ids} FOR UPDATE`,
@@ -317,6 +318,8 @@ export async function reconciliationCoverage(): Promise<{
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id
         CROSS JOIN LATERAL unnest(o.members) AS m(po)
+       -- A voided record (drizzle/0012) covers nothing: it never stood.
+       WHERE s.state <> 'voided'
     `)
   );
   const covered = new Set<number>();

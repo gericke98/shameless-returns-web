@@ -9,7 +9,8 @@ export type OpKind =
   | "release_hold"
   | "process_goods";
 
-export type OpState = "pending" | "claimed" | "dispatched" | "done" | "rejected" | "unresolved";
+/** `void` (drizzle/0012): an operation of a voided reconciliation record — no fence matches it. */
+export type OpState = "pending" | "claimed" | "dispatched" | "done" | "rejected" | "unresolved" | "void";
 
 /** One external effect, as stored. */
 export type Operation = {

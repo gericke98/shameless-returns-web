@@ -55,7 +55,7 @@ export async function decideLineAction(d: LineActionDecision): Promise<{ ok: tru
            AND NOT EXISTS (SELECT 1 FROM submission_lines sl
                             JOIN return_submissions s ON s.id = sl.submission_id
                            WHERE sl.productsorder_id = p.id AND s.state IN ('accepted', 'reconciled'))
-           AND NOT EXISTS (SELECT 1 FROM settlement_operations o WHERE p.id = ANY (o.members))
+           AND NOT EXISTS (SELECT 1 FROM settlement_operations o WHERE p.id = ANY (o.members) AND o.state <> 'void')
         RETURNING p.id
       ),
       ins AS (

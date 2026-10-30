@@ -7,6 +7,7 @@
 // a fee or a credit multiplier: `pay_cents` is already the agreed amount in
 // tender units (credit already ×1.15, S1).
 import { refundTransactionAmount, type MoneySet } from "@/lib/returnPayload";
+import { returnOwnerProblem } from "./returnOwnership";
 import { buildExchangeOrderVariables, type ExchangeOrderSource } from "./exchangeOrderInput";
 import type { NewOperation, SubmissionForAdmission, SubmissionLineRow } from "./ledger";
 import type { FrozenMoney, OpKind, OpRequest } from "./types";
@@ -109,6 +110,9 @@ export function planAdmission(input: PlanInput): Plan {
     if (!row?.returnId) return held(`no-return:${po}`);
     const ret = input.returns.get(row.returnId);
     if (!ret) return held(`shopify-unreadable:${row.returnId}`);
+    // A row's return is identity only when it is this order's (returnOwnership).
+    const foreign = returnOwnerProblem(input.order.id, ret.orderGid);
+    if (foreign) return held(foreign);
     const approval = input.approved?.get(po);
     // Historical native exchanges are not ours to settle (L6): S3 lists them.
     // An approved payment on one is money only, paid on Santi's authority.

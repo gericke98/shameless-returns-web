@@ -15,8 +15,16 @@ import { feeLegsForOrder } from "@/lib/feeLegs";
 import { resolveFee, type FeeTable } from "@/lib/fees";
 import type { OrderItem, Product } from "@/types";
 import { readReturnFacts } from "./facts";
+import { returnOwnerProblem } from "./returnOwnership";
 
 type Row = typeof productsOrder.$inferSelect;
+
+/** Every row of the basket is of ONE order, and the return Shopify read is that order's. */
+function ownerProblem(basket: Row[], returnOrderGid: string): string | null {
+  const orderIds = new Set(basket.map((r) => String(r.orderId)));
+  if (orderIds.size !== 1) return "legacy-rows-span-orders";
+  return returnOwnerProblem(Array.from(orderIds)[0], returnOrderGid);
+}
 type Order = typeof orders.$inferSelect;
 
 export const idListOf = (ids: number[]) =>
@@ -71,6 +79,8 @@ export async function legacyTerms(
   const returnId = String(basket[0].return_id);
   const ret = await readReturnFacts(returnId);
   if (!ret.ok || !ret.value) return { ok: false, held: `shopify-unreadable:${returnId}` };
+  const foreign = ownerProblem(basket, ret.value.orderGid);
+  if (foreign) return { ok: false, held: foreign };
   const fulfillmentOf = ret.value.fulfillmentByReturnLine;
 
   const catalogue = await deps.catalogue();
@@ -193,6 +203,8 @@ async function explicitTerms(
   const returnId = String(basket[0].return_id);
   const ret = await readReturnFacts(returnId);
   if (!ret.ok || !ret.value) return { ok: false, held: `shopify-unreadable:${returnId}` };
+  const foreign = ownerProblem(basket, ret.value.orderGid);
+  if (foreign) return { ok: false, held: foreign };
 
   const lines: LegacyLine[] = [];
   for (const r of basket) {

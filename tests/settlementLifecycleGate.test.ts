@@ -20,6 +20,13 @@ describe("admission creates obligations only against an OPEN Shopify return", ()
     expect(onReturn("OPEN").ok).toBe(true);
   });
 
+  it("holds a row whose return Shopify says is another order's: its return_id identifies nothing here", () => {
+    const lines = [line(1)];
+    const input = planInput(lines);
+    input.returns.set(RETURN, returnFacts(lines, { status: "OPEN", orderGid: "gid://shopify/Order/11700404060486" }));
+    expect(planAdmission(input)).toEqual({ ok: false, held: "return-of-other-order:gid://shopify/Order/11700404060486" });
+  });
+
   it.each(["CLOSED", "CANCELED", "DECLINED", "REQUESTED"])("holds a %s return: no operation at all", (status) => {
     expect(onReturn(status)).toEqual({ ok: false, held: `return-not-open:${status}` });
   });

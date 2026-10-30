@@ -74,7 +74,7 @@ vi.mock("@/actions/payments", () => ({
   createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
 }));
 
-vi.mock("@/actions/updateOrder", () => ({
+vi.mock("@/lib/submissionConfirmation", () => ({
   confirmSubmission: async () => {},
   revertFinalOrder: async () => {},
 }));

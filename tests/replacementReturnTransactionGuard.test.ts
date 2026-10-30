@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { acceptedSubmission } from "./submissionFixture";
+import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // `refundSourceFor` runs AFTER `createReturn` has already succeeded against
 // Shopify and BEFORE the write that stores `return_id` — the very thing the
@@ -132,13 +132,17 @@ vi.mock("@/actions/replacementOrder", () => ({
 
 // The confirm write is one SQL statement now; the test reads what it was given.
 const recorded = vi.fn(async (_input: any) => [1]);
+vi.mock("@/lib/fulfillmentLines", () => ({
+  refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
+}));
+
 vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => acceptedSubmission("13192219558214", state.rows),
+  getSubmission: async () => acceptedSubmission("13192219558214", state.rows, { fulfillment: FULFILLMENT_LINE_ITEMS }),
   recordConfirmation: (input: any) => recorded(input),
 }));
 
 async function confirm() {
-  const mod = await import("@/actions/updateOrder");
+  const mod = await import("@/lib/submissionConfirmation");
   return mod.confirmSubmission("sub-1");
 }
 

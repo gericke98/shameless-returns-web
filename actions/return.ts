@@ -7,7 +7,7 @@ import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { createShippingLabel } from "./shipping";
-import { confirmSubmission, revertFinalOrder } from "./updateOrder";
+import { confirmSubmission, revertFinalOrder } from "@/lib/submissionConfirmation";
 import { acceptFreeSubmission } from "@/db/submissions";
 import { createStripeUrl } from "./payments";
 import { getOrderById } from "@/db/queries";

@@ -207,3 +207,43 @@ describe("valueBasket degradation reporting", () => {
     expect(valueBasket(items, CATALOGUE).degraded).toBe(true);
   });
 });
+
+describe("valueBasket prices line TOTALS, so quantity 2 costs twice quantity 1", () => {
+  // Shopify returns `quantity` units of a line; the money must be for the same
+  // number. valueBasket used to count one unit per line.
+  const basketWith = (quantity: number) => [
+    line({ id: 1, action: "DEVOLUCIÓN", variant_id: "x", price: "29.95", quantity } as any),
+    line({
+      id: 2,
+      productId: "15296978026822",
+      variant_id: "55598268973382",
+      // A cross-product swap, priced from the catalogue, not the paid price.
+      new_variant_id: vgid("54623384404294"),
+      price: "42.75",
+      quantity,
+    } as any),
+  ];
+
+  it("doubles every line's money, and the agreement built on it", async () => {
+    const { buildAgreement } = await import("@/lib/agreement");
+    const one = valueBasket(basketWith(1), CATALOGUE);
+    const two = valueBasket(basketWith(2), CATALOGUE);
+
+    expect(two.lines.map((l) => l.returnedCents)).toEqual([5990, 8550]);
+    expect(two.lines[1].replacementCents).toBe(2 * one.lines[1].replacementCents);
+    expect(two.lines[1].replacementCents).toBeGreaterThan(0);
+
+    const agreement = buildAgreement({
+      lines: two.lines,
+      returnLegCents: 500,
+      outboundLegCents: 350,
+      feeCents: 850,
+      selfBooked: false,
+      tender: "refund",
+    });
+    expect(agreement.returnedValueCents).toBe(5990 + 8550);
+    expect(agreement.replacementValueCents).toBe(two.lines[1].replacementCents);
+    expect(agreement.netCents).toBe(5990 + 8550 - two.lines[1].replacementCents - 850);
+    expect(two.netCents).toBe(5990 + 8550 - two.lines[1].replacementCents);
+  });
+});

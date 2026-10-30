@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { acceptedSubmission } from "./submissionFixture";
+import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // The return fee is collected in TWO places, and self-booking has to be
 // subtracted from both.
@@ -69,8 +69,12 @@ const LINE_ROWS = [
 // HERE — the lane and the leg the customer was charged for — never re-derived
 // from the order row afterwards.
 const agreed = { returnMethod: "CORREOS", returnLegCents: 650 };
+vi.mock("@/lib/fulfillmentLines", () => ({
+  refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
+}));
+
 vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => acceptedSubmission(ORDER.id, LINE_ROWS, agreed),
+  getSubmission: async () => acceptedSubmission(ORDER.id, LINE_ROWS, { ...agreed, fulfillment: FULFILLMENT_LINE_ITEMS }),
   recordConfirmation: async () => [],
 }));
 const returnInputs: any[] = [];
@@ -155,7 +159,7 @@ async function settleLine(product: Record<string, any>) {
 }
 
 async function createTheShopifyReturn() {
-  const { confirmSubmission } = await import("@/actions/updateOrder");
+  const { confirmSubmission } = await import("@/lib/submissionConfirmation");
   await confirmSubmission("sub-1");
 }
 

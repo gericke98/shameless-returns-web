@@ -14,6 +14,8 @@ import type { Agreement } from "@/lib/agreement";
 export type SubmissionLineInput = {
   productsorderId: number;
   shopifyLineItemId: string;
+  /** Resolved before checkout: the garment the Shopify return will name. */
+  fulfillmentLineItemId: string;
   newVariantId: string | null;
   reason: string | null;
   notes: string | null;
@@ -37,24 +39,7 @@ export async function proposeSubmission(input: {
   lines: readonly SubmissionLineInput[];
 }): Promise<{ ok: true; id: string } | { ok: false; conflict: true }> {
   const a = input.agreement;
-  const byId = new Map(input.lines.map((l) => [l.productsorderId, l]));
-  const lines = a.lines.map((line) => {
-    const meta = byId.get(line.id);
-    if (!meta) throw new Error(`proposeSubmission: no metadata for line ${line.id}`);
-    return {
-      productsorder_id: line.id,
-      shopify_line_item_id: meta.shopifyLineItemId,
-      quantity: line.quantity,
-      action: line.action,
-      new_variant_id: line.action === "CAMBIO" ? meta.newVariantId : null,
-      reason: meta.reason,
-      notes: meta.notes,
-      returned_cents: line.returnedCents,
-      replacement_cents: line.replacementCents,
-      pay_cents: line.payCents,
-      stripe_funded_cents: line.stripeFundedCents,
-    };
-  });
+  const lines = lineRecords(input.agreement, input.lines);
 
   try {
     const result = await db.execute(sql`
@@ -75,33 +60,111 @@ export async function proposeSubmission(input: {
           FROM (SELECT count(*) FROM sup) AS superseded
         RETURNING id
       ),
-      lines AS (
-        INSERT INTO submission_lines (
-          submission_id, productsorder_id, shopify_line_item_id, quantity, action,
-          new_variant_id, reason, notes, returned_cents, replacement_cents,
-          pay_cents, stripe_funded_cents)
-        SELECT ins.id, l.productsorder_id, l.shopify_line_item_id, l.quantity, l.action,
-               l.new_variant_id, l.reason, l.notes, l.returned_cents, l.replacement_cents,
-               l.pay_cents, l.stripe_funded_cents
-          FROM ins, jsonb_to_recordset(${JSON.stringify(lines)}::jsonb) AS l(
-            productsorder_id integer, shopify_line_item_id text, quantity integer,
-            action text, new_variant_id text, reason text, notes text,
-            returned_cents integer, replacement_cents integer, pay_cents integer,
-            stripe_funded_cents integer)
-        RETURNING 1
-      )
+      ${insertLines(lines)}
       SELECT id, (SELECT count(*) FROM lines)::int AS line_count FROM ins
     `);
-    const row = rowsOf(result)[0];
-    if (!row || Number(row.line_count) !== lines.length) {
-      throw new Error(`proposeSubmission: wrote ${row?.line_count ?? 0} of ${lines.length} lines`);
-    }
-    return { ok: true, id: String(row.id) };
+    return { ok: true, id: insertedId(result, lines.length) };
   } catch (error: any) {
-    const code = error?.code ?? error?.cause?.code;
-    if (code === "23505") return { ok: false, conflict: true };
+    if (isUniqueViolation(error)) return { ok: false, conflict: true };
     throw error;
   }
+}
+
+/**
+ * Record the agreement for a Stripe session created BEFORE submissions
+ * existed, already accepted and bound to that session — what confirming such
+ * a payment has always meant: the rows as they stand when it arrives.
+ *
+ * It touches no other submission (so a legacy payment cannot supersede a
+ * checkout the customer opened since) and checks no amount (the session never
+ * asked for one). The session id is unique, so a redelivery is `duplicate`.
+ * Deleted in S3, once no such session can still be paid.
+ */
+export async function recordLegacySubmission(input: {
+  orderId: string;
+  returnMethod: string;
+  agreement: Agreement;
+  lines: readonly SubmissionLineInput[];
+  sessionId: string;
+  paymentIntent: string | null;
+}): Promise<{ kind: "accepted"; id: string } | { kind: "duplicate" }> {
+  const a = input.agreement;
+  const lines = lineRecords(input.agreement, input.lines);
+  try {
+    const result = await db.execute(sql`
+      WITH ins AS (
+        INSERT INTO return_submissions (
+          order_id, state, tender, return_method, return_leg_cents, outbound_leg_cents,
+          charged_fee_cents, returned_value_cents, replacement_value_cents, net_cents,
+          stripe_charge_cents, waived_cents, owed_cents, residual_cents,
+          stripe_session_id, stripe_payment_intent, accepted_at)
+        VALUES (${input.orderId}, 'accepted', ${a.tender}, ${input.returnMethod},
+               ${a.returnLegCents}, ${a.outboundLegCents}, ${a.chargedFeeCents},
+               ${a.returnedValueCents}, ${a.replacementValueCents}, ${a.netCents},
+               ${a.stripeChargeCents}, ${a.waivedCents}, ${a.owedCents}, ${a.residualCents},
+               ${input.sessionId}, ${input.paymentIntent}, now())
+        RETURNING id
+      ),
+      ${insertLines(lines)}
+      SELECT id, (SELECT count(*) FROM lines)::int AS line_count FROM ins
+    `);
+    return { kind: "accepted", id: insertedId(result, lines.length) };
+  } catch (error: any) {
+    if (isUniqueViolation(error)) return { kind: "duplicate" };
+    throw error;
+  }
+}
+
+const isUniqueViolation = (error: any) =>
+  (error?.code ?? error?.cause?.code) === "23505";
+
+function insertedId(result: unknown, expected: number): string {
+  const row = rowsOf(result)[0];
+  if (!row || Number(row.line_count) !== expected) {
+    throw new Error(`submission insert wrote ${row?.line_count ?? 0} of ${expected} lines`);
+  }
+  return String(row.id);
+}
+
+/** The `lines` CTE: inserts every line of the submission `ins` returned. */
+function insertLines(lines: ReturnType<typeof lineRecords>) {
+  return sql`lines AS (
+        INSERT INTO submission_lines (
+          submission_id, productsorder_id, shopify_line_item_id, fulfillment_line_item_id,
+          quantity, action, new_variant_id, reason, notes, returned_cents,
+          replacement_cents, pay_cents, stripe_funded_cents)
+        SELECT ins.id, l.productsorder_id, l.shopify_line_item_id, l.fulfillment_line_item_id,
+               l.quantity, l.action, l.new_variant_id, l.reason, l.notes, l.returned_cents,
+               l.replacement_cents, l.pay_cents, l.stripe_funded_cents
+          FROM ins, jsonb_to_recordset(${JSON.stringify(lines)}::jsonb) AS l(
+            productsorder_id integer, shopify_line_item_id text,
+            fulfillment_line_item_id text, quantity integer, action text,
+            new_variant_id text, reason text, notes text, returned_cents integer,
+            replacement_cents integer, pay_cents integer, stripe_funded_cents integer)
+        RETURNING 1
+      )`;
+}
+
+function lineRecords(a: Agreement, meta: readonly SubmissionLineInput[]) {
+  const byId = new Map(meta.map((l) => [l.productsorderId, l]));
+  return a.lines.map((line) => {
+    const meta = byId.get(line.id);
+    if (!meta) throw new Error(`submission: no metadata for line ${line.id}`);
+    return {
+      productsorder_id: line.id,
+      shopify_line_item_id: meta.shopifyLineItemId,
+      fulfillment_line_item_id: meta.fulfillmentLineItemId,
+      quantity: line.quantity,
+      action: line.action,
+      new_variant_id: line.action === "CAMBIO" ? meta.newVariantId : null,
+      reason: meta.reason,
+      notes: meta.notes,
+      returned_cents: line.returnedCents,
+      replacement_cents: line.replacementCents,
+      pay_cents: line.payCents,
+      stripe_funded_cents: line.stripeFundedCents,
+    };
+  });
 }
 
 /** Bind the Stripe session to the submission. False if it is no longer awaiting. */
@@ -251,7 +314,7 @@ export async function recordConfirmation(input: {
            transaction_amount = ${input.transactionAmount},
            action = sl.action,
            new_variant_id = sl.new_variant_id,
-           credit = CASE WHEN ${input.credit} THEN true ELSE p.credit END
+           credit = ${input.credit}
       FROM sl
      WHERE p.id = sl.productsorder_id
     RETURNING p.id

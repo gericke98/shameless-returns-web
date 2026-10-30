@@ -52,7 +52,7 @@ vi.mock("next/headers", () => ({
   cookies: () => ({ get: () => ({ name: "locale", value: "es" }) }),
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
-vi.mock("@/actions/updateOrder", () => ({
+vi.mock("@/lib/submissionConfirmation", () => ({
   confirmSubmission: async () => {},
   revertFinalOrder: async () => {},
 }));

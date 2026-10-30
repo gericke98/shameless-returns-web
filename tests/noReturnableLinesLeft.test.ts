@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { acceptedSubmission } from "./submissionFixture";
+import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // The gap between two correct changes.
 //
@@ -88,13 +88,17 @@ vi.mock("@/actions/exchangeReservation", () => ({
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 const recorded = vi.fn(async () => []);
+vi.mock("@/lib/fulfillmentLines", () => ({
+  refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
+}));
+
 vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => acceptedSubmission("13172075168070", state.rows),
+  getSubmission: async () => acceptedSubmission("13172075168070", state.rows, { fulfillment: FULFILLMENT_LINE_ITEMS }),
   recordConfirmation: (...args: unknown[]) => (recorded as any)(...args),
 }));
 
 async function confirm() {
-  const mod = await import("@/actions/updateOrder");
+  const mod = await import("@/lib/submissionConfirmation");
   return mod.confirmSubmission("sub-1");
 }
 

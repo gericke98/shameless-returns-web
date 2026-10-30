@@ -18,6 +18,7 @@ import {
   buildReservationDraft,
   reservableLines,
   reservationExpiry,
+  type ExchangeLine,
 } from "@/lib/exchangeReservation";
 
 const shopifyUrl = () =>
@@ -70,11 +71,15 @@ const DELETE = `
  * paid. Idempotent: an order that already holds a reservation is left alone,
  * so a Stripe webhook retry cannot freeze the stock twice.
  */
-export async function reserveExchangeStock(orderId: string): Promise<void> {
+export async function reserveExchangeStock(
+  orderId: string,
+  // The lines to hold, from the confirmed submission — not re-read from the
+  // rows, which another tab may have edited since the customer paid.
+  agreed: ExchangeLine[]
+): Promise<void> {
   try {
     const order = await db.query.orders.findFirst({
       where: eq(orders.id, orderId),
-      with: { products: true },
     });
     if (!order) return;
 
@@ -85,7 +90,7 @@ export async function reserveExchangeStock(orderId: string): Promise<void> {
       return;
     }
 
-    const lines = reservableLines((order as any).products ?? []);
+    const lines = reservableLines(agreed);
     if (lines.length === 0) return;
 
     const input = buildReservationDraft(

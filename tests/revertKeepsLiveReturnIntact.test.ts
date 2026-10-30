@@ -54,7 +54,7 @@ vi.mock("@/db/drizzle", () => {
 });
 
 async function revert() {
-  const { revertFinalOrder } = await import("@/actions/updateOrder");
+  const { revertFinalOrder } = await import("@/lib/submissionConfirmation");
   return revertFinalOrder("13238997909830");
 }
 

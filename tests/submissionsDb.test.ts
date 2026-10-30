@@ -27,6 +27,7 @@ const line = (id: number, action: "DEVOLUCIÓN" | "CAMBIO", cents: number, repl 
 const meta = (id: number, newVariantId: string | null = null) => ({
   productsorderId: id,
   shopifyLineItemId: `li-${id}`,
+  fulfillmentLineItemId: `gid://shopify/FulfillmentLineItem/${id}`,
   newVariantId,
   reason: "size",
   notes: null,
@@ -194,5 +195,78 @@ describe("db/submissions against Postgres", () => {
     expect(rows[2].confirmed).toBeNull();
     const lines = (await pg.query<any>("SELECT return_line_item_id FROM submission_lines ORDER BY productsorder_id")).rows;
     expect(lines.map((l: any) => l.return_line_item_id)).toEqual(["rli-1", "rli-2"]);
+  });
+
+  it("stores the fulfillment line item agreed at checkout on every line", async () => {
+    await propose("o1", [line(1, "DEVOLUCIÓN", 5000), line(2, "CAMBIO", 4000, 4000)]);
+
+    const lines = (await pg.query<any>(
+      "SELECT fulfillment_line_item_id FROM submission_lines ORDER BY productsorder_id"
+    )).rows;
+    expect(lines.map((l: any) => l.fulfillment_line_item_id)).toEqual([
+      "gid://shopify/FulfillmentLineItem/1",
+      "gid://shopify/FulfillmentLineItem/2",
+    ]);
+  });
+
+  it("leaves exactly one awaiting submission when two proposals race", async () => {
+    // A double click: two requests, same order, same instant.
+    const { proposeSubmission } = await repo();
+    const lines = [line(1, "DEVOLUCIÓN", 5000)];
+    const input = { orderId: "o1", returnMethod: "CORREOS", agreement: agreementFor(lines), lines: [meta(1)] };
+
+    const results = await Promise.all([proposeSubmission(input), proposeSubmission(input)]);
+
+    const awaiting = (await pg.query<any>(
+      "SELECT id FROM return_submissions WHERE order_id='o1' AND state='awaiting_payment'"
+    )).rows;
+    expect(awaiting).toHaveLength(1);
+    // Whichever lost was either superseded or refused — never left awaiting.
+    expect(results.filter((r) => r.ok && r.id === awaiting[0].id)).toHaveLength(1);
+  });
+
+  it("clears a stale credit flag when the submission is a refund", async () => {
+    // A credit return was cancelled; the same row is now returned for a refund.
+    // Leaving credit=true would settle it as store credit again.
+    const { recordConfirmation } = await repo();
+    await pg.exec(`INSERT INTO productsorder (id, order_id, variant_id, action, credit)
+      VALUES (1, 'o1', 'v', 'DEVOLUCIÓN', true)`);
+    const id = await propose("o1");
+
+    await recordConfirmation({
+      submissionId: id,
+      returnId: "gid://shopify/Return/1",
+      transactionId: "t1",
+      transactionAmount: "50.00",
+      credit: false,
+      lines: [{ productsorderId: 1, fulfillmentLineItemId: "fli-1", returnLineItemId: "rli-1" }],
+    });
+
+    expect((await pg.query<any>("SELECT credit FROM productsorder WHERE id = 1")).rows[0].credit).toBe(false);
+  });
+
+  it("records a legacy session as accepted without touching the order's newer checkout", async () => {
+    const { recordLegacySubmission } = await repo();
+    const newer = await propose("o1");
+    const lines = [line(1, "CAMBIO", 4000, 6000)];
+    const input = {
+      orderId: "o1",
+      returnMethod: "CORREOS",
+      agreement: agreementFor(lines),
+      lines: [meta(1, "gid://shopify/ProductVariant/9")],
+      sessionId: "cs_legacy",
+      paymentIntent: "pi_legacy",
+    };
+
+    const first = await recordLegacySubmission(input);
+    const again = await recordLegacySubmission(input);
+
+    expect(first.kind).toBe("accepted");
+    expect(again).toEqual({ kind: "duplicate" });
+    expect(await stateOf(newer)).toBe("awaiting_payment");
+    const legacy = (await pg.query<any>(
+      "SELECT state, stripe_payment_intent FROM return_submissions WHERE stripe_session_id = 'cs_legacy'"
+    )).rows;
+    expect(legacy).toEqual([{ state: "accepted", stripe_payment_intent: "pi_legacy" }]);
   });
 });

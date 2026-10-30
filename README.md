@@ -410,9 +410,10 @@ Verify: `SELECT count(*) FROM information_schema.columns WHERE table_name IN
 lists `return_submissions_one_awaiting_per_order`.
 
 Checkout sessions created by the previous deploy carry no `submission_id`.
-The webhook builds their agreement from the rows when they are paid; if the
-amount does not match, it raises a "PAID, NOT CONFIRMED" alert instead of
-confirming.
+When one is paid, the webhook confirms it as before — from the rows as they
+stand — but first records that agreement as an `accepted` submission bound to
+the session, so a redelivery is a no-op. It does not touch any newer checkout
+on the order. This path goes in S3, once no such session can still be paid.
 
 **Status: not yet applied.**
 

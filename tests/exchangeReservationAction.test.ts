@@ -74,11 +74,34 @@ describe("reserveExchangeStock", () => {
     );
     const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054");
+    await reserveExchangeStock("13161229386054", state.order.products);
 
     expect(updates).toContainEqual({
       exchangeReservationId: "gid://shopify/DraftOrder/1",
     });
+  });
+
+  it("holds the lines it is given, not whatever the order's rows say by now", async () => {
+    // Confirm passes the paid submission's lines. Another tab has since turned
+    // the row into a plain return; the paid replacement must still be held.
+    fetchMock.mockResolvedValue(
+      ok({ id: "gid://shopify/DraftOrder/2", name: "#D10", reserveInventoryUntil: "x" })
+    );
+    const paid = [{ ...state.order.products[0], new_variant_id: "gid://shopify/ProductVariant/222" }];
+    state.order = {
+      ...state.order,
+      products: [
+        { variant_id: "111", new_variant_id: null, action: "DEVOLUCIÓN", quantity: 1, confirmed: true, refunded: false },
+      ],
+    };
+    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+
+    await reserveExchangeStock("13161229386054", paid);
+
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent.variables.input.lineItems).toEqual([
+      expect.objectContaining({ variantId: "gid://shopify/ProductVariant/222", quantity: 1 }),
+    ]);
   });
 
   it("does not place a second hold when one already exists", async () => {
@@ -86,7 +109,7 @@ describe("reserveExchangeStock", () => {
     state.order = { ...state.order, exchangeReservationId: "gid://shopify/DraftOrder/1" };
     const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054");
+    await reserveExchangeStock("13161229386054", state.order.products);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -100,7 +123,7 @@ describe("reserveExchangeStock", () => {
     };
     const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054");
+    await reserveExchangeStock("13161229386054", state.order.products);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -118,7 +141,7 @@ describe("reserveExchangeStock", () => {
     });
     const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
 
-    await expect(reserveExchangeStock("13161229386054")).resolves.toBeUndefined();
+    await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
     expect(updates).toHaveLength(0);
   });
 
@@ -126,7 +149,7 @@ describe("reserveExchangeStock", () => {
     fetchMock.mockRejectedValue(new Error("ECONNRESET"));
     const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
 
-    await expect(reserveExchangeStock("13161229386054")).resolves.toBeUndefined();
+    await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
   });
 });
 

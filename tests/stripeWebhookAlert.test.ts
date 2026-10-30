@@ -39,7 +39,14 @@ const behaviour: {
   labelStatus: number;
   outcome: { kind: string; [k: string]: unknown };
   submissionId: string | null;
-} = { confirmThrows: false, labelStatus: 200, outcome: { kind: "accepted" }, submissionId: "sub-1" };
+  agreedMethod: string;
+} = {
+  confirmThrows: false,
+  labelStatus: 200,
+  outcome: { kind: "accepted" },
+  submissionId: "sub-1",
+  agreedMethod: "CORREOS",
+};
 
 const calls: string[] = [];
 const outbox: Array<{ dedupeKey: string; subject: string; body: string }> = [];
@@ -50,7 +57,7 @@ vi.mock("@/actions/opsAlert", () => ({
   },
 }));
 
-vi.mock("@/actions/updateOrder", () => ({
+vi.mock("@/lib/submissionConfirmation", () => ({
   confirmSubmission: async (submissionId: string) => {
     calls.push(`confirm:${submissionId}`);
     if (behaviour.confirmThrows) {
@@ -73,28 +80,43 @@ vi.mock("@/db/submissions", () => ({
     calls.push(`accept:${id}:${evidence.sessionId}`);
     return behaviour.outcome;
   },
-  attachStripeSession: async (id: string, sessionId: string) => {
-    calls.push(`attach:${id}:${sessionId}`);
-    return true;
-  },
+  getSubmission: async (id: string) => ({
+    submission: { id, returnMethod: behaviour.agreedMethod },
+    lines: [],
+  }),
 }));
 
-// A session created before submissions existed: its agreement is built from
-// the rows at webhook time.
+// A session created before submissions existed: recorded as accepted from the
+// rows at webhook time.
 vi.mock("@/lib/submissionProposal", () => ({
-  proposeCurrentSelection: async (id: string) => {
-    calls.push(`propose:${id}`);
-    return { submissionId: "sub-legacy" };
+  acceptLegacySession: async (id: string, _c: boolean, _m: string, s: { sessionId: string }) => {
+    calls.push(`legacy:${id}:${s.sessionId}`);
+    return behaviour.outcome.kind === "duplicate"
+      ? { kind: "duplicate" }
+      : { kind: "accepted", id: "sub-legacy" };
   },
 }));
 
 vi.mock("@/actions/shipping", () => ({
-  createShippingLabel: async () => behaviour.labelStatus,
+  createShippingLabel: async () => {
+    calls.push("book:CORREOS");
+    return behaviour.labelStatus;
+  },
 }));
 
 vi.mock("@/actions/amphoraReturn", () => ({
-  createInternationalReturn: async () => behaviour.labelStatus,
+  createInternationalReturn: async () => {
+    calls.push("book:AMPHORA");
+    return behaviour.labelStatus;
+  },
   isInternationalOrder: () => false,
+}));
+
+vi.mock("@/actions/selfBookedReturn", () => ({
+  createSelfBookedReturn: async () => {
+    calls.push("book:SELF");
+    return behaviour.labelStatus;
+  },
 }));
 
 vi.mock("@/db/queries", () => ({
@@ -107,7 +129,10 @@ vi.mock("@/db/queries", () => ({
 vi.mock("@/db/drizzle", () => {
   const chain: any = {
     update: () => chain,
-    set: () => chain,
+    set: (values: Record<string, unknown>) => {
+      if ("stripePaymentIntent" in values) calls.push(`store-intent:${values.stripePaymentIntent}`);
+      return chain;
+    },
     where: () => Promise.resolve(),
   };
   return { default: chain };
@@ -155,6 +180,7 @@ beforeEach(() => {
   behaviour.labelStatus = 200;
   behaviour.outcome = { kind: "accepted" };
   behaviour.submissionId = "sub-1";
+  behaviour.agreedMethod = "CORREOS";
   ORDER.products = [];
   vi.resetModules();
 });
@@ -284,8 +310,11 @@ describe("the webhook confirms only the submission the customer paid for", () =>
   it("accepts the session's own submission, then confirms that submission", async () => {
     await post();
 
-    expect(calls.slice(0, 2)).toEqual(["accept:sub-1:cs_test_1", "confirm:sub-1"]);
-    expect(calls).not.toContain("propose:13158935429446");
+    expect(calls.slice(0, 3)).toEqual([
+      "accept:sub-1:cs_test_1",
+      "store-intent:pi_3U0QOAJSZ88eqCu00q2IRbdy",
+      "confirm:sub-1",
+    ]);
   });
 
   it("confirms nothing and raises one alert when the payment is for a replaced checkout", async () => {
@@ -304,6 +333,16 @@ describe("the webhook confirms only the submission the customer paid for", () =>
     expect(alerts).toHaveLength(0);
   });
 
+  it("does not let a rejected payment overwrite the order's payment intent", async () => {
+    // Checkout B was accepted; the customer then pays the superseded A. A
+    // cancellation refunds the order's stored intent — it must still be B's.
+    behaviour.outcome = { kind: "superseded", state: "superseded" };
+
+    await post();
+
+    expect(calls.some((c) => c.startsWith("store-intent:"))).toBe(false);
+  });
+
   it("confirms nothing when the amount paid is not the amount agreed", async () => {
     behaviour.outcome = { kind: "mismatch", detail: "amount=2500/3496" };
 
@@ -313,28 +352,50 @@ describe("the webhook confirms only the submission the customer paid for", () =>
     expect(outbox[0].body).toContain("amount=2500/3496");
   });
 
-  it("carries on to the idempotent confirm on a redelivery", async () => {
-    // Stripe redelivers after a timeout: the submission is already accepted.
-    // Stopping here would strand a paid return whose first attempt died
-    // half-way; confirmSubmission's own guard makes a second run harmless.
+  it("does nothing at all on a redelivery of an accepted payment", async () => {
+    // The first delivery owns the confirmation and the booking; running them
+    // again from a concurrent redelivery could book a second carrier.
     behaviour.outcome = { kind: "duplicate" };
+
+    const res: any = await post();
+
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(["accept:sub-1:cs_test_1"]);
+    expect(outbox).toHaveLength(0);
+    expect(alerts).toHaveLength(0);
+  });
+
+  it("books the lane the submission agreed, not the one the order row says now", async () => {
+    // The customer paid the SELF fee; a second tab has since written AMPHORA
+    // to the order row (and its own proposal then failed).
+    ORDER.returnMethod = "AMPHORA";
+    behaviour.agreedMethod = "SELF";
 
     await post();
 
-    expect(calls).toContain("confirm:sub-1");
-    expect(outbox).toHaveLength(0);
+    expect(calls).toContain("book:SELF");
+    expect(calls).not.toContain("book:AMPHORA");
+    delete ORDER.returnMethod;
   });
 
-  it("builds and binds an agreement for a session created before submissions existed", async () => {
+  it("records a session created before submissions existed as accepted, then confirms it", async () => {
     behaviour.submissionId = null;
 
     await post();
 
-    expect(calls.slice(0, 4)).toEqual([
-      "propose:13158935429446",
-      "attach:sub-legacy:cs_test_1",
-      "accept:sub-legacy:cs_test_1",
+    expect(calls.slice(0, 3)).toEqual([
+      "legacy:13158935429446:cs_test_1",
+      "store-intent:pi_3U0QOAJSZ88eqCu00q2IRbdy",
       "confirm:sub-legacy",
     ]);
+  });
+
+  it("does nothing on a redelivery of a legacy session", async () => {
+    behaviour.submissionId = null;
+    behaviour.outcome = { kind: "duplicate" };
+
+    await post();
+
+    expect(calls).toEqual(["legacy:13158935429446:cs_test_1"]);
   });
 });

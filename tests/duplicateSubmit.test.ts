@@ -63,7 +63,7 @@ vi.mock("@/actions/payments", () => ({
 vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
 
 // Its own duplicate guard is already tested; here it must not be what saves us.
-vi.mock("@/actions/updateOrder", () => ({
+vi.mock("@/lib/submissionConfirmation", () => ({
   confirmSubmission: async () => {},
   revertFinalOrder: async () => {},
 }));

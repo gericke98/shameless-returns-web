@@ -51,6 +51,15 @@ function setNet(netAmount: number) {
 }
 const sessions: any[] = [];
 
+vi.mock("@/lib/fulfillmentLines", () => ({
+  // Every selected line was shipped: its fulfillment line item is resolved
+  // before checkout (lib/submissionProposal.ts).
+  resolveFulfillmentLineItems: async (lines: Array<{ productsorderId: number }>) =>
+    new Map(lines.map((l) => [l.productsorderId, `gid://shopify/FulfillmentLineItem/${l.productsorderId}`])),
+}));
+vi.mock("@/db/queries", () => ({
+  getOrderTotal: async () => ({ id: order.id, fulfillments: [] }),
+}));
 vi.mock("@/db/submissions", () => ({
   proposeSubmission: async () => ({ ok: true, id: "sub-1" }),
   attachStripeSession: async () => true,

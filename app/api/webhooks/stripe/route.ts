@@ -2,10 +2,10 @@ import { createShippingLabel } from "@/actions/shipping";
 import { createInternationalReturn } from "@/actions/amphoraReturn";
 import { createSelfBookedReturn } from "@/actions/selfBookedReturn";
 import { alertOps } from "@/actions/opsAlert";
-import { confirmSubmission, revertFinalOrder } from "@/actions/updateOrder";
+import { confirmSubmission, revertFinalOrder } from "@/lib/submissionConfirmation";
 import { enqueueOpsAlert } from "@/actions/opsAlertOutbox";
-import { acceptPaidSubmission, attachStripeSession, type PaidOutcome } from "@/db/submissions";
-import { proposeCurrentSelection } from "@/lib/submissionProposal";
+import { acceptPaidSubmission, getSubmission, type PaidOutcome } from "@/db/submissions";
+import { acceptLegacySession } from "@/lib/submissionProposal";
 import db from "@/db/drizzle";
 import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
@@ -200,61 +200,76 @@ export async function POST(req: Request) {
         return new NextResponse("Metadata is required", { status: 400 });
       }
       const { id, isCredit } = metadata;
-      // Store the payment before anything else can fail. A cancellation later
-      // needs it to refund without a human searching Stripe by hand.
       const paymentIntentId =
         typeof session.payment_intent === "string"
           ? session.payment_intent
           : session.payment_intent?.id ?? null;
-      if (paymentIntentId) {
-        try {
-          await db
-            .update(orders)
-            .set({ stripePaymentIntent: paymentIntentId })
-            .where(eq(orders.id, id));
-        } catch (error) {
-          console.error(`Could not store payment intent for order ${id}:`, error);
-        }
-      }
       // Una vez se ha procesado el pago vamos con los siguientes pasos
       try {
-        const order = await getOrderById(id);
-        // The lane the customer chose, persisted before they left for Stripe.
-        // Null on rows created before self-booking existed, which fall back to
-        // the country rule exactly as they always did.
-        const method: ReturnMethod =
-          ((order as any)?.returnMethod as ReturnMethod) ??
-          defaultMethodFor(
-            order?.shippingCountry,
-            process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
-          );
-
-        // The submission this session paid for. A session created before
-        // submissions existed carries none: its agreement is built now, from
-        // the rows as they stand — exactly what confirming them used to mean —
-        // and then has to pass the same payment check as any other.
         let submissionId = metadata.submissionId;
-        if (!submissionId) {
-          const proposal = await proposeCurrentSelection(id, isCredit, method);
-          if (!proposal) throw new Error(`nothing selected on order ${id} to confirm`);
-          await attachStripeSession(proposal.submissionId, session.id);
-          submissionId = proposal.submissionId;
+        let outcome: PaidOutcome;
+        if (submissionId) {
+          // Accept only the payment this submission asked for: this session,
+          // this amount, EUR, paid.
+          outcome = await acceptPaidSubmission(submissionId, {
+            sessionId: session.id,
+            amountTotal: session.amount_total ?? null,
+            currency: session.currency ?? null,
+            paymentStatus: session.payment_status ?? null,
+            paymentIntent: paymentIntentId,
+          });
+        } else {
+          // A session created before submissions existed carries none. It is
+          // confirmed as it always was — the rows as they stand now — but
+          // recorded first, bound to this session, so a redelivery is a
+          // duplicate like any other.
+          const order = await getOrderById(id);
+          const legacyMethod: ReturnMethod =
+            ((order as any)?.returnMethod as ReturnMethod) ??
+            defaultMethodFor(
+              order?.shippingCountry,
+              process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
+            );
+          const legacy = await acceptLegacySession(id, isCredit, legacyMethod, {
+            sessionId: session.id,
+            paymentIntent: paymentIntentId,
+          });
+          if (!legacy) throw new Error(`nothing selected on order ${id} to confirm`);
+          submissionId = legacy.kind === "accepted" ? legacy.id : null;
+          outcome = legacy.kind === "accepted" ? { kind: "accepted" } : { kind: "duplicate" };
         }
 
-        // Accept only the payment this submission asked for: this session,
-        // this amount, EUR, paid. A redelivery finds it already accepted and
-        // carries on to the idempotent confirm below.
-        const outcome = await acceptPaidSubmission(submissionId, {
-          sessionId: session.id,
-          amountTotal: session.amount_total ?? null,
-          currency: session.currency ?? null,
-          paymentStatus: session.payment_status ?? null,
-          paymentIntent: paymentIntentId,
-        });
-        if (outcome.kind !== "accepted" && outcome.kind !== "duplicate") {
+        // A redelivery of a payment already accepted: the first delivery owns
+        // the confirmation and the booking. Running them again could race it
+        // into a second carrier booking.
+        if (outcome.kind === "duplicate") {
+          return NextResponse.json({ received: true });
+        }
+        if (outcome.kind !== "accepted") {
           await alertPaymentNotConfirmed(id, session, paymentIntentId, outcome);
           return NextResponse.json({ received: true });
         }
+        if (!submissionId) throw new Error(`order ${id}: accepted without a submission id`);
+
+        // The order's payment is the ACCEPTED one — stored only now, so paying
+        // an old checkout cannot overwrite it. A cancellation refunds this
+        // intent without a human searching Stripe by hand.
+        if (paymentIntentId) {
+          try {
+            await db
+              .update(orders)
+              .set({ stripePaymentIntent: paymentIntentId })
+              .where(eq(orders.id, id));
+          } catch (error) {
+            console.error(`Could not store payment intent for order ${id}:`, error);
+          }
+        }
+
+        // The lane is the one agreed and paid for, not whatever the order row
+        // says by now: another tab can have changed it since checkout.
+        const agreed = await getSubmission(submissionId);
+        if (!agreed) throw new Error(`order ${id}: submission ${submissionId} vanished after acceptance`);
+        const method = agreed.submission.returnMethod as ReturnMethod;
 
         // // First update the database
         await confirmSubmission(submissionId);

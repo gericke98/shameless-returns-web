@@ -86,4 +86,19 @@ describe("each operation names exactly the row it pays for", () => {
     if (!whole.ok) throw new Error(whole.held);
     expect(whole.ops.filter((o) => o.scope_key === `residual:${s.id}`).map((o) => o.amount_cents)).toEqual([1]);
   });
+
+  it("never plans the residual again once it exists", () => {
+    const s = submission({ residualCents: 1 });
+    const plan = planAdmission(
+      planInput([line(1)], {
+        submission: s,
+        existing: [
+          { id: "op-m", kind: "process_refund", scopeKey: `money:${s.id}:1` },
+          { id: "op-r", kind: "root_refund", scopeKey: `residual:${s.id}` },
+        ],
+      })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops).toEqual([]);
+  });
 });

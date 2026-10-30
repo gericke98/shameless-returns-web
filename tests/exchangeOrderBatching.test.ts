@@ -91,3 +91,13 @@ describe("admission — one exchange order per submission", () => {
     expect(plan).toEqual({ ok: false, held: "bad-replacement-variant:1" });
   });
 });
+
+describe("an exchange order nobody heard back from", () => {
+  it("a search that finds NO order is unresolved, never 'absent' — absence never authorises a re-send", async () => {
+    const { judgeExchangeOrderSearch } = await import("@/lib/settlement/evidence");
+    const plan = planAdmission(planInput(exchangeLines()));
+    if (!plan.ok) throw new Error(plan.held);
+    const op = plan.ops.find((o) => o.kind === "exchange_order")! as any;
+    expect(judgeExchangeOrderSearch(op.request, []).v).toBe("unresolved");
+  });
+});

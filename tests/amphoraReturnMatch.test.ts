@@ -1,149 +1,135 @@
 import { describe, expect, it } from "vitest";
-import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
+import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 
 // Amphora's return id is `SHP <shopify order id>`, which is also our
-// `orders.id`. That is the only link back when they create the return
-// themselves, because then `external_id` is null.
+// `orders.id`. It is the only key: `external_id` is data that must agree with
+// it, and anything ambiguous is refused and reported, never chosen between.
 
 const withExternal = {
   id: "SHP 13192219558214",
   name: "#310957",
   external_id: "13192219558214",
-  time: "2026-08-01T10:00:00",
 };
 
 const orphan = {
   id: "SHP 13161916465478",
   name: "#310761",
   external_id: null,
-  time: "2026-08-05T06:25:20",
 };
 
 describe("matchReturnsToOrderIds", () => {
-  it("keys a return we created by its external_id", () => {
-    const [match] = matchReturnsToOrderIds([withExternal]);
+  it("matches a return we created by the order id inside its return id", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([withExternal]);
 
-    expect(match.orderId).toBe("13192219558214");
-    expect(match.viaExternalId).toBe(true);
+    expect(matches).toEqual([
+      { orderId: "13192219558214", ret: withExternal, viaExternalId: true },
+    ]);
+    expect(conflicts).toEqual([]);
   });
 
-  it("recovers the order id of an Amphora-created return from the SHP prefix", () => {
-    const [match] = matchReturnsToOrderIds([orphan]);
+  it("matches an Amphora-created return (no external_id) by its return id alone", () => {
+    // The 2026-08-05 case: Amphora deleted our record and re-created it in
+    // their UI. One record under the id, external_id null, still matched.
+    const { matches, conflicts } = matchReturnsToOrderIds([orphan]);
 
-    expect(match.orderId).toBe("13161916465478");
-    expect(match.viaExternalId).toBe(false);
+    expect(matches).toEqual([
+      { orderId: "13161916465478", ret: orphan, viaExternalId: false },
+    ]);
+    expect(conflicts).toEqual([]);
   });
 
-  it("drops a return with no external_id and no SHP prefix", () => {
-    const matches = matchReturnsToOrderIds([
-      { id: "MNL 999", name: "#310000", external_id: null, time: null },
+  it("matches one record per id across a listing of several orders", () => {
+    const { matches } = matchReturnsToOrderIds([withExternal, orphan]);
+
+    expect(matches.map((m) => m.orderId).sort()).toEqual([
+      "13161916465478",
+      "13192219558214",
+    ]);
+  });
+
+  it("silently drops a return whose id names no order and that we did not create", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([
+      { id: "MNL 999", name: "#310000", external_id: null },
     ]);
 
     expect(matches).toEqual([]);
+    expect(conflicts).toEqual([]);
   });
 
-  it("prefers the return we created when both exist for one order", () => {
-    const ours = { ...withExternal, id: "SHP 13192219558214" };
-    const theirs = { ...orphan, id: "SHP 13192219558214", name: "#310957" };
+  it("refuses and reports a record whose external_id disagrees with its id", () => {
+    const bad = { ...withExternal, external_id: "13100000000000" };
 
-    const matches = matchReturnsToOrderIds([theirs, ours]);
+    const { matches, conflicts } = matchReturnsToOrderIds([bad]);
 
-    expect(matches).toHaveLength(1);
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({
+        kind: "external-id-mismatch",
+        amphoraReturnId: "SHP 13192219558214",
+      }),
+    ]);
+  });
+
+  it("refuses and reports a record we created whose id names no order", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([
+      { id: "MNL 999", external_id: "13192219558214" },
+    ]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({ kind: "external-id-mismatch", amphoraReturnId: "MNL 999" }),
+    ]);
+  });
+
+  it("refuses the whole order when two records share one return id, whichever is ours", () => {
+    // Before: carrier presence, creation time and first-seen decided which one
+    // to sync. Now nobody chooses; a human looks.
+    const ours = { ...withExternal, carrier: null };
+    const theirs = { ...orphan, id: withExternal.id, carrier: "UPS" };
+
+    for (const listing of [[ours, theirs], [theirs, ours]]) {
+      const { matches, conflicts } = matchReturnsToOrderIds(listing);
+
+      expect(matches).toEqual([]);
+      expect(conflicts).toEqual([
+        expect.objectContaining({ kind: "duplicate-id", amphoraReturnId: "SHP 13192219558214" }),
+      ]);
+    }
+  });
+
+  it("refusing one order leaves the rest of the listing matched", () => {
+    const dupA = { ...withExternal };
+    const dupB = { ...withExternal, external_id: null };
+
+    const { matches, conflicts } = matchReturnsToOrderIds([dupA, orphan, dupB]);
+
+    expect(matches.map((m) => m.orderId)).toEqual(["13161916465478"]);
+    expect(conflicts).toHaveLength(1);
+  });
+
+  it("treats whitespace around the id and external_id as the same id", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([
+      { id: " SHP 13192219558214 ", external_id: " 13192219558214 " },
+    ]);
+
+    expect(conflicts).toEqual([]);
+    expect(matches[0].orderId).toBe("13192219558214");
     expect(matches[0].viaExternalId).toBe(true);
   });
+});
 
-  it("keeps the newest when an order has two Amphora-created returns", () => {
-    const older = { ...orphan, time: "2026-08-04T06:00:00" };
-    const newer = { ...orphan, time: "2026-08-05T06:25:20" };
-
-    const matches = matchReturnsToOrderIds([older, newer]);
-
-    expect(matches).toHaveLength(1);
-    expect(matches[0].ret.time).toBe("2026-08-05T06:25:20");
-  });
-
-  it("treats a missing timestamp as oldest rather than throwing", () => {
-    const undated = { ...orphan, time: null };
-    const dated = { ...orphan, time: "2026-08-05T06:25:20" };
-
-    const matches = matchReturnsToOrderIds([dated, undated]);
-
-    expect(matches[0].ret.time).toBe("2026-08-05T06:25:20");
-  });
-
-  it("prefers a carrier-carrying orphan over our own carrier-less record", () => {
-    // The seven stranded returns were only rescued because Amphora DELETED ours
-    // before re-creating theirs. If they re-create without deleting, our dead
-    // record would win, applyReturnStatus would see an unchanged status, and the
-    // customer would never learn a courier was assigned.
-    const oursDead = { ...withExternal, id: "SHP 13192219558214", carrier: null };
-    const theirsLive = {
-      ...orphan,
-      id: "SHP 13192219558214",
-      name: "#310957",
-      carrier: "UPS",
+describe("matchConflictAlert", () => {
+  it("keys the alert on the Amphora return id, so a persisting conflict is one email", () => {
+    const conflict = {
+      kind: "duplicate-id" as const,
+      amphoraReturnId: "SHP 13192219558214",
+      detail: "2 records under one return id",
     };
 
-    const matches = matchReturnsToOrderIds([oursDead, theirsLive]);
+    const alert = matchConflictAlert(conflict);
 
-    expect(matches).toHaveLength(1);
-    expect(matches[0].viaExternalId).toBe(false);
-    expect(matches[0].ret.carrier).toBe("UPS");
-  });
-
-  it("prefers the carrier-carrying orphan whichever order the two arrive in", () => {
-    const oursDead = { ...withExternal, id: "SHP 13192219558214", carrier: null };
-    const theirsLive = {
-      ...orphan,
-      id: "SHP 13192219558214",
-      name: "#310957",
-      carrier: "UPS",
-    };
-
-    const matches = matchReturnsToOrderIds([theirsLive, oursDead]);
-
-    expect(matches).toHaveLength(1);
-    expect(matches[0].viaExternalId).toBe(false);
-    expect(matches[0].ret.carrier).toBe("UPS");
-  });
-
-  it("keeps our own record when it has the carrier and the orphan does not", () => {
-    const oursLive = { ...withExternal, id: "SHP 13192219558214", carrier: "UPS" };
-    const theirsDead = {
-      ...orphan,
-      id: "SHP 13192219558214",
-      name: "#310957",
-      carrier: null,
-    };
-
-    expect(matchReturnsToOrderIds([oursLive, theirsDead])[0].viaExternalId).toBe(true);
-    expect(matchReturnsToOrderIds([theirsDead, oursLive])[0].viaExternalId).toBe(true);
-  });
-
-  it("keeps our own record when both carry a carrier", () => {
-    const oursLive = { ...withExternal, id: "SHP 13192219558214", carrier: "DHP" };
-    const theirsLive = {
-      ...orphan,
-      id: "SHP 13192219558214",
-      name: "#310957",
-      carrier: "UPS",
-    };
-
-    expect(matchReturnsToOrderIds([oursLive, theirsLive])[0].viaExternalId).toBe(true);
-    expect(matchReturnsToOrderIds([theirsLive, oursLive])[0].viaExternalId).toBe(true);
-  });
-
-  it("still prefers the return we created even when processed first with an older timestamp", () => {
-    // Regression test: without the `if (held.viaExternalId) continue;` guard,
-    // a newer Amphora-created return would overwrite an older one we created.
-    // This test processes the one we created first, making it the "held" value,
-    // then tests that timestamp comparison does not override the viaExternalId preference.
-    const ours = { ...withExternal, id: "SHP 13192219558214", time: "2026-08-01T10:00:00" };
-    const theirs = { ...orphan, id: "SHP 13192219558214", time: "2026-08-05T06:25:20" };
-
-    const matches = matchReturnsToOrderIds([ours, theirs]);
-
-    expect(matches).toHaveLength(1);
-    expect(matches[0].viaExternalId).toBe(true);
+    expect(alert.dedupeKey).toBe("match-conflict:SHP 13192219558214");
+    expect(alert.subject).toContain("SHP 13192219558214");
+    expect(alert.body).toContain("2 records under one return id");
   });
 });

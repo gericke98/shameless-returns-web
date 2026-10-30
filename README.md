@@ -355,6 +355,23 @@ route — it is an independently addressable endpoint, so rendering a button ins
 `/dashboard` protects the button and not the endpoint. Admin actions call
 `isAdmin()` from `lib/requireAdmin.ts`. **Any new admin action must too.**
 
+### Applying the ops-alert outbox migration
+
+`drizzle/0004_ops_alerts.sql` creates the `ops_alerts` table (durable ops
+alerts, retried until Postmark accepts them). It is additive, but both crons
+write to it, so **apply it before deploying**, against the Neon database
+`ShamelessReturns`:
+
+```sh
+psql "$DATABASE_URL" -f drizzle/0004_ops_alerts.sql
+```
+
+Verify with `SELECT column_name FROM information_schema.columns WHERE
+table_name = 'ops_alerts';` (8 columns). A green build is not evidence that it
+ran: nothing in the deploy runs migrations.
+
+**Status: not yet applied.**
+
 ## Deploy prerequisites for this branch
 
 This branch requires a database migration and a one-time data seed before

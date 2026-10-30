@@ -5,10 +5,11 @@ import {
   getReturnStatusesByIds,
   getVariantSkusByIds,
 } from "@/db/queries";
-import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
+import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { decideAutoApprove, type GateLine } from "@/lib/autoApproveGate";
 import { settleReturnLine } from "@/lib/settleReturn";
 import { alertOps } from "@/actions/opsAlert";
+import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
 
 // Settlement refusals that already sent their own, more specific alert.
 const SELF_EXPLAINED_REFUSALS = new Set(["claim-stuck", "root-has-unmarked-refund"]);
@@ -87,9 +88,11 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Amphora unreachable" }, { status: 502 });
   }
 
-  const amphoraByOrderId = new Map(
-    matchReturnsToOrderIds(returns).map((m) => [m.orderId, m.ret])
-  );
+  // A conflicted Amphora record is refused by the matcher, so its order finds no
+  // record here and is held. The alert is queued; amphora-sync delivers it.
+  const { matches, conflicts } = matchReturnsToOrderIds(returns);
+  await enqueueOpsAlerts(conflicts.map(matchConflictAlert));
+  const amphoraByOrderId = new Map(matches.map((m) => [m.orderId, m.ret]));
   const orders = await getOrdersWithUnsettledReturns();
 
   // One batched Shopify read for the whole run, not one per order.
@@ -286,5 +289,6 @@ export async function GET(req: Request) {
     capped,
     budgetExhausted,
     dry,
+    conflicts: conflicts.length,
   });
 }

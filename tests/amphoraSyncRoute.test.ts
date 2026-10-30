@@ -233,6 +233,16 @@ vi.mock("@/actions/selfReturnSweep", () => ({
   },
 }));
 
+// The outbox is tested on its own in tests/opsAlertOutbox.test.ts; here it
+// only records what the route queued.
+const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
+vi.mock("@/actions/opsAlertOutbox", () => ({
+  enqueueOpsAlerts: async (list: any[]) => {
+    queued.push(...list);
+  },
+  dispatchOpsAlerts: async () => ({ sent: 0, failed: 0 }),
+}));
+
 const alerts: Array<{ subject: string; body: string }> = [];
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
@@ -248,6 +258,7 @@ async function call(headers: Record<string, string> = {}) {
 beforeEach(() => {
   applied.length = 0;
   alerts.length = 0;
+  queued.length = 0;
   state.returns = [OURS, RECREATED, THEIRS, UNKNOWN];
   state.listThrows = false;
   state.dbThrows = false;
@@ -542,5 +553,50 @@ describe("amphora-sync cron — total failure alerts regardless of volume", () =
     expect(alerts).toHaveLength(1);
     expect(alerts[0].subject).toContain("AMPHORA SYNC FAILING");
     expect(alerts[0].subject).toContain("2/2");
+  });
+});
+
+describe("amphora-sync cron — identity is the Amphora return id", () => {
+  it("never falls back to the order NUMBER when no order has the return's id", async () => {
+    // #310957 exists under a different id. Before Phase 0 a return we created
+    // whose id found nothing was looked up again by `ret.name`; a display name
+    // is not identity, so now nothing is applied.
+    state.returns = [
+      { ...OURS, id: "SHP 13100000000001", external_id: "13100000000001" },
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied).toHaveLength(0);
+    expect(body.skipped).toBe(1);
+  });
+
+  it("refuses an order with two records under one return id and queues ONE alert", async () => {
+    state.returns = [OURS, { ...OURS, external_id: null, carrier: "UPS" }, RECREATED];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied.map((a) => a.order)).toEqual(["#310761"]);
+    expect(body.conflicts).toBe(1);
+    expect(queued).toEqual([
+      expect.objectContaining({ dedupeKey: "match-conflict:SHP 13192219558214" }),
+    ]);
+  });
+
+  it("refuses a record whose external_id disagrees with its return id", async () => {
+    state.returns = [{ ...OURS, external_id: "13161916465478" }];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied).toHaveLength(0);
+    expect(body.conflicts).toBe(1);
+    expect(queued[0].dedupeKey).toBe("match-conflict:SHP 13192219558214");
+  });
+
+  it("queues nothing on a clean listing", async () => {
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.conflicts).toBe(0);
+    expect(queued).toEqual([]);
   });
 });

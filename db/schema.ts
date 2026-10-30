@@ -9,6 +9,7 @@ import {
   timestamp,
   index,
   primaryKey,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 // Creo una tabla que contenga las orders que han sido editadas
@@ -244,6 +245,25 @@ export const lookupAttempts = pgTable(
     ),
   })
 );
+
+/**
+ * Durable ops-alert outbox (drizzle/0004_ops_alerts.sql).
+ *
+ * `alertOps` is best effort; a row here is retried until Postmark accepts it.
+ * `dedupe_key` is the producer's explicit identity for the condition, so a
+ * condition seen on every cron run is one alert. `accepted_at` is set only on
+ * a Postmark 200; `last_attempt_at` doubles as the dispatch lease.
+ */
+export const opsAlerts = pgTable("ops_alerts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  dedupeKey: text("dedupe_key").notNull().unique(),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  lastError: text("last_error"),
+});
 
 // APPLYING SCHEMA CHANGES — do NOT run `npx drizzle-kit push:pg`.
 //

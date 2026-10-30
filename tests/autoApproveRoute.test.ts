@@ -60,6 +60,16 @@ vi.mock("@/lib/settleReturn", () => ({
     };
   },
 }));
+// The outbox is tested on its own in tests/opsAlertOutbox.test.ts; here it
+// only records what the route queued.
+const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
+vi.mock("@/actions/opsAlertOutbox", () => ({
+  enqueueOpsAlerts: async (list: any[]) => {
+    queued.push(...list);
+  },
+  dispatchOpsAlerts: async () => ({ sent: 0, failed: 0 }),
+}));
+
 vi.mock("@/actions/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push(subject);
@@ -94,6 +104,7 @@ async function call(headers: Record<string, string> = {}, query = "") {
 beforeEach(() => {
   settled.length = 0;
   alerts.length = 0;
+  queued.length = 0;
   alertBodies.length = 0;
   state.lineIdsFor = {};
   state.msPerSettle = 0;
@@ -440,5 +451,24 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
     await call({ authorization: "Bearer s3cret" });
 
     expect(alerts).toHaveLength(0);
+  });
+});
+
+describe("auto-approve cron — a conflicted Amphora record never settles", () => {
+  it("holds an order whose return id has two records, and queues the conflict", async () => {
+    // A duplicate under one id used to be resolved by tie-breakers, so the gate
+    // could count a record Amphora was not working. Now the matcher refuses it
+    // and the gate sees no record at all.
+    state.returns = [
+      amphoraReturn("1001", ["SKU1"]),
+      amphoraReturn("1001", ["SKU1"], { external_id: null }),
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(settled).toEqual([]);
+    expect(body.held).toContainEqual({ order: "#1001", reason: "no-amphora-record" });
+    expect(body.conflicts).toBe(1);
+    expect(queued[0].dedupeKey).toBe("match-conflict:SHP 1001");
   });
 });

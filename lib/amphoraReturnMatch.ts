@@ -1,13 +1,21 @@
 // Pure — no db, no env, no network. Works out which of our orders each Amphora
 // return belongs to, so the cron and the ops scripts cannot drift on the answer.
 //
-// Two links exist, and we need both:
-//   · `external_id` — our Shopify order id, set by POST /returns. Present only
-//     on returns WE created.
-//   · the `SHP <shopify order id>` return id — present on every return,
-//     including the ones Amphora creates in their own UI, which is what they
-//     did to all seven stranded returns on 2026-08-05. Those carry
-//     `external_id: null` and were invisible to the sync until this existed.
+// The ONE key is Amphora's return id, `SHP <shopify order id>`. It is their
+// primary key: the Company API addresses every return operation by it
+// (`/returns/{return_id}/approve|travelling|received|cancel|shipping_label`),
+// and it is present on every record, including the ones Amphora creates in
+// their own UI (all seven stranded returns on 2026-08-05 carried
+// `external_id: null` and matched by id alone).
+//
+// `external_id` (our Shopify order id, set by POST /returns) is NOT a second
+// key. It is a statement that we created the record, kept as data for callers
+// (`viaExternalId`), and it must agree with the id. When it does not, or when
+// one listing holds two records under one id, nothing here chooses between
+// them: the order is refused and the conflict reported, so a human looks. The
+// tie-breakers that used to live here (carrier presence, creation time,
+// first-seen) resolved a state the source of truth does not produce, and
+// guessed when it did.
 //
 // Deciding ownership is NOT this module's job: an id match only says which
 // order a return refers to. The caller still has to check the order is ours and
@@ -16,12 +24,7 @@ import { orderIdFromWebhook } from "@/lib/amphoraWebhook";
 
 export type MatchableReturn = {
   id?: string | null;
-  name?: string | null;
   external_id?: string | null;
-  time?: string | null;
-  /** Read only to break the tie below — a carrier is proof Amphora is actually
-   *  working that record. */
-  carrier?: string | null;
 };
 
 export type ReturnMatch<T> = {
@@ -31,84 +34,106 @@ export type ReturnMatch<T> = {
   viaExternalId: boolean;
 };
 
-/** Sortable creation time. A missing stamp sorts oldest so a dated return
- *  always beats an undated one. */
-function createdAt(ret: MatchableReturn): number {
-  const stamp = ret.time;
-  if (!stamp) return -Infinity;
-  // Amphora sends both bare local stamps and offset-aware ones; read a bare one
-  // as UTC so this behaves the same on a laptop and in a Vercel function.
-  const iso = /[Z+]|-\d{2}:\d{2}$/.test(stamp) ? stamp : `${stamp}Z`;
-  const ms = new Date(iso).getTime();
-  return Number.isFinite(ms) ? ms : -Infinity;
-}
+export type MatchConflict = {
+  kind: "external-id-mismatch" | "duplicate-id";
+  /** The Amphora return id the conflict is about, as Amphora sent it. */
+  amphoraReturnId: string;
+  detail: string;
+};
 
-/** Has Amphora put a courier on this record? */
-function hasCarrier(ret: MatchableReturn): boolean {
-  return Boolean(ret.carrier?.trim());
-}
+export type MatchResult<T> = {
+  matches: ReturnMatch<T>[];
+  conflicts: MatchConflict[];
+};
 
 /**
- * One match per order, so a re-created return and the record it replaced can
- * never both be applied in the same sweep.
+ * One match per Amphora return id, or none and a conflict.
  *
- * A return we created normally wins — its `external_id` is a direct statement of
- * ownership, where a recovered id is an inference. Between two inferred ones,
- * the newest wins, because that is the one Amphora is actually working.
- *
- * The ONE exception: our record has no carrier and a same-order orphan does. On
- * 2026-08-05 Amphora fixed the seven stranded returns by DELETING ours and
- * re-creating theirs, so precedence never came up. If they re-create without
- * deleting, an unconditional `external_id` win hands the sweep our dead
- * carrier-less record, `applyReturnStatus` sees an unchanged status, no-ops, and
- * the customer is never told a courier was assigned — the original ten-day
- * incident, reproduced by the fix meant to prevent it. A carrier is the one
- * signal that says which of the two records Amphora is really working.
+ * - The order id is the one inside `id`. A record whose `id` names no order is
+ *   dropped, unless it carries an `external_id` — then we created it and cannot
+ *   place it, which is reported.
+ * - `external_id`, when present, must equal that order id; otherwise the record
+ *   is skipped and reported.
+ * - Two records under the same id: the order is skipped entirely and reported.
  */
 export function matchReturnsToOrderIds<T extends MatchableReturn>(
   returns: T[]
-): ReturnMatch<T>[] {
-  const best = new Map<string, ReturnMatch<T>>();
+): MatchResult<T> {
+  const byOrderId = new Map<string, T[]>();
+  const conflicts: MatchConflict[] = [];
 
   for (const ret of returns) {
-    const external = ret.external_id?.trim();
-    const orderId = external || orderIdFromWebhook(ret);
-    if (!orderId) continue;
+    const orderId = orderIdFromWebhook(ret);
+    const external = ret.external_id?.trim() || null;
 
-    const candidate: ReturnMatch<T> = {
-      orderId,
-      ret,
-      viaExternalId: Boolean(external),
-    };
-    const held = best.get(orderId);
-
-    if (!held) {
-      best.set(orderId, candidate);
-      continue;
-    }
-    // Two of ours: first seen wins, as before.
-    if (held.viaExternalId && candidate.viaExternalId) continue;
-
-    if (held.viaExternalId) {
-      // Held is ours, candidate is an orphan. Ours wins unless it is the dead
-      // carrier-less record and the orphan is the one carrying a courier.
-      if (!hasCarrier(held.ret) && hasCarrier(ret)) best.set(orderId, candidate);
+    if (!orderId) {
+      if (external) {
+        conflicts.push({
+          kind: "external-id-mismatch",
+          amphoraReturnId: ret.id?.trim() || `(no id, external_id ${external})`,
+          detail: `external_id ${external} on a return whose id names no order`,
+        });
+      }
       continue;
     }
 
-    if (candidate.viaExternalId) {
-      // Same rule, reached from the other direction: keep the orphan only when
-      // it has a carrier and ours does not.
-      if (hasCarrier(ret) || !hasCarrier(held.ret)) best.set(orderId, candidate);
-      continue;
-    }
-
-    // Two orphans: newest wins — that is the one Amphora is working.
-    if (createdAt(ret) > createdAt(held.ret)) best.set(orderId, candidate);
+    const group = byOrderId.get(orderId);
+    if (group) group.push(ret);
+    else byOrderId.set(orderId, [ret]);
   }
 
+  const matches: ReturnMatch<T>[] = [];
   // Array.from, not a spread: this tsconfig sets no `target`, so tsc defaults to
   // ES5 and refuses to iterate a Map iterator. `next build` catches it; vitest
   // does not — which is how this reached main and failed two prod deploys.
-  return Array.from(best.values());
+  for (const [orderId, group] of Array.from(byOrderId.entries())) {
+    const amphoraReturnId = `SHP ${orderId}`;
+
+    if (group.length > 1) {
+      conflicts.push({
+        kind: "duplicate-id",
+        amphoraReturnId,
+        detail: `${group.length} records under one return id (external_id: ${group
+          .map((r) => r.external_id?.trim() || "null")
+          .join(", ")})`,
+      });
+      continue;
+    }
+
+    const ret = group[0];
+    const external = ret.external_id?.trim() || null;
+    if (external && external !== orderId) {
+      conflicts.push({
+        kind: "external-id-mismatch",
+        amphoraReturnId,
+        detail: `external_id ${external} does not match the order id ${orderId} in the return id`,
+      });
+      continue;
+    }
+
+    matches.push({ orderId, ret, viaExternalId: Boolean(external) });
+  }
+
+  return { matches, conflicts };
+}
+
+/** The ops alert for one conflict. The dedupe key is the Amphora return id, so
+ *  a conflict that persists across runs is reported once, not every 15 min. */
+export function matchConflictAlert(conflict: MatchConflict): {
+  dedupeKey: string;
+  subject: string;
+  body: string;
+} {
+  return {
+    dedupeKey: `match-conflict:${conflict.amphoraReturnId}`,
+    subject: `[returns] AMPHORA RETURN NOT MATCHED — ${conflict.amphoraReturnId}`,
+    body: [
+      `Amphora return ${conflict.amphoraReturnId} could not be tied to one order (${conflict.kind}):`,
+      `${conflict.detail}.`,
+      ``,
+      `Until this is fixed, neither the status sync nor auto-approve will act on`,
+      `this order: no customer notification, no settlement. Check the record in the`,
+      `Amphora UI and ask Amphora to correct it.`,
+    ].join("\n"),
+  };
 }

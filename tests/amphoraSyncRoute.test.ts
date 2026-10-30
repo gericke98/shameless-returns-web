@@ -20,6 +20,7 @@ vi.mock("react", async (importOriginal) => {
 
 const OURS = {
   id: "SHP 13192219558214",
+  order_id: "SHP 13192219558214",
   name: "#310957",
   external_id: "13192219558214",
   internal_status: "APROVED",
@@ -32,6 +33,7 @@ const OURS = {
 // behind when they re-create a return in their own UI (2026-08-05, all seven).
 const RECREATED = {
   id: "SHP 13161916465478",
+  order_id: "SHP 13161916465478",
   name: "#310761",
   external_id: null,
   internal_status: "APROVED",
@@ -48,6 +50,7 @@ const RECREATED = {
 // PQAZXT9800004100128221Y, theirs says CEX).
 const THEIRS = {
   id: "SHP 13181092561222",
+  order_id: "SHP 13181092561222",
   name: "#310889",
   external_id: null,
   internal_status: "RECEIVED",
@@ -60,6 +63,7 @@ const THEIRS = {
 // An orphan for an order that never went through our portal at all.
 const UNKNOWN = {
   id: "SHP 99999999999999",
+  order_id: "SHP 99999999999999",
   name: "#309000",
   external_id: null,
   internal_status: "APROVED",
@@ -77,6 +81,7 @@ const UNKNOWN = {
 // never managed, months late. Real shape: order #310500, France.
 const LOOKED_UP_ONLY = {
   id: "SHP 13150000000000",
+  order_id: "SHP 13150000000000",
   name: "#310500",
   external_id: null,
   internal_status: "RECEIVED",
@@ -93,6 +98,7 @@ const LOOKED_UP_ONLY = {
 // box to Amphora.
 const OURS_BUT_SPANISH = {
   id: "SHP 13188888888888",
+  order_id: "SHP 13188888888888",
   name: "#310901",
   external_id: "13188888888888",
   internal_status: "APROVED",
@@ -111,6 +117,7 @@ const OURS_BUT_SPANISH = {
 // under-matched.
 const EMPTY_COUNTRY = {
   id: "SHP 13175555555555",
+  order_id: "SHP 13175555555555",
   name: "#310800",
   external_id: null,
   internal_status: "APROVED",
@@ -562,7 +569,12 @@ describe("amphora-sync cron — identity is the Amphora return id", () => {
     // whose id found nothing was looked up again by `ret.name`; a display name
     // is not identity, so now nothing is applied.
     state.returns = [
-      { ...OURS, id: "SHP 13100000000001", external_id: "13100000000001" },
+      {
+        ...OURS,
+        id: "RET 179000000000000001",
+        order_id: "SHP 13100000000001",
+        external_id: "13100000000001",
+      },
     ];
 
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
@@ -571,7 +583,7 @@ describe("amphora-sync cron — identity is the Amphora return id", () => {
     expect(body.skipped).toBe(1);
     // We booked it (external_id) and lost its order: that is reported.
     expect(queued).toEqual([
-      expect.objectContaining({ dedupeKey: "match-no-order:SHP 13100000000001" }),
+      expect.objectContaining({ dedupeKey: "match-no-order:RET 179000000000000001" }),
     ]);
   });
 
@@ -584,8 +596,27 @@ describe("amphora-sync cron — identity is the Amphora return id", () => {
     expect(queued).toEqual([]);
   });
 
-  it("refuses an order with two records under one return id and queues ONE alert", async () => {
-    state.returns = [OURS, { ...OURS, external_id: null, carrier: "UPS" }, RECREATED];
+  it("applies OUR `RET` record, not the PENDING `SHP` shadow Amphora keeps beside it", async () => {
+    // Live shape since ~2026-08-26 (#312495): our API return is `RET <n>` with
+    // order_id `SHP <order>`, and a shadow `SHP <order>` with no external_id
+    // sits at PENDING. Syncing the shadow would report PENDING forever.
+    const ourRet = {
+      ...OURS,
+      id: "RET 179329022819682656",
+      internal_status: "APROVED",
+    };
+    const shadow = { ...OURS, external_id: null, internal_status: "PENDING", carrier: null };
+    state.returns = [shadow, ourRet];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(applied).toEqual([{ order: "#310957", name: "#310957" }]);
+    expect(body.conflicts).toBe(0);
+    expect(queued).toEqual([]);
+  });
+
+  it("refuses an order with two records we created and queues ONE alert", async () => {
+    state.returns = [OURS, { ...OURS, id: "RET 179000000000000002" }, RECREATED];
 
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
@@ -604,6 +635,16 @@ describe("amphora-sync cron — identity is the Amphora return id", () => {
     expect(applied).toHaveLength(0);
     expect(body.conflicts).toBe(1);
     expect(queued[0].dedupeKey).toBe("match-conflict:SHP 13192219558214");
+  });
+
+  it("does not report an ambiguous order that is not ours", async () => {
+    // Live: two Amphora-created records for orders we never managed.
+    state.returns = [UNKNOWN, { ...UNKNOWN, id: "RET 178092210560023488" }];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(body.conflicts).toBe(1);
+    expect(queued).toEqual([]);
   });
 
   it("queues nothing on a clean listing", async () => {

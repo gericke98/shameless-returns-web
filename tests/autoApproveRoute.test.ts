@@ -89,7 +89,7 @@ function order(id: string, variantIds: string[]) {
 }
 function amphoraReturn(orderId: string, skus: string[], over: any = {}) {
   return {
-    id: `SHP ${orderId}`, name: `#${orderId}`, external_id: orderId,
+    id: `SHP ${orderId}`, order_id: `SHP ${orderId}`, name: `#${orderId}`, external_id: orderId,
     internal_status: "RECEIVED", time_received: RECEIVED_LONG_AGO,
     items: skus.map((sku) => ({ sku, quantity: "1", quantity_received: "1" })),
     ...over,
@@ -454,14 +454,11 @@ describe("auto-approve cron — a refused payout is not a quiet one", () => {
   });
 });
 
-describe("auto-approve cron — a conflicted Amphora record never settles", () => {
-  it("holds an order whose return id has two records, and queues the conflict", async () => {
-    // A duplicate under one id used to be resolved by tie-breakers, so the gate
-    // could count a record Amphora was not working. Now the matcher refuses it
-    // and the gate sees no record at all.
+describe("auto-approve cron — which Amphora record the gate reads", () => {
+  it("holds an order with two records we created, and queues the conflict", async () => {
     state.returns = [
       amphoraReturn("1001", ["SKU1"]),
-      amphoraReturn("1001", ["SKU1"], { external_id: null }),
+      amphoraReturn("1001", ["SKU1"], { id: "RET 179000000000000001" }),
     ];
 
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
@@ -470,5 +467,19 @@ describe("auto-approve cron — a conflicted Amphora record never settles", () =
     expect(body.held).toContainEqual({ order: "#1001", reason: "no-amphora-record" });
     expect(body.conflicts).toBe(1);
     expect(queued[0].dedupeKey).toBe("match-conflict:SHP 1001");
+  });
+
+  it("reads OUR record, not the PENDING shadow beside it (#311886's shape)", async () => {
+    // With the shadow picked, the gate would hold on PENDING forever and never
+    // see the warehouse count at all.
+    state.returns = [
+      amphoraReturn("1001", ["SKU1"], { id: "SHP 1001", external_id: null, internal_status: "PENDING" }),
+      amphoraReturn("1001", ["SKU1"], { id: "RET 179000000000000001" }),
+    ];
+
+    const body = await (await call({ authorization: "Bearer s3cret" })).json();
+
+    expect(settled).toEqual(["v1"]);
+    expect(body.conflicts).toBe(0);
   });
 });

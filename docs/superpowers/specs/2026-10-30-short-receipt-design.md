@@ -169,3 +169,24 @@ alerts, unproven uniqueness claim). Each fix below names the finding it closes.
 
 Build order: Phase 0 (matcher + no name fallback + `ops_alerts` outbox), then Phase 1.
 Next review: ONE Codex code review per phase, against this spec.
+
+## v4: matcher after live evidence (Santi chose A, 29 Oct 2026). SUPERSEDES the Phase 0 matcher above
+
+A read-only probe of the live `GET /returns` (292 records) disproved the Phase 0 premise. Since
+~2026-08-26, returns we create through the API get ids `RET <n>`, and each record carries an
+explicit `order_id: "SHP <shopify order id>"`. Every such order ALSO has a `SHP <order id>` shadow
+(`external_id: null`, PENDING) from Amphora's Shopify channel. Keying on the SHP-shaped id picked
+the shadow (it would have synced #312495 as PENDING and held #311886 forever).
+
+**Matcher, as built:** order link = Amphora's `order_id` field (never the return id's shape);
+`amphoraReturnId` = the chosen record's own `id`. Per order: exactly one record whose
+`external_id` equals the order id → that one, shadows ignored; two or more of ours → refused;
+none of ours and exactly one record → that one (the 2026-08-05 re-created case); none of ours and
+several → refused. `external_id` disagreeing with `order_id` → refused. Conflicts carry
+`orderId` and `createdByUs`; callers report those involving our records always, and Amphora-only
+ones only for orders they manage. Phase 1 cases are keyed on the chosen record's id (e.g. `RET …`).
+
+**Live dry run (read-only, 29 Oct):** 268 of 292 records matched (4 via RET); 1 short receipt
+(#311208, `20250501` declared 1 received 0); #311886's 0-received SKU was never a confirmed line,
+so it is correctly not a case. Conflicts: the manual `CHN …` record for #310828 (ours, reported
+once) and 2 Amphora-only orders we do not manage (not reported).

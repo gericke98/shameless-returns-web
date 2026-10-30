@@ -158,7 +158,7 @@ async function main() {
   // not silently missing from the sections below.
   const { matches: matched, conflicts } = matchReturnsToOrderIds(all);
   for (const c of conflicts) {
-    console.log(`⚠️  ${c.amphoraReturnId} not matched (${c.kind}): ${c.detail}`);
+    console.log(`⚠️  ${c.amphoraId} not matched (${c.kind}): ${c.detail}`);
   }
   const orders = await ordersById(matched.map((m) => m.orderId));
 

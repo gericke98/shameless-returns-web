@@ -1,145 +1,144 @@
 import { describe, expect, it } from "vitest";
 import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 
-// Amphora's return id is `SHP <shopify order id>`, which is also our
-// `orders.id`. It is the only key: `external_id` is data that must agree with
-// it, and anything ambiguous is refused and reported, never chosen between.
+// The order link is Amphora's explicit `order_id` (`SHP <shopify order id>`),
+// never the shape of the return id: API-created returns are `RET <n>`. Our
+// `external_id` marks the record we created. Anything ambiguous is refused and
+// reported, never chosen between.
 
-const withExternal = {
-  id: "SHP 13192219558214",
-  name: "#310957",
-  external_id: "13192219558214",
-};
+const ORDER = "13192219558214";
 
-const orphan = {
-  id: "SHP 13161916465478",
-  name: "#310761",
-  external_id: null,
+// Live shape since ~2026-08-26 (#311523, #311886, #312495).
+const ours = { id: "RET 178773180631412224", order_id: `SHP ${ORDER}`, external_id: ORDER };
+const shadow = { id: `SHP ${ORDER}`, order_id: `SHP ${ORDER}`, external_id: null };
+// Pre-RET shape, and Amphora re-creating a return in their UI (2026-08-05).
+const oursLegacy = { id: `SHP ${ORDER}`, order_id: `SHP ${ORDER}`, external_id: ORDER };
+const recreated = {
+  id: "SHP 13161916465478", order_id: "SHP 13161916465478", external_id: null,
 };
 
 describe("matchReturnsToOrderIds", () => {
-  it("matches a return we created by the order id inside its return id", () => {
-    const { matches, conflicts } = matchReturnsToOrderIds([withExternal]);
+  it("matches our RET record by order_id and carries its own id", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([ours]);
 
     expect(matches).toEqual([
-      {
-        amphoraReturnId: "SHP 13192219558214",
-        orderId: "13192219558214",
-        ret: withExternal,
-        viaExternalId: true,
-      },
+      { amphoraReturnId: "RET 178773180631412224", orderId: ORDER, ret: ours, viaExternalId: true },
     ]);
     expect(conflicts).toEqual([]);
   });
 
-  it("matches an Amphora-created return (no external_id) by its return id alone", () => {
-    // The 2026-08-05 case: Amphora deleted our record and re-created it in
-    // their UI. One record under the id, external_id null, still matched.
-    const { matches, conflicts } = matchReturnsToOrderIds([orphan]);
-
-    expect(matches).toEqual([
-      {
-        amphoraReturnId: "SHP 13161916465478",
-        orderId: "13161916465478",
-        ret: orphan,
-        viaExternalId: false,
-      },
-    ]);
-    expect(conflicts).toEqual([]);
-  });
-
-  it("matches one record per id across a listing of several orders", () => {
-    const { matches } = matchReturnsToOrderIds([withExternal, orphan]);
-
-    expect(matches.map((m) => m.orderId).sort()).toEqual([
-      "13161916465478",
-      "13192219558214",
-    ]);
-  });
-
-  it("silently drops a return whose id names no order and that we did not create", () => {
-    const { matches, conflicts } = matchReturnsToOrderIds([
-      { id: "MNL 999", name: "#310000", external_id: null },
-    ]);
-
-    expect(matches).toEqual([]);
-    expect(conflicts).toEqual([]);
-  });
-
-  it("refuses and reports a record whose external_id disagrees with its id", () => {
-    const bad = { ...withExternal, external_id: "13100000000000" };
-
-    const { matches, conflicts } = matchReturnsToOrderIds([bad]);
-
-    expect(matches).toEqual([]);
-    expect(conflicts).toEqual([
-      expect.objectContaining({
-        kind: "external-id-mismatch",
-        amphoraReturnId: "SHP 13192219558214",
-      }),
-    ]);
-  });
-
-  it("refuses and reports a record we created whose id names no order", () => {
-    const { matches, conflicts } = matchReturnsToOrderIds([
-      { id: "MNL 999", external_id: "13192219558214" },
-    ]);
-
-    expect(matches).toEqual([]);
-    expect(conflicts).toEqual([
-      expect.objectContaining({ kind: "external-id-mismatch", amphoraReturnId: "MNL 999" }),
-    ]);
-  });
-
-  it("refuses the whole order when two records share one return id, whichever is ours", () => {
-    // Before: carrier presence, creation time and first-seen decided which one
-    // to sync. Now nobody chooses; a human looks.
-    const ours = { ...withExternal, carrier: null };
-    const theirs = { ...orphan, id: withExternal.id, carrier: "UPS" };
-
-    for (const listing of [[ours, theirs], [theirs, ours]]) {
+  it("picks ours over the PENDING shadow, whichever comes first, and reports nothing", () => {
+    for (const listing of [[shadow, ours], [ours, shadow]]) {
       const { matches, conflicts } = matchReturnsToOrderIds(listing);
 
-      expect(matches).toEqual([]);
-      expect(conflicts).toEqual([
-        expect.objectContaining({ kind: "duplicate-id", amphoraReturnId: "SHP 13192219558214" }),
-      ]);
+      expect(matches.map((m) => m.ret)).toEqual([ours]);
+      expect(conflicts).toEqual([]);
     }
   });
 
-  it("refusing one order leaves the rest of the listing matched", () => {
-    const dupA = { ...withExternal };
-    const dupB = { ...withExternal, external_id: null };
+  it("still matches the legacy shape, where the return id is the SHP order id", () => {
+    const { matches } = matchReturnsToOrderIds([oursLegacy]);
 
-    const { matches, conflicts } = matchReturnsToOrderIds([dupA, orphan, dupB]);
+    expect(matches[0]).toMatchObject({ amphoraReturnId: `SHP ${ORDER}`, viaExternalId: true });
+  });
+
+  it("matches a lone Amphora-created record (no external_id) for its order", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([recreated]);
+
+    expect(matches).toEqual([
+      { amphoraReturnId: "SHP 13161916465478", orderId: "13161916465478", ret: recreated, viaExternalId: false },
+    ]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it("never reads the order from the return id: no order_id, no match", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([{ id: `SHP ${ORDER}`, external_id: null }]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it("silently drops a record that names no Shopify order and that we did not create", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([
+      { id: "MNL 178172167721430432", order_id: "MNL 178172167721430432", external_id: null },
+    ]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([]);
+  });
+
+  it("refuses and reports a record whose external_id disagrees with its order_id", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([{ ...ours, external_id: "13100000000000" }]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({ kind: "external-id-mismatch", amphoraId: "RET 178773180631412224" }),
+    ]);
+  });
+
+  it("refuses and reports a record we created that names no Shopify order (live: CHN manual)", () => {
+    const manual = {
+      id: "CHN 178705653566492416", order_id: "CHN 178705653566492416",
+      external_id: "manual-310828-blue-xl-2026-09-14",
+    };
+
+    const { matches, conflicts } = matchReturnsToOrderIds([manual]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({ kind: "external-id-mismatch", amphoraId: "CHN 178705653566492416" }),
+    ]);
+  });
+
+  it("refuses an order with two records we created", () => {
+    const second = { ...ours, id: "RET 179000000000000002" };
+
+    const { matches, conflicts } = matchReturnsToOrderIds([ours, shadow, second]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({ kind: "ambiguous-order", amphoraId: `SHP ${ORDER}`, createdByUs: true }),
+    ]);
+  });
+
+  it("refuses an order with several records and none of ours — no tie-break on carrier or time", () => {
+    const other = { ...shadow, id: "RET 179000000000000003" };
+
+    const { matches, conflicts } = matchReturnsToOrderIds([shadow, other]);
+
+    expect(matches).toEqual([]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({ kind: "ambiguous-order", orderId: ORDER, createdByUs: false }),
+    ]);
+  });
+
+  it("refusing one order leaves the rest of the listing matched", () => {
+    const { matches, conflicts } = matchReturnsToOrderIds([
+      ours, { ...ours, id: "RET 2" }, recreated,
+    ]);
 
     expect(matches.map((m) => m.orderId)).toEqual(["13161916465478"]);
     expect(conflicts).toHaveLength(1);
   });
 
-  it("treats whitespace around the id and external_id as the same id", () => {
+  it("treats whitespace around order_id and external_id as the same value", () => {
     const { matches, conflicts } = matchReturnsToOrderIds([
-      { id: " SHP 13192219558214 ", external_id: " 13192219558214 " },
+      { id: " RET 1 ", order_id: ` SHP ${ORDER} `, external_id: ` ${ORDER} ` },
     ]);
 
     expect(conflicts).toEqual([]);
-    expect(matches[0].orderId).toBe("13192219558214");
-    expect(matches[0].viaExternalId).toBe(true);
+    expect(matches[0]).toMatchObject({ amphoraReturnId: "RET 1", orderId: ORDER, viaExternalId: true });
   });
 });
 
 describe("matchConflictAlert", () => {
-  it("keys the alert on the Amphora return id, so a persisting conflict is one email", () => {
-    const conflict = {
-      kind: "duplicate-id" as const,
-      amphoraReturnId: "SHP 13192219558214",
-      detail: "2 records under one return id",
-    };
+  it("keys the alert on the Amphora id, so a persisting conflict is one email", () => {
+    const alert = matchConflictAlert({
+      kind: "ambiguous-order", amphoraId: `SHP ${ORDER}`, orderId: ORDER, createdByUs: true, detail: "2 records we created",
+    });
 
-    const alert = matchConflictAlert(conflict);
-
-    expect(alert.dedupeKey).toBe("match-conflict:SHP 13192219558214");
-    expect(alert.subject).toContain("SHP 13192219558214");
-    expect(alert.body).toContain("2 records under one return id");
+    expect(alert.dedupeKey).toBe(`match-conflict:SHP ${ORDER}`);
+    expect(alert.subject).toContain(`SHP ${ORDER}`);
+    expect(alert.body).toContain("2 records we created");
   });
 });

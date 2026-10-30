@@ -29,7 +29,8 @@ const order = (over: { refunded?: boolean[] } = {}) => ({
   ],
 });
 const amphora = (received: { a: string; b: string }, over: Record<string, unknown> = {}) => ({
-  id: `SHP ${ORDER_ID}`,
+  id: `RET 179000000000000001`,
+  order_id: `SHP ${ORDER_ID}`,
   external_id: ORDER_ID,
   name: "#312246",
   internal_status: "RECEIVED",
@@ -102,7 +103,7 @@ describe("receipt-shortfall sweep", () => {
     const rows = await cases();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      amphora_return_id: `SHP ${ORDER_ID}`, sku: "20240800", declared_qty: 1, received_qty: 0,
+      amphora_return_id: "RET 179000000000000001", sku: "20240800", declared_qty: 1, received_qty: 0,
       shopify_return_ids: ["gid://shopify/Return/1"],
     });
     expect(sent).toEqual(["[returns] SHORT RECEIPT — #312246 (20240800)"]);
@@ -230,10 +231,21 @@ describe("receipt-shortfall sweep", () => {
   });
 
   it("never opens a case for a conflicted Amphora record", async () => {
-    world.returns = [amphora({ a: "0", b: "1" }), amphora({ a: "0", b: "1" }, { external_id: null })];
+    world.returns = [amphora({ a: "0", b: "1" }), amphora({ a: "0", b: "1" }, { id: "RET 2" })];
 
     await sweep();
 
     expect(await cases()).toEqual([]);
+  });
+
+  it("counts from OUR record, not the PENDING SHP shadow (the #311886 miss)", async () => {
+    const shadow = amphora({ a: "0", b: "0" }, {
+      id: `SHP ${ORDER_ID}`, external_id: null, internal_status: "PENDING", time_processed: null,
+    });
+    world.returns = [shadow, amphora({ a: "0", b: "1" })];
+
+    await sweep();
+
+    expect((await cases()).map((r: any) => r.amphora_return_id)).toEqual(["RET 179000000000000001"]);
   });
 });

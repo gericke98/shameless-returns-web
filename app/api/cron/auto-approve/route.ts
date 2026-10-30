@@ -91,9 +91,16 @@ export async function GET(req: Request) {
   // A conflicted Amphora record is refused by the matcher, so its order finds no
   // record here and is held. The alert is queued; /api/cron/ops-alerts delivers it.
   const { matches, conflicts } = matchReturnsToOrderIds(returns);
-  const { failed: alertsNotQueued } = await enqueueOpsAlerts(conflicts.map(matchConflictAlert));
   const amphoraByOrderId = new Map(matches.map((m) => [m.orderId, m.ret]));
   const orders = await getOrdersWithUnsettledReturns();
+  // Report what is ours: any conflict involving a record we created, and one
+  // among Amphora's own records only when this run would otherwise settle it.
+  const owedIds = new Set(orders.map((o: any) => String(o.id)));
+  const { failed: alertsNotQueued } = await enqueueOpsAlerts(
+    conflicts
+      .filter((c) => c.createdByUs || (c.orderId !== null && owedIds.has(c.orderId)))
+      .map(matchConflictAlert)
+  );
 
   // One batched Shopify read for the whole run, not one per order.
   const allReturnIds = orders.flatMap((o: any) =>

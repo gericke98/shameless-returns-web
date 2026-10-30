@@ -66,6 +66,9 @@ export type AmphoraLineItem = { sku: string; quantity: number };
 
 export type AmphoraReturn = {
   id: string;
+  /** Amphora's order reference, `SHP <shopify order id>`: the order link. The
+   *  return `id` is NOT one (API-created returns are `RET <n>`). */
+  order_id?: string | null;
   external_id: string | null;
   internal_status: string;
   name: string | null;

@@ -59,6 +59,31 @@ function hasConfirmedReturn(order: { products?: Array<{ confirmed?: boolean | nu
   return (order.products ?? []).some((p) => p.confirmed === true);
 }
 
+/**
+ * The conflicts worth a human: any involving a record we created, and one
+ * among Amphora's own records only when the order is ours — in our table with
+ * a confirmed line. Amphora's own records for orders we never managed conflict
+ * too, and are none of our business. If ownership cannot be read, report.
+ */
+async function conflictsOnOurOrders(
+  conflicts: ReturnType<typeof matchReturnsToOrderIds>["conflicts"]
+) {
+  const ours = [];
+  for (const conflict of conflicts) {
+    if (conflict.createdByUs || !conflict.orderId) {
+      ours.push(conflict);
+      continue;
+    }
+    try {
+      const order = await getOrderByIdFresh(conflict.orderId);
+      if (order && hasConfirmedReturn(order)) ours.push(conflict);
+    } catch {
+      ours.push(conflict);
+    }
+  }
+  return ours;
+}
+
 export async function GET(req: Request) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -81,7 +106,7 @@ export async function GET(req: Request) {
   // The dedupe key is the Amphora return id, so a conflict that persists is
   // one email, and a failed enqueue is retried by the next run.
   const { matches, conflicts } = matchReturnsToOrderIds(returns);
-  const alertsToQueue = conflicts.map(matchConflictAlert);
+  const alertsToQueue = (await conflictsOnOurOrders(conflicts)).map(matchConflictAlert);
 
   const changed: Array<Record<string, unknown>> = [];
   // Carries the order's lane alongside the return, because the stranded check

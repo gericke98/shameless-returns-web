@@ -5,10 +5,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
-const ORIGINALS: Record<string, any> = {};
-vi.mock("@/db/queries", () => ({
-  getOrderByNumberFresh: async (n: string) => ORIGINALS[n],
-}));
+vi.mock("@/db/queries", () => ({}));
 vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [] }));
 let FUNDING: any = { kind: "not-settlement" };
 vi.mock("@/db/replacementLines", async (importOriginal) => ({
@@ -30,15 +27,6 @@ const replacement = (tags: string) => ({
 beforeEach(() => {
   alerts.length = 0;
   FUNDING = { kind: "not-settlement" };
-  for (const k of Object.keys(ORIGINALS)) delete ORIGINALS[k];
-  ORIGINALS["#311749"] = {
-    id: "13282550841670",
-    products: [{
-      variant_id: "54623384437062", productId: "14958568177990",
-      new_variant_id: "gid://shopify/ProductVariant/54623384404294",
-      action: "CAMBIO", confirmed: true, price: "47.03",
-    }],
-  };
 });
 
 async function plan(order: any) {
@@ -52,34 +40,28 @@ describe("planReplacementOrder", () => {
     expect(alerts).toHaveLength(0);
   });
 
-  it("links a replacement to its original and prices from the paid row", async () => {
-    await expect(plan(replacement("Change, Order #311749"))).resolves.toEqual({
-      kind: "replacement",
-      exchangeOf: "13282550841670",
-      priceByLineItem: { "35000000000001": "47.03" },
-    });
-  });
-
-  it("refuses and alerts when the original is not in our DB", async () => {
-    const out = await plan(replacement("Change, Order #999999"));
-    expect(out).toEqual({ kind: "refused", reason: "original-not-found:#999999" });
-    expect(alerts).toHaveLength(1);
-  });
-
-  it("refuses and alerts when a line cannot be matched", async () => {
-    ORIGINALS["#311749"].products[0].new_variant_id = "gid://shopify/ProductVariant/1";
-    const out = await plan(replacement("Change, Order #311749"));
-    expect(out.kind).toBe("refused");
-    expect(alerts).toHaveLength(1);
+  it("never prices from tags: a Change-tagged order settlement has no records for is ordinary (S3 R4)", async () => {
+    // Before S3 these tags + the original's CAMBIO row priced the line at
+    // 47.03. Now only replacement_lines can: the reconciliation records every
+    // pre-S2 exchange order it can identify, and anything else is not ours.
+    await expect(plan(replacement("Change, Order #311749"))).resolves.toEqual({ kind: "ordinary" });
+    expect(alerts).toHaveLength(0);
   });
 
   it("ignores zero-quantity lines like the lookup does", async () => {
-    const order = replacement("Change, Order #311749");
-    order.line_items.push({ variant_id: 1, product_id: 2, quantity: 0 });
+    FUNDING = {
+      kind: "funded",
+      funding: {
+        sourceOrderId: "13282550841670",
+        lineByLineItem: new Map([["gid://shopify/LineItem/35000000000001", { totalCents: 4703, quantity: 1 }]]),
+      },
+    };
+    const order = replacement("amphora_shipped");
+    order.line_items.push({ id: 2, variant_id: 1, product_id: 2, quantity: 0 });
     await expect(plan(order)).resolves.toMatchObject({ kind: "replacement" });
   });
 
-  describe("an exchange order settlement created (S2)", () => {
+  describe("an exchange order settlement recorded (S2, or the S3 reconciliation)", () => {
     const funded = (lines: Array<[string, number, number]>) => ({
       kind: "funded",
       funding: {

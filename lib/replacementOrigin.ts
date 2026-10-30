@@ -4,82 +4,13 @@
 // returned garment is worth and which order pays for it.
 //
 // Before S2, `createOrder` (db/queries.ts, now removed) gave every replacement
-// the tags `Change` and `Order #NNN`, a €0.01 `manual` payment, and LIST
-// prices. Orders created from S2 on carry their funding in `replacement_lines`
-// (db/replacementLines.ts); this tag reconstruction serves the older ones. So a line on a
-// replacement order says nothing true about money: its value is the price the
-// customer paid on the original order's exchange row, and a refund must go to
-// the order that holds the real payment. #312061 (replacement for #311749)
-// showed both: €62 list against €47.03 paid, refunded against €0.01.
-import { variantGid } from "@/lib/shopifyIds";
-
-// Field names as Drizzle returns `productsorder` rows (camelCase `productId`).
-export type OriginalRow = {
-  variant_id: string;
-  productId: string;
-  new_variant_id: string | null;
-  action: string | null;
-  confirmed: boolean | null;
-  price: string;
-};
-
-export type ReplacementLine = {
-  variant_id: string | number;
-  product_id: string | number;
-};
-
-const ORDER_TAG = /^Order (#\d+)$/;
-
-/** The original's order number, or null when this is not unambiguously ours. */
-export function originalOrderNumberFromTags(
-  tags: string | null | undefined
-): string | null {
-  const list = String(tags ?? "")
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
-  if (!list.includes("Change")) return null;
-  const numbers = list
-    .map((t) => ORDER_TAG.exec(t)?.[1])
-    .filter((n): n is string => !!n);
-  return numbers.length === 1 ? numbers[0] : null;
-}
-
-function exchangeRowsFor(originalRows: OriginalRow[], variantId: string) {
-  const target = variantGid(String(variantId));
-  // variantGid returns null for a non-numeric id, and null === null would
-  // match every row whose new_variant_id is equally malformed.
-  if (!target) return [];
-  return originalRows.filter(
-    (r) =>
-      r.action === "CAMBIO" &&
-      r.confirmed === true &&
-      !!r.new_variant_id &&
-      variantGid(r.new_variant_id) === target
-  );
-}
-
-/**
- * The paid price of every replacement line, or why it cannot be known.
- *
- * All-or-nothing: one unmatched line fails the whole order, because saving the
- * others at the right price and that one at list would still overpay.
- */
-export function planReplacementPricing(
-  lines: ReplacementLine[],
-  originalRows: OriginalRow[]
-): { ok: true; priceByVariant: Record<string, string> } | { ok: false; reason: string } {
-  if (lines.length === 0) return { ok: false, reason: "no-lines" };
-  const priceByVariant: Record<string, string> = {};
-  for (const line of lines) {
-    const bare = String(line.variant_id);
-    const matches = exchangeRowsFor(originalRows, bare);
-    if (matches.length === 0) return { ok: false, reason: `no-original-line:${bare}` };
-    if (matches.length > 1) return { ok: false, reason: `ambiguous-original-line:${bare}` };
-    priceByVariant[bare] = matches[0].price;
-  }
-  return { ok: true, priceByVariant };
-}
+// a €0.01 `manual` payment and LIST prices, so a line on a replacement order
+// says nothing true about money: a refund must go to the order that holds the
+// real payment. #312061 (replacement for #311749) showed it: €62 list against
+// €47.03 paid, refunded against €0.01. What each line IS worth lives in
+// `replacement_lines` (db/replacementLines.ts) — written by S2 for its own
+// orders and by the S3 reconciliation for the older ones. The tag
+// reconstruction that used to stand in for it is gone (S3 R4).
 
 /** Follow `exchange_of` links to the order that holds the real payment. */
 export async function resolveRootOrderId(

@@ -1,14 +1,9 @@
 // Server-only. Decides, at first portal lookup, whether an order is one of our
-// replacement orders and what its lines are really worth. The rules are pure
-// and live in lib/replacementOrigin.ts; this file only loads the original.
-import { getOrderByIdFresh, getOrderByNumberFresh, getOrderTransactions } from "@/db/queries";
+// replacement orders and what its lines are really worth — from the
+// settlement ledger's `replacement_lines` only (db/replacementLines.ts).
+import { getOrderByIdFresh, getOrderTransactions } from "@/db/queries";
 import { alertOps } from "@/actions/opsAlert";
-import {
-  originalOrderNumberFromTags,
-  planReplacementPricing,
-  resolveRootOrderId,
-  type OriginalRow,
-} from "@/lib/replacementOrigin";
+import { resolveRootOrderId } from "@/lib/replacementOrigin";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
 import { replacementFundingOf, unitPriceOf } from "@/db/replacementLines";
 import type { OrderData } from "@/types";
@@ -27,45 +22,27 @@ export type ReplacementPlan =
 export async function planReplacementOrder(order: OrderData): Promise<ReplacementPlan> {
   const live = order.line_items.filter((item) => item.quantity > 0);
 
-  // Created by settlement (S2), known by the operation id it carries as its
-  // source_identifier: valued from that operation's records, or not at all —
-  // never from tags (finding 5).
+  // Ours only if settlement recorded it: created by S2 (its sourceIdentifier
+  // names the exchange operation) or, from before S2, recorded by the legacy
+  // reconciliation (S3 R1). Valued from those records or not at all — never
+  // from tags or by matching variants (S3 R4). A line the records do not
+  // cover refuses rather than falls back.
   const found = await replacementFundingOf({ id: String(order.id), sourceIdentifier: order.source_identifier });
+  if (found.kind === "not-settlement") return { kind: "ordinary" };
   if (found.kind === "unfunded") {
     return refuseWith(order, found.sourceOrderId ?? "(unknown)", `settlement-order-unfunded:${found.reason}`);
   }
-  if (found.kind === "funded") {
-    const { funding } = found;
-    const priceByLineItem: Record<string, string> = {};
-    for (const item of live) {
-      const line = funding.lineByLineItem.get(`gid://shopify/LineItem/${item.id}`);
-      if (!line) return refuseWith(order, funding.sourceOrderId, `unfunded-line:${item.id}`);
-      if (line.quantity !== Number(item.quantity)) {
-        return refuseWith(order, funding.sourceOrderId, `funded-quantity:${item.id}`);
-      }
-      priceByLineItem[String(item.id)] = unitPriceOf(line);
-    }
-    return { kind: "replacement", exchangeOf: funding.sourceOrderId, priceByLineItem };
-  }
-
-  // Created before S2: reconstructed from the tags and the original's rows.
-  const originalNumber = originalOrderNumberFromTags(order.tags);
-  if (!originalNumber) return { kind: "ordinary" };
-  const refuse = (reason: string) => refuseWith(order, originalNumber, reason);
-
-  const original = await getOrderByNumberFresh(originalNumber);
-  if (!original) return refuse(`original-not-found:${originalNumber}`);
-
-  const lines = live.map((item) => ({ variant_id: item.variant_id, product_id: item.product_id }));
-  const plan = planReplacementPricing(
-    lines,
-    ((original as any).products ?? []) as OriginalRow[]
-  );
-  if (!plan.ok) return refuse(plan.reason);
-
+  const { funding } = found;
   const priceByLineItem: Record<string, string> = {};
-  for (const item of live) priceByLineItem[String(item.id)] = plan.priceByVariant[String(item.variant_id)];
-  return { kind: "replacement", exchangeOf: String(original.id), priceByLineItem };
+  for (const item of live) {
+    const line = funding.lineByLineItem.get(`gid://shopify/LineItem/${item.id}`);
+    if (!line) return refuseWith(order, funding.sourceOrderId, `unfunded-line:${item.id}`);
+    if (line.quantity !== Number(item.quantity)) {
+      return refuseWith(order, funding.sourceOrderId, `funded-quantity:${item.id}`);
+    }
+    priceByLineItem[String(item.id)] = unitPriceOf(line);
+  }
+  return { kind: "replacement", exchangeOf: funding.sourceOrderId, priceByLineItem };
 }
 
 async function refuseWith(order: OrderData, original: string, reason: string): Promise<ReplacementPlan> {

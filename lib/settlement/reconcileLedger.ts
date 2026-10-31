@@ -117,7 +117,8 @@ export function reconciliationRecord(
 ): ReconciliationRecord {
   const submissionId = newId();
   const ops: OpRow[] = [];
-  const replacementOrders: ReconciliationRecord["replacementOrders"] = [];
+  // Keyed by the exchange order's id: one order may replace several lines.
+  const replacementOrders = new Map<string, ReconciliationRecord["replacementOrders"][number]>();
   const replacementLines: ReconciliationRecord["replacementLines"] = [];
   const alerts: ReconciliationRecord["alerts"] = [];
   for (const { line, classification: c, customerGid } of lines) {
@@ -162,7 +163,7 @@ export function reconciliationRecord(
       });
       if (c.evidence.lane === "exchange") {
         const orderId = c.evidence.orderGid.replace(/^gid:\/\/shopify\/Order\//, "");
-        replacementOrders.push({ order_id: orderId, source_order_id: line.orderId });
+        replacementOrders.set(orderId, { order_id: orderId, source_order_id: line.orderId });
         const f = funding.get(line.productsorderId) ?? { ok: false as const, reason: "funding not read" };
         if (f.ok) {
           replacementLines.push({
@@ -219,7 +220,7 @@ export function reconciliationRecord(
       });
     }
   }
-  return { submissionId, ops, replacementOrders, replacementLines, alerts };
+  return { submissionId, ops, replacementOrders: Array.from(replacementOrders.values()), replacementLines, alerts };
 }
 
 /**

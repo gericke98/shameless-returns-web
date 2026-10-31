@@ -251,6 +251,25 @@ describe("R1 --write", () => {
     expect(funding).toMatchObject({ kind: "funded", funding: { sourceOrderId: "100" } });
     expect((funding as any).funding.lineByLineItem.get("gid://shopify/LineItem/9")).toEqual({ totalCents: 5000, quantity: 1 });
   });
+
+  it("two lines swapped into ONE exchange order: one replacement order, two replacement lines (#311524, 30 Oct)", async () => {
+    await seedRow(4, { action: "CAMBIO", newVariant: "42" });
+    await seedRow(5, { action: "CAMBIO", newVariant: "42" });
+    const second = exchangePaid(5);
+    second.evidence.lineItemId = "gid://shopify/LineItem/10";
+    const over = { action: "CAMBIO", newVariantId: "42" };
+    const funded = { ok: true, stripeFundedCents: 0, source: "stripe" };
+    const done = await write(
+      [{ id: 4, c: exchangePaid(4), over }, { id: 5, c: second, over }],
+      "CAMBIO",
+      new Map([[4, funded], [5, funded]])
+    );
+    expect(done).toMatchObject({ recorded: true });
+    expect(await q(`SELECT order_id, source_order_id FROM legacy_replacement_orders`)).toEqual([
+      { order_id: "500", source_order_id: "100" },
+    ]);
+    expect((await q(`SELECT source_productsorder_id FROM replacement_lines ORDER BY 1`)).map((r: any) => r.source_productsorder_id)).toEqual([4, 5]);
+  });
 });
 
 describe("a reconciliation record is never sent", () => {

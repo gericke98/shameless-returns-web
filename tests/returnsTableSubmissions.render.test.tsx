@@ -78,4 +78,14 @@ describe("ReturnsTable settlement actions", () => {
     expect(screen.queryAllByRole("button", { name: /Process the exchange/ })).toEqual([]);
     expect(screen.getAllByRole("button", { name: /^Refund Garment/ })).toHaveLength(2);
   });
+
+  it("shows a line's total, rounded once: 2 units stored at 15.505 are 31.01 €, never 15.505 or 31.02", async () => {
+    const { default: ReturnsTable } = await import("@/app/dashboard/components/ReturnsTable");
+    const r = row(1, "submission:A", "DEVOLUCIÓN");
+    r.product = { ...r.product, quantity: 2, price: "15.505" };
+    render(<ReturnsTable returns={[r] as any} />);
+    expect(screen.getByRole("columnheader", { name: "Line total" })).toBeTruthy();
+    expect(screen.getByText("31.01 €")).toBeTruthy();
+    expect(screen.queryByText(/15\.505/)).toBeNull();
+  });
 });

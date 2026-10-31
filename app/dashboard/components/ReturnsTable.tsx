@@ -2,6 +2,7 @@
 
 import { validateReturn } from "@/actions/refund";
 import { ACTIONS } from "@/placeholder";
+import { lineTotalCents } from "@/lib/basket";
 import { useEffect, useMemo, useState } from "react";
 import {
   ReturnTableProps,
@@ -253,7 +254,7 @@ const COLUMNS = [
   "Product",
   "Variant",
   "Qty",
-  "Price",
+  "Line total",
   "Action",
   "New Product",
   "New Variant",
@@ -360,7 +361,9 @@ function ProductRow({
         {product.quantity}
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-        {product.price} €
+        {/* price is the unrounded UNIT price (15.505 for €31.01 over 2): show
+            the line total, rounded once, as settlement values it. */}
+        {(lineTotalCents(product.price, product.quantity) / 100).toFixed(2)} €
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
         {product.action || "No action"}

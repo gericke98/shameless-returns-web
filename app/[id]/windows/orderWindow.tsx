@@ -5,8 +5,8 @@ import { ClientOrderWindowContentProps, Product } from "@/types";
 type OrderWindowProps = {
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
-  credito: boolean;
+  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
+  credito: boolean | null;
   allProducts: Product[];
 } & ClientOrderWindowContentProps & {
     onItemChange?: (updatedItem: any) => void;

@@ -8,6 +8,8 @@ import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
 import { useT } from "@/lib/i18n/context";
+import { useFeeLegs } from "./feesContext";
+import { calculatePrices } from "@/lib/portalPrices";
 
 export const ClientOrder = ({
   name,
@@ -18,7 +20,11 @@ export const ClientOrder = ({
   statusPanel,
 }: ClientOrderProps) => {
   const [position, setPosition] = useState<number>(1);
-  const [credito, setCredito] = useState<boolean>(true);
+  // No default (#312385): a pre-selected "store credit" paid customers in gift
+  // cards they never chose. Null until the customer picks on step 3; step 3's
+  // Continue stays hidden until then (see `needsTender`).
+  const [credito, setCredito] = useState<boolean | null>(null);
+  const legs = useFeeLegs();
   // Lowest common ancestor of ReturnMethodChoice (inside LastWindow) and
   // AsyncButton, which are siblings under this component. "CORREOS" matches
   // what AsyncButton effectively sent before self-booking existed.
@@ -30,6 +36,16 @@ export const ClientOrder = ({
   const hasSelectedItems = useMemo(
     () => items.some((item) => item.action),
     [items]
+  );
+  // Step 3 (the payout choice) exists only when money comes back to the
+  // customer: the same valuation OrderWindowContent uses to decide whether to
+  // render it, so this gate and the screen cannot disagree.
+  const needsTender = useMemo(
+    () =>
+      position === 3 &&
+      credito === null &&
+      calculatePrices(items, allProducts, legs).totalPrice > 0,
+    [position, credito, items, allProducts, legs]
   );
 
   // Parent callback to receive updated items from children
@@ -97,7 +113,7 @@ export const ClientOrder = ({
             ) : (
               <ContinueButton
                 position={position}
-                hasChanges={hasSelectedItems}
+                hasChanges={hasSelectedItems && !needsTender}
                 onClick={handleContinue}
                 isPending={isPending}
               />

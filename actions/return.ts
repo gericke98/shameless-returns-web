@@ -211,7 +211,7 @@ async function alertReturnWithoutLabel(id: string, detail: string) {
 
 export async function returnFunction(
   id: string,
-  isCredit: boolean,
+  isCredit: boolean | null,
   email: string,
   claimedMethod?: unknown
 ) {

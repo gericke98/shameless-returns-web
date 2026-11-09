@@ -22,10 +22,10 @@ type Props = {
   shipping: boolean;
   position: number;
   setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean>>;
+  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
-  credito: boolean;
+  credito: boolean | null;
   allProducts: Product[];
 };
 
@@ -171,7 +171,6 @@ const ThirdWindowBase = ({
   credito,
   allProducts,
 }: Props) => {
-  const [selected, setSelected] = useState<number>(0);
   const legs = useFeeLegs();
   const t = useT();
   const locale = useLocale();
@@ -222,21 +221,15 @@ const ThirdWindowBase = ({
       <div className="flex flex-col gap-3 w-full">
         <StoreCredit
           totalPrice={totalPrice}
-          isSelected={credito}
-          onClick={() => {
-            setSelected(0);
-            setCredito(true);
-          }}
+          isSelected={credito === true}
+          onClick={() => setCredito(true)}
           t={t}
           locale={locale}
         />
         <OriginalPayment
           totalPrice={totalPrice}
-          isSelected={!credito}
-          onClick={() => {
-            setSelected(1);
-            setCredito(false);
-          }}
+          isSelected={credito === false}
+          onClick={() => setCredito(false)}
           t={t}
           locale={locale}
         />

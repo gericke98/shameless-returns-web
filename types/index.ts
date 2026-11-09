@@ -344,8 +344,9 @@ export type ClientOrderWindowContentProps = {
   order: typeof orders.$inferSelect;
   id: string;
   setPosition: Dispatch<SetStateAction<number>>;
-  credito: boolean;
-  setCredito: Dispatch<SetStateAction<boolean>>;
+  /** The customer's payout choice. Null until they pick one: never defaulted. */
+  credito: boolean | null;
+  setCredito: Dispatch<SetStateAction<boolean | null>>;
   /**
    * The customer's claimed return lane, chosen on the summary screen
    * (ReturnMethodChoice, inside LastWindow) and consumed by AsyncButton — two
@@ -364,8 +365,8 @@ export type OrderWindowContentProps = {
   order: typeof orders.$inferSelect;
   id: string;
   setPosition: Dispatch<SetStateAction<number>>;
-  setCredito: Dispatch<SetStateAction<boolean>>;
-  credito: boolean;
+  setCredito: Dispatch<SetStateAction<boolean | null>>;
+  credito: boolean | null;
   allProducts: Product[];
   method: ReturnMethod;
   setMethod: Dispatch<SetStateAction<ReturnMethod>>;

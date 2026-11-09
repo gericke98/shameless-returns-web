@@ -30,7 +30,7 @@ export type Proposal = {
  * to send back, and agreeing terms for it would charge for a return that
  * cannot be made.
  */
-async function currentAgreement(orderId: string, isCredit: boolean, method: ReturnMethod) {
+async function currentAgreement(orderId: string, isCredit: boolean | null, method: ReturnMethod) {
   const loaded = await loadBasket(orderId);
   if (!loaded || !loaded.basket.hasItems) return null;
   const { order, basket } = loaded;
@@ -50,8 +50,14 @@ async function currentAgreement(orderId: string, isCredit: boolean, method: Retu
     outboundLegCents,
     feeCents,
     selfBooked: method === "SELF",
-    tender: isCredit ? "credit" : "refund",
+    tender: isCredit === true ? "credit" : "refund",
   });
+  // The payout is the customer's choice, never a default (#312385). When money
+  // comes back it must have been made explicitly; when nothing comes back
+  // (netCents <= 0) the tender moves no money and the portal shows no choice.
+  if (agreement.netCents > 0 && typeof isCredit !== "boolean") {
+    throw new Error(`Order ${orderId}: money is owed back but no payout was chosen`);
+  }
 
   const rowById = new Map<number, any>(
     (order.products ?? []).map((row: any) => [Number(row.id), row])
@@ -92,7 +98,7 @@ async function currentAgreement(orderId: string, isCredit: boolean, method: Retu
  */
 export async function proposeCurrentSelection(
   orderId: string,
-  isCredit: boolean,
+  isCredit: boolean | null,
   method: ReturnMethod
 ): Promise<Proposal | null> {
   const current = await currentAgreement(orderId, isCredit, method);

@@ -14,7 +14,8 @@ export const AsyncButton = ({
 }: {
   text: string;
   id: string;
-  isCredit: boolean;
+  /** Null when no payout step was shown (nothing comes back to the customer). */
+  isCredit: boolean | null;
   email: string;
   /**
    * The customer's claimed shipping lane, from ReturnMethodChoice (lifted up

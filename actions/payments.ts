@@ -32,7 +32,7 @@ const returnUrl = absoluteUrl("/");
 export const createStripeUrl = async (
   id: string,
   email: string,
-  isCredit: boolean,
+  isCredit: boolean | null,
   method: ReturnMethod
 ) => {
   // Its only caller, `returnFunction`, already verified this id — so this is

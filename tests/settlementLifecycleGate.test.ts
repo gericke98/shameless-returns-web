@@ -52,13 +52,13 @@ describe("admission creates obligations only against an OPEN Shopify return", ()
 
   it("re-admitting work that already exists is not a new obligation: nothing new, nothing held", () => {
     const existing = [
-      { id: "op-a", kind: "process_refund" as const, scopeKey: scopeKeys.money(SUB, 1) },
+      { id: "op-a", kind: "process_refund" as const, scopeKey: scopeKeys.money(SUB, 1), members: [1] },
     ];
     expect(onReturn("CLOSED", [line(1)], { existing })).toMatchObject({ ok: true, ops: [] });
   });
 
   it("holds the residual if it would be created after the return closed", () => {
-    const existing = [{ id: "op-a", kind: "process_refund" as const, scopeKey: scopeKeys.money(SUB, 1) }];
+    const existing = [{ id: "op-a", kind: "process_refund" as const, scopeKey: scopeKeys.money(SUB, 1), members: [1] }];
     const submission = { ...planInput([]).submission, residualCents: 1 };
     expect(onReturn("CLOSED", [line(1)], { existing, submission })).toEqual({
       ok: false,

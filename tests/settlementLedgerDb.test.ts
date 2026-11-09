@@ -299,11 +299,11 @@ describe("finalization", () => {
     const first = planFor(seeded, { admit: [1] });
     await insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: first.ops, reverseFulfillment: [] });
     const second = planFor(seeded, {
-      existing: first.ops.map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key })),
+      existing: first.ops.map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key, members: o.members })),
     });
     await insertAdmission({ submissionId: seeded.id, seenSeq: 1, ops: second.ops, reverseFulfillment: [] });
     const third = planFor(seeded, {
-      existing: [...first.ops, ...second.ops].map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key })),
+      existing: [...first.ops, ...second.ops].map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key, members: o.members })),
     });
     await insertAdmission({ submissionId: seeded.id, seenSeq: 2, ops: third.ops, reverseFulfillment: [] });
     expect(await q("SELECT amount_cents FROM settlement_operations WHERE scope_key LIKE 'residual:%'")).toEqual([

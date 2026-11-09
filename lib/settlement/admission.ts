@@ -124,7 +124,7 @@ export async function admit(submissionId: string, requested: readonly number[]):
       submission,
       lines,
       admit: admitIds,
-      existing: existing.map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scopeKey })),
+      existing: existing.map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scopeKey, members: o.members })),
       rows,
       returns,
       isReplacement,

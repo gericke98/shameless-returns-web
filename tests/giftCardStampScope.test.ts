@@ -20,9 +20,9 @@ const plan = () => {
 };
 
 describe("a gift card belongs to its operation", () => {
-  it("is scoped to one line of one submission by id, not by variant", () => {
+  it("is scoped to the lines it pays of one submission by id, not by variant", () => {
     const cards = plan().ops.filter((o) => o.kind === "gift_card");
-    expect(cards.map((c) => c.members)).toEqual([[1], [2]]);
+    expect(cards.map((c) => c.members)).toEqual([[1, 2]]);
     expect(JSON.stringify(cards.map((c) => c.request))).not.toContain("variant");
   });
 

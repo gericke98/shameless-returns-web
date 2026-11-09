@@ -41,7 +41,8 @@ export type PlanInput = {
   lines: SubmissionLineRow[];
   /** The productsorder ids being admitted (already expanded to whole exchanges). */
   admit: number[];
-  existing: Array<{ id: string; kind: OpKind; scopeKey: string }>;
+  /** Every operation already in the ledger for this submission, with the lines it pays or serves. */
+  existing: Array<{ id: string; kind: OpKind; scopeKey: string; members: number[] }>;
   /** productsorder row facts: its Shopify return and its stored refund parent. */
   rows: Map<number, { returnId: string | null; transactionId: string | null }>;
   returns: Map<string, ReturnFacts>;
@@ -69,7 +70,12 @@ export const scopeKeys = {
   exchange: (s: string) => `exchange:${s}`,
   hold: (s: string) => `hold:${s}`,
   residual: (s: string) => `residual:${s}`,
+  /** One store-credit card for the paying lines one admission covers (ids sorted). */
+  credit: (s: string, pos: readonly number[]) => `credit:${s}:${[...pos].sort((a, b) => a - b).join(",")}`,
 };
+
+/** The operation kinds that move money to the customer. */
+const MONEY_KINDS: ReadonlySet<OpKind> = new Set<OpKind>(["process_refund", "root_refund", "gift_card"]);
 
 const euros = (cents: number) => cents / 100;
 /** S1 freezes the REST (bare) line item id; Shopify's refunds name the gid. */
@@ -90,6 +96,23 @@ export function planAdmission(input: PlanInput): Plan {
     scopes.add(op.scope_key);
     ops.push({ currency: s.currency, ...op });
   };
+
+  // Store credit is ONE balance the customer spends as one, so the unit of
+  // payment is the admission, not the line (#312385 received 86,82 + 86,82 +
+  // 0,01 as three cards). Credit lines are collected here and paid by a single
+  // gift card after the loop; each line's share stays explicit data
+  // (`pay_cents`, the card's `members`).
+  const isCredit = s.tender === "credit";
+  const creditShares: Array<{ po: number; ret: ReturnFacts }> = [];
+  // Whether a line's money is already owned by an operation: read from the
+  // operations' `members` (explicit ownership), never from the shape of a
+  // scope key, so a card paying several lines owns each of them. Per-line
+  // `money:` keys of operations admitted before one-card-per-admission are
+  // members-owned the same way.
+  const ownsMoney = (po: number) =>
+    scopes.has(scopeKeys.money(s.id, po)) ||
+    input.existing.some((o) => MONEY_KINDS.has(o.kind) && o.members.includes(po)) ||
+    creditShares.some((c) => c.po === po);
 
   // Shopify's return lifecycle gates every NEW obligation (finding 2): an
   // operation may only be created against an OPEN return. A closed or
@@ -182,6 +205,11 @@ export function planAdmission(input: PlanInput): Plan {
           amount_cents: 0,
         });
       }
+      // The approval replaces the OPEN gate, so the share joins without it.
+      if (isCredit) {
+        if (!ownsMoney(po)) creditShares.push({ po, ret });
+        continue;
+      }
       const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po]);
       if ("held" in money) return held(money.held);
       add(money);
@@ -268,7 +296,12 @@ export function planAdmission(input: PlanInput): Plan {
       amount_cents: 0,
     });
 
-    if (line.payCents > 0) {
+    if (line.payCents > 0 && isCredit) {
+      if (!ownsMoney(po)) {
+        if (ret.status !== "OPEN") return held(`return-not-open:${ret.status}`);
+        creditShares.push({ po, ret });
+      }
+    } else if (line.payCents > 0) {
       const moneyClosed = notOpen(ret, scopeKeys.money(s.id, po));
       if (moneyClosed) return moneyClosed;
       const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po]);
@@ -355,26 +388,57 @@ export function planAdmission(input: PlanInput): Plan {
   // Its members are EVERY paying line (finding 7): completion is "every op a
   // line belongs to is done", so no paying line — and so not the return —
   // reads as settled or refunded while the residual is still owed.
-  if (s.residualCents > 0 && !scopes.has(scopeKeys.residual(s.id))) {
-    const payLines = lines.filter((l) => l.payCents > 0);
-    if (payLines.length === 0) return held("residual-without-paying-line");
-    const everyPayLineAdmitted = payLines.every((l) => scopes.has(scopeKeys.money(s.id, l.productsorderId)));
-    if (everyPayLineAdmitted) {
-      const anyLine = lines.find((l) => input.rows.get(l.productsorderId)?.returnId);
-      const ret = anyLine ? input.returns.get(input.rows.get(anyLine.productsorderId)!.returnId!) : undefined;
+  const payLines = lines.filter((l) => l.payCents > 0);
+  const residualDue = s.residualCents > 0 && !scopes.has(scopeKeys.residual(s.id));
+  if (residualDue && payLines.length === 0) return held("residual-without-paying-line");
+  const completes = residualDue && payLines.every((l) => ownsMoney(l.productsorderId));
+  const residualReturn = (): ReturnFacts | undefined => {
+    const anyLine = lines.find((l) => input.rows.get(l.productsorderId)?.returnId);
+    return anyLine ? input.returns.get(input.rows.get(anyLine.productsorderId)!.returnId!) : undefined;
+  };
+
+  if (isCredit) {
+    // ONE card for this admission: every credit share it covers, plus the
+    // residual when it leaves no paying line uncovered. That card owns the
+    // residual scope (one per submission), so the residual can never be minted
+    // twice; otherwise its key names exactly the lines it pays.
+    if (creditShares.length > 0 || completes) {
+      const ret = creditShares[0]?.ret ?? residualReturn();
       if (!ret) return held("shopify-unreadable:residual");
-      const residualClosed = notOpen(ret, scopeKeys.residual(s.id));
-      if (residualClosed) return residualClosed;
+      if (completes) {
+        const residualClosed = notOpen(ret, scopeKeys.residual(s.id));
+        if (residualClosed) return residualClosed;
+      }
+      const sharePos = creditShares.map((c) => c.po);
+      const cents =
+        sharePos.reduce((sum, po) => sum + byId.get(po)!.payCents, 0) + (completes ? s.residualCents : 0);
+      const members = Array.from(
+        new Set([...sharePos, ...(completes ? payLines.map((l) => l.productsorderId) : [])])
+      ).sort((a, b) => a - b);
       const money = moneyOperation(
         input,
         ret,
-        s.residualCents,
-        scopeKeys.residual(s.id),
-        payLines.map((l) => l.productsorderId)
+        cents,
+        completes ? scopeKeys.residual(s.id) : scopeKeys.credit(s.id, sharePos),
+        members
       );
       if ("held" in money) return held(money.held);
       add(money);
     }
+  } else if (completes) {
+    const ret = residualReturn();
+    if (!ret) return held("shopify-unreadable:residual");
+    const residualClosed = notOpen(ret, scopeKeys.residual(s.id));
+    if (residualClosed) return residualClosed;
+    const money = moneyOperation(
+      input,
+      ret,
+      s.residualCents,
+      scopeKeys.residual(s.id),
+      payLines.map((l) => l.productsorderId)
+    );
+    if ("held" in money) return held(money.held);
+    add(money);
   }
 
   return { ok: true, ops, reverseFulfillment };

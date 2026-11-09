@@ -39,15 +39,83 @@ describe("settling a store-credit return", () => {
     expect(plan.ops.map((o) => o.kind).sort()).toEqual(["gift_card", "process_goods"]);
   });
 
-  it("scopes the gift card to this submission's line, by its own id", () => {
+  it("pays every credit line of one admission with ONE card, members naming each line", () => {
     const plan = credit([line(1, { payCents: 5175 }), line(2, { payCents: 1000 })]);
     if (!plan.ok) throw new Error(plan.held);
     const cards = plan.ops.filter((o) => o.kind === "gift_card");
-    expect(cards.map((c) => c.members)).toEqual([[1], [2]]);
-    expect(cards.map((c) => c.scope_key)).toEqual([
-      `money:${submission().id}:1`,
-      `money:${submission().id}:2`,
+    expect(cards.map((c) => c.members)).toEqual([[1, 2]]);
+    expect(cards.map((c) => c.amount_cents)).toEqual([6175]);
+    expect(cards.map((c) => c.scope_key)).toEqual([`credit:${submission().id}:1,2`]);
+  });
+
+  // #312385: two lines of 86,82 and a 1-cent residual became three cards.
+  it("folds the residual into the same card when the admission covers every paying line", () => {
+    const s = submission({ tender: "credit", residualCents: 1 });
+    const plan = planAdmission(
+      planInput([line(1, { payCents: 8682 }), line(2, { payCents: 8682 })], { submission: s })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    const cards = plan.ops.filter((o) => o.kind === "gift_card") as any[];
+    expect(cards).toHaveLength(1);
+    expect(cards[0].amount_cents).toBe(17365);
+    expect(cards[0].request.variables.input.initialValue).toBe("173.65");
+    expect(cards[0].members).toEqual([1, 2]);
+    expect(cards[0].scope_key).toBe(`residual:${s.id}`);
+  });
+
+  it("pays a later admission with its own card and the residual only then", () => {
+    const s = submission({ tender: "credit", residualCents: 1 });
+    const lines = [line(1, { payCents: 8682 }), line(2, { payCents: 8682 })];
+    const first = planAdmission(planInput(lines, { submission: s, admit: [1] }));
+    if (!first.ok) throw new Error(first.held);
+    expect(
+      first.ops.filter((o) => o.kind === "gift_card").map((c) => [c.amount_cents, c.members, c.scope_key])
+    ).toEqual([[8682, [1], `credit:${s.id}:1`]]);
+
+    const second = planAdmission(
+      planInput(lines, {
+        submission: s,
+        admit: [2],
+        existing: first.ops.map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key, members: o.members })),
+      })
+    );
+    if (!second.ok) throw new Error(second.held);
+    expect(
+      second.ops.filter((o) => o.kind === "gift_card").map((c) => [c.amount_cents, c.members, c.scope_key])
+    ).toEqual([[8683, [1, 2], `residual:${s.id}`]]);
+  });
+
+  it("never pays a line again whose money an earlier card already owns", () => {
+    const s = submission({ tender: "credit" });
+    const plan = planAdmission(
+      planInput([line(1, { payCents: 8682 }), line(2, { payCents: 8682 })], {
+        submission: s,
+        existing: [{ id: "op-old", kind: "gift_card", scopeKey: `credit:${s.id}:1,2`, members: [1, 2] }],
+      })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops.filter((o) => o.kind === "gift_card")).toEqual([]);
+  });
+
+  it("respects per-line cards admitted before one-card-per-admission", () => {
+    const s = submission({ tender: "credit", residualCents: 1 });
+    const plan = planAdmission(
+      planInput([line(1, { payCents: 8682 }), line(2, { payCents: 8682 })], {
+        submission: s,
+        admit: [2],
+        existing: [{ id: "op-legacy", kind: "gift_card", scopeKey: `money:${s.id}:1`, members: [1] }],
+      })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops.filter((o) => o.kind === "gift_card").map((c) => [c.amount_cents, c.members])).toEqual([
+      [8683, [1, 2]],
     ]);
+  });
+
+  it("does not mint a card for a credit line whose return is no longer open", () => {
+    const input = planInput([line(1, { payCents: 5175 })], { submission: submission({ tender: "credit" }) });
+    input.returns.get(RETURN)!.status = "CLOSED";
+    expect(planAdmission(input)).toEqual({ ok: false, held: "return-not-open:CLOSED" });
   });
 
   it("freezes a code we generated, and names the card's customer and marker", () => {

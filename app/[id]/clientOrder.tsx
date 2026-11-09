@@ -48,15 +48,11 @@ export const ClientOrder = ({
     [position, credito, items, allProducts, legs]
   );
 
-  // Parent callback to receive updated items from children
-  const handleItemChange = (updatedItem: any) => {
-    const cambioProduct = updatedItem.products.find(
-      (item: any) => item.action === "CAMBIO"
-    );
-    if (cambioProduct) {
-      // Caso de cambio pongo el flag de credito en false
-      setCredito(false);
-    }
+  // Any basket change voids the payout choice: it was made for a different
+  // total. This replaces "an exchange forces card refund", which pre-selected
+  // the card when the exchange was later removed and money came back.
+  const handleItemChange = () => {
+    setCredito(null);
   };
   const handleContinue = () => {
     startTransition(() => {

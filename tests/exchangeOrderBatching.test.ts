@@ -56,7 +56,7 @@ describe("admission — one exchange order per submission", () => {
   it("does not create a second order when the exchange is already admitted", () => {
     const plan = planAdmission(
       planInput(exchangeLines(), {
-        existing: [{ id: "op-x", kind: "exchange_order", scopeKey: `exchange:${submission().id}` }],
+        existing: [{ id: "op-x", kind: "exchange_order", scopeKey: `exchange:${submission().id}`, members: [1, 2] }],
       })
     );
     if (!plan.ok) throw new Error(plan.held);

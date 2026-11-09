@@ -93,8 +93,8 @@ describe("each operation names exactly the row it pays for", () => {
       planInput([line(1)], {
         submission: s,
         existing: [
-          { id: "op-m", kind: "process_refund", scopeKey: `money:${s.id}:1` },
-          { id: "op-r", kind: "root_refund", scopeKey: `residual:${s.id}` },
+          { id: "op-m", kind: "process_refund", scopeKey: `money:${s.id}:1`, members: [1] },
+          { id: "op-r", kind: "root_refund", scopeKey: `residual:${s.id}`, members: [1] },
         ],
       })
     );

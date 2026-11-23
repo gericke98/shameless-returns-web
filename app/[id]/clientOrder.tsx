@@ -51,8 +51,15 @@ export const ClientOrder = ({
   // Any basket change voids the payout choice: it was made for a different
   // total. This replaces "an exchange forces card refund", which pre-selected
   // the card when the exchange was later removed and money came back.
+  //
+  // Voiding the choice also sends the customer back to where it is made. The
+  // summary (step 4) lets them edit items, and staying there after the void
+  // left a live submit with no payout: the server refused it and the customer
+  // got the crash screen (#312973). From step 3 they choose again, or — if
+  // nothing comes back any more — step 3 is empty and Continue moves on.
   const handleItemChange = () => {
     setCredito(null);
+    setPosition((prev) => Math.min(prev, 3));
   };
   const handleContinue = () => {
     startTransition(() => {

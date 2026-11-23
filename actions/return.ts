@@ -18,6 +18,7 @@ import { resolveFee } from "@/lib/fees";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { alertOps } from "./opsAlert";
+import { enqueueOpsAlert } from "./opsAlertOutbox";
 import { createInternationalReturn } from "./amphoraReturn";
 import { createSelfBookedReturn } from "./selfBookedReturn";
 
@@ -225,36 +226,17 @@ export async function returnFunction(
     return;
   }
 
-  // Before the payment branch, so it covers BOTH outcomes: the free path
-  // continues below, and the paid path redirects to Stripe and comes back
-  // through the webhook, which reads the column from the database.
-  await persistOrderLocale(id);
-
-  // Resolved and persisted before createStripeUrl for the same reason as the
-  // locale above: the webhook has no session and no client state, so the row
-  // is the only channel that survives the redirect.
-  let method = await decideMethod(id, claimedMethod);
-  // If the write did not land, the webhook cannot know the customer chose SELF
-  // — it will read a null column and book the address-derived lane. Pricing
-  // must follow the lane we will actually book, or the customer pays the
-  // outbound leg only and then gets a full Correos/Amphora booking on top.
-  if (!(await persistReturnMethod(id, method)) && method === "SELF") {
-    const order = await getOrderById(id);
-    method = defaultMethodFor(
-      order?.shippingCountry,
-      process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
-    );
+  let prepared: Awaited<ReturnType<typeof prepareSubmission>>;
+  try {
+    prepared = await prepareSubmission(id, isCredit, email, claimedMethod);
+  } catch (error) {
+    // Nothing is booked yet, and the throw reaches the customer as the crash
+    // screen. The browser only ever sees a redacted message, and Vercel keeps
+    // the server log about a day, so the real reason goes to ops durably.
+    await alertSubmitRefused(id, isCredit, error);
+    throw error;
   }
-
-  // Whether the customer owes anything is decided server-side, inside
-  // createStripeUrl, which also saves the agreement as a submission. A null
-  // URL means nothing to pay; the submission is then accepted right here.
-  const { data: url, submissionId } = await createStripeUrl(
-    id,
-    email,
-    isCredit,
-    method
-  );
+  const { url, submissionId, method } = prepared;
   if (url) {
     redirect(url);
   }
@@ -298,4 +280,73 @@ export async function returnFunction(
     }
   }
   redirect(`/success`);
+}
+
+async function alertSubmitRefused(id: string, isCredit: boolean | null, error: unknown) {
+  const detail = error instanceof Error ? error.stack || error.message : String(error);
+  console.error(`returnFunction: submit refused for order ${id}:`, error);
+  try {
+    await enqueueOpsAlert({
+      dedupeKey: `submit-refused:${id}:${new Date().toISOString().slice(0, 13)}`,
+      subject: `RETURN SUBMIT REFUSED — order ${id}`,
+      body: [
+        `The customer pressed submit on order ${id} and it failed before`,
+        `anything was booked or charged. They saw the crash screen.`,
+        ``,
+        `Payout sent by the browser: ${isCredit === null ? "none" : isCredit ? "store credit" : "card refund"}`,
+        ``,
+        `Error:`,
+        detail,
+        ``,
+        `Check whether they retried successfully (a return_submissions row`,
+        `after this alert). If not, reach out.`,
+      ].join("\n"),
+    });
+  } catch (alertError) {
+    console.error("Could not queue the submit-refused alert:", alertError);
+  }
+}
+
+/**
+ * Everything up to the agreement: locale, lane, and the submission saved by
+ * createStripeUrl. Throws when the selection cannot be agreed — e.g. money is
+ * owed back but no payout was chosen.
+ */
+async function prepareSubmission(
+  id: string,
+  isCredit: boolean | null,
+  email: string,
+  claimedMethod: unknown
+) {
+  // Before the payment branch, so it covers BOTH outcomes: the free path
+  // continues below, and the paid path redirects to Stripe and comes back
+  // through the webhook, which reads the column from the database.
+  await persistOrderLocale(id);
+
+  // Resolved and persisted before createStripeUrl for the same reason as the
+  // locale above: the webhook has no session and no client state, so the row
+  // is the only channel that survives the redirect.
+  let method = await decideMethod(id, claimedMethod);
+  // If the write did not land, the webhook cannot know the customer chose SELF
+  // — it will read a null column and book the address-derived lane. Pricing
+  // must follow the lane we will actually book, or the customer pays the
+  // outbound leg only and then gets a full Correos/Amphora booking on top.
+  if (!(await persistReturnMethod(id, method)) && method === "SELF") {
+    const order = await getOrderById(id);
+    method = defaultMethodFor(
+      order?.shippingCountry,
+      process.env.AMPHORA_INTL_RETURNS_ENABLED === "true"
+    );
+  }
+
+  // Whether the customer owes anything is decided server-side, inside
+  // createStripeUrl, which also saves the agreement as a submission. A null
+  // URL means nothing to pay; the submission is then accepted right here.
+  const { data: url, submissionId } = await createStripeUrl(
+    id,
+    email,
+    isCredit,
+    method
+  );
+  return { url, submissionId, method };
 }

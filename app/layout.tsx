@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { Providers } from "@/components/providers";
+import { ClientErrorReporter } from "@/components/clientErrorReporter";
 import { siteConfig } from "@/lib/config";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 
@@ -32,6 +33,7 @@ export default function RootLayout({
           <main>{children}</main>
           <Toaster />
         </Providers>
+        <ClientErrorReporter />
       </body>
     </html>
   );

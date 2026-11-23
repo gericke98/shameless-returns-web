@@ -8,6 +8,7 @@ import {
   readLocale,
   type Locale,
 } from "@/lib/i18n";
+import { reportClientError } from "@/lib/reportClientError";
 
 /**
  * Route-level error boundary. Without one, an uncaught throw anywhere under
@@ -19,8 +20,7 @@ import {
  * surrounding page alive, but there is none today; this is the minimum that
  * stops a customer hitting a blank framework error page.
  *
- * Note this does not catch errors thrown by app/layout.tsx itself — that
- * requires a global-error.tsx, which is deliberately out of scope here.
+ * Errors thrown by app/layout.tsx itself go to app/global-error.tsx instead.
  */
 export default function Error({
   error,
@@ -46,6 +46,9 @@ export default function Error({
 
   useEffect(() => {
     console.error("Unhandled error rendered by app/error.tsx:", error);
+    // The customer is looking at the crash screen. Without this report the
+    // only trace was their console — #312973 left nothing we could read.
+    reportClientError("boundary", error);
   }, [error]);
 
   const t = dictionaries[locale];

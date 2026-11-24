@@ -99,6 +99,20 @@ A check can only **confirm** a number. It never approves on a guess:
 - **Open (optional):** a free DHL developer key would let DHL check automatically too (2 of 19 so far). Creating
   that account is Santi's to do.
 
+## Built (2026-11-24), and what review changed
+
+Built as designed, plus what the two Codex rounds found (both FIX FIRST, all fixed):
+- **Submission identity:** `orders.tracking_submission_id`, new on every submit. Confirm and reject name it, and
+  every other writer of the tracking (the Amphora webhook and sync) retires it when it writes its own number.
+- **Two public endpoints closed:** `db/queries.ts` and `actions/selfReturnEmails.ts` were `"use server"`
+  modules, so every export was callable by anyone (customer reads; our email to any address). This predates the
+  plan; only server code imports them; `next build` passes without the directive.
+- **Verdicts:** bpost verifies on `itemCode` only; a NACEX page that is both found and "No existe" is unreadable;
+  the lookup boundary covers reading the body.
+- **Nudge sweep** claims its stage conditionally, so it cannot overwrite a reject.
+- **Portal** shows "saved, being checked" from stored state.
+- **Migration** stamps the audited cohort by `orders.id` (18 rows; #311595 left for ops to reject).
+
 ## Not in scope
 
 Fixing the values already pinned (#313127 `313127`, and the two 17track links): Amphora support only.

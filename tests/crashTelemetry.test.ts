@@ -37,9 +37,10 @@ vi.mock("next/navigation", () => ({
 vi.mock("next/headers", () => ({
   cookies: () => ({ get: () => ({ name: "locale", value: "es" }) }),
 }));
+const stripe = { error: null as Error | null };
 vi.mock("@/actions/payments", () => ({
   createStripeUrl: async () => {
-    throw new Error("Order 13577291399494: money is owed back but no payout was chosen");
+    throw stripe.error;
   },
 }));
 vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
@@ -128,16 +129,30 @@ describe("POST /api/client-error", () => {
 });
 
 describe("a submit refused before anything is booked", () => {
-  it("queues the server's real error for ops, then still fails for the customer", async () => {
+  it("a missing payout returns a typed refusal (no crash screen) and still alerts ops", async () => {
+    const { PayoutRequiredError } = await import("@/lib/payoutRequired");
+    stripe.error = new PayoutRequiredError("13577291399494");
     const { returnFunction } = await import("@/actions/return");
 
-    await expect(returnFunction("13577291399494", null, "c@example.com")).rejects.toThrow(
-      /no payout was chosen/
-    );
+    await expect(returnFunction("13577291399494", null, "c@example.com")).resolves.toEqual({
+      ok: false,
+      reason: "payout-required",
+    });
 
     expect(queued).toHaveLength(1);
     expect(queued[0].subject).toContain("13577291399494");
     expect(queued[0].body).toContain("no payout was chosen");
     expect(queued[0].body).toContain("Payout sent by the browser: none");
+  });
+
+  it("any other refusal still fails for the customer, with the real error sent to ops", async () => {
+    stripe.error = new Error("Order 13577291399494: line item 1 has no fulfillment line item");
+    const { returnFunction } = await import("@/actions/return");
+
+    await expect(returnFunction("13577291399494", false, "c@example.com")).rejects.toThrow(
+      /no fulfillment line item/
+    );
+    expect(queued).toHaveLength(1);
+    expect(queued[0].body).toContain("no fulfillment line item");
   });
 });

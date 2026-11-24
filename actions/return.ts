@@ -21,6 +21,7 @@ import { alertOps } from "./opsAlert";
 import { enqueueOpsAlert } from "./opsAlertOutbox";
 import { createInternationalReturn } from "./amphoraReturn";
 import { createSelfBookedReturn } from "./selfBookedReturn";
+import { PayoutRequiredError, type SubmitRefusal } from "@/lib/payoutRequired";
 
 /**
  * Route the physical return. Three lanes now:
@@ -215,7 +216,7 @@ export async function returnFunction(
   isCredit: boolean | null,
   email: string,
   claimedMethod?: unknown
-) {
+): Promise<SubmitRefusal | undefined> {
   // `id` arrives from the client. Without this the caller only had to know an
   // order id — which is the sequential Shopify order id — to submit somebody
   // else's return, book a carrier against their address and charge their card.
@@ -230,10 +231,17 @@ export async function returnFunction(
   try {
     prepared = await prepareSubmission(id, isCredit, email, claimedMethod);
   } catch (error) {
-    // Nothing is booked yet, and the throw reaches the customer as the crash
-    // screen. The browser only ever sees a redacted message, and Vercel keeps
-    // the server log about a day, so the real reason goes to ops durably.
+    // Nothing is booked yet. The browser only ever sees a redacted message,
+    // and Vercel keeps the server log about a day, so the real reason goes to
+    // ops durably — for the expected refusal too: the portal's own gate
+    // (lib/portalWizard) should make it unreachable, so reaching it means the
+    // client and server drifted.
     await alertSubmitRefused(id, isCredit, error);
+    // A missing payout is the customer's to fix, not a crash: the portal sends
+    // them to the payout step instead of the crash screen.
+    if (error instanceof PayoutRequiredError) {
+      return { ok: false, reason: "payout-required" };
+    }
     throw error;
   }
   const { url, submissionId, method } = prepared;

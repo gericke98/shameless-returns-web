@@ -445,6 +445,9 @@ const SELF_COPY = {
       "<strong>Si envías desde fuera de la Unión Europea</strong>, el paquete pasará por aduanas y la documentación corre de tu cuenta. Un envío mal declarado puede quedarse retenido o devolverse, y esos gastos no los podemos cubrir.",
     reminderIntro:
       "Hace unos días creaste una devolución para enviarla por tu cuenta y todavía no nos has dicho el número de seguimiento.",
+    rejectedSubject: "Necesitamos el número de seguimiento correcto de tu devolución",
+    rejectedIntro: (number: string) =>
+      `Hemos comprobado el número de seguimiento que nos diste (<strong>${number}</strong>) y el transportista no lo reconoce, así que todavía no hemos podido avisar al almacén. Por favor, revisa el recibo o el email del transportista y vuelve a indicarnos el número desde el enlace de abajo.`,
     contact: "Si tienes alguna pregunta, no dudes en contactarnos en",
     signoff:
       "Saludos cordiales,<br/><strong>El equipo de Shameless Collective</strong>",
@@ -474,6 +477,9 @@ const SELF_COPY = {
       "<strong>If you are shipping from outside the European Union</strong>, the parcel will pass through customs and the paperwork is yours to arrange. A badly declared shipment can be held or returned, and we cannot cover those costs.",
     reminderIntro:
       "A few days ago you created a return to ship yourself, and we still do not have a tracking number for it.",
+    rejectedSubject: "We need the correct tracking number for your return",
+    rejectedIntro: (number: string) =>
+      `We checked the tracking number you gave us (<strong>${number}</strong>) and the carrier does not recognise it, so we have not been able to tell the warehouse yet. Please check the carrier's receipt or email and enter the number again using the link below.`,
     contact: "If you have any questions, contact us at",
     signoff: "Best regards,<br/><strong>The Shameless Collective team</strong>",
   },
@@ -550,5 +556,27 @@ export function buildSelfReturnReminderEmail(
     Subject: c.reminderSubject,
     TextBody: c.reminderIntro,
     HtmlBody: selfReturnShell(c, name, orderId, portalUrl, c.reminderIntro),
+  };
+}
+
+const escapeHtml = (value: string) =>
+  value.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+
+/** Ops rejected the customer's number (actions/selfTrackingReview). */
+export function buildSelfTrackingRejectedEmail(
+  name: string,
+  locale: Locale,
+  orderId: string,
+  portalUrl: string,
+  number: string
+): EmailPayload {
+  const c = SELF_COPY[locale];
+  const intro = c.rejectedIntro(escapeHtml(number));
+  return {
+    From: FROM,
+    To: "",
+    Subject: c.rejectedSubject,
+    TextBody: intro.replace(/<[^>]+>/g, ""),
+    HtmlBody: selfReturnShell(c, name, orderId, portalUrl, intro),
   };
 }

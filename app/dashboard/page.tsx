@@ -2,7 +2,8 @@ import { getServerSession } from "next-auth/next";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { LogoutButton } from "./LogoutButton";
-import { getReturns, getVariantsByIds } from "@/db/queries";
+import { getReturns, getSelfTrackingToConfirm, getVariantsByIds } from "@/db/queries";
+import SelfTrackingReview from "./components/SelfTrackingReview";
 import DashboardHeader from "./components/DashboardHeader";
 import ReturnsTable from "./components/ReturnsTable";
 import EmptyState from "./components/EmptyState";
@@ -151,6 +152,12 @@ async function ReturnsList() {
   }
 }
 
+/** Self-booked tracking waiting for ops (actions/selfTrackingReview). */
+async function TrackingToConfirm() {
+  const rows = await getSelfTrackingToConfirm();
+  return rows.length === 0 ? null : <SelfTrackingReview rows={rows} />;
+}
+
 async function validateSession() {
   const session = await getServerSession(authOptions);
 
@@ -185,6 +192,11 @@ export default async function DashboardPage() {
       </nav>
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
         <DashboardHeader username={session.user.username} />
+        <ErrorBoundary FallbackComponent={ErrorMessage}>
+          <Suspense fallback={null}>
+            <TrackingToConfirm />
+          </Suspense>
+        </ErrorBoundary>
         <ErrorBoundary FallbackComponent={ErrorMessage}>
           <Suspense fallback={<LoadingSpinner />}>
             <ReturnsList />

@@ -32,9 +32,14 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
   const [number, setNumber] = useState("");
   const [link, setLink] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState<"idle" | "done" | "error" | "invalid-url">("idle");
+  const [result, setResult] = useState<"idle" | "done" | "pending" | "error" | "invalid-url">(
+    "idle"
+  );
   // A refusal of the number from the server, shown until the number changes.
-  const [refusedNumber, setRefusedNumber] = useState<TrackingNumberProblem | null>(null);
+  // "not-at-carrier": the carrier itself says it has no such number.
+  const [refusedNumber, setRefusedNumber] = useState<TrackingNumberProblem | "not-at-carrier" | null>(
+    null
+  );
   const [isPending, startTransition] = useTransition();
 
   // Derived during render: whether this carrier needs the customer's link,
@@ -55,6 +60,9 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
 
   if (result === "done") {
     return <p className="text-sm font-bold">{t.tracking.done}</p>;
+  }
+  if (result === "pending") {
+    return <p className="text-sm font-bold">{t.tracking.pending}</p>;
   }
 
   return (
@@ -106,6 +114,10 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
       ) : shownNumberProblem === "too-long" ? (
         <p role="alert" className="text-xs text-red-600">
           {t.tracking.tooLong}
+        </p>
+      ) : shownNumberProblem === "not-at-carrier" ? (
+        <p role="alert" className="text-xs text-red-600">
+          {t.tracking.notAtCarrier}
         </p>
       ) : null}
 
@@ -165,13 +177,14 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
             const outcome = needsLink
               ? await submitReturnTracking(id, carrier, trimmed, link.trim())
               : await submitReturnTracking(id, carrier, trimmed);
-            if (outcome.ok) setResult("done");
+            if (outcome.ok) setResult(outcome.pending ? "pending" : "done");
             else if (outcome.reason === "missing-url" || outcome.reason === "invalid-url") {
               setResult("invalid-url");
             } else if (
               outcome.reason === "order-number" ||
               outcome.reason === "wrong-format" ||
-              outcome.reason === "too-long"
+              outcome.reason === "too-long" ||
+              outcome.reason === "not-at-carrier"
             ) {
               setRefusedNumber(outcome.reason);
             } else setResult("error");

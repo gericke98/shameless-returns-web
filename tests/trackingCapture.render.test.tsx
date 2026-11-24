@@ -34,6 +34,8 @@ vi.mock("@/lib/i18n/context", () => ({
       noLink: "No link? Email us.",
       orderNumber: "That is your order number.",
       wrongFormat: "Not this carrier's format. Example:",
+      pending: "Saved; we'll check it.",
+      notAtCarrier: "The carrier doesn't know this number.",
       tooLong: "Too long.",
     },
   }),
@@ -236,5 +238,31 @@ describe("a number that cannot be the tracking number", () => {
     expect(screen.getByRole("alert").textContent).toBe("Too long.");
     expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
   });
-});
 
+  it("says the number is saved and being checked when the server holds it for ops", async () => {
+    submitReturnTracking.mockResolvedValue({ ok: true, pending: true });
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" orderNumber="#313127" />);
+    await user.selectOptions(screen.getByLabelText("Carrier"), "DHL");
+    await user.type(screen.getByLabelText("Tracking number"), "JD0123456789");
+    await user.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
+
+    expect(await screen.findByText("Saved; we'll check it.")).toBeTruthy();
+    expect(screen.queryByText("Thank you! The warehouse now knows your parcel is on its way.")).toBeNull();
+  });
+
+  it("shows the carrier's refusal, and lets the customer correct the number", async () => {
+    submitReturnTracking.mockResolvedValue({ ok: false, reason: "not-at-carrier" });
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" orderNumber="#313127" />);
+    const input = screen.getByLabelText("Tracking number");
+    await user.type(input, "PQ0000000000000000000XX");
+    await user.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("The carrier doesn't know this number.");
+    await user.type(input, "1");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});

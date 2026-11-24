@@ -160,6 +160,10 @@ export const en: Dictionary = {
     orderNumber:
       "That is your order number. We need the tracking number the carrier gave you, on the receipt or in their email.",
     wrongFormat: "That doesn't look like a number from this carrier. Example:",
+    pending:
+      "Thank you! We have saved it. We'll check the number with the carrier and let the warehouse know; if anything is wrong, we'll email you.",
+    notAtCarrier:
+      "The carrier doesn't recognise this number. Check it is copied exactly from the receipt or their email. If you've only just sent the parcel, try again in a few hours.",
     tooLong: "That is too long for a tracking number. Check you copied only the number.",
   },
   success: {

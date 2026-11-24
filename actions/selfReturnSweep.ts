@@ -1,6 +1,6 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getSelfReturnsAwaitingTracking } from "@/db/queries";
@@ -32,10 +32,23 @@ export async function sweepSelfReturns(
       // The next tick then finds the stage advanced and does nothing, so a
       // 15-minute cron cannot send 96 reminders a day. A failed send is not
       // retried, hence the loud log below.
-      await db
+      //
+      // Conditional on the state this decision was made from: the row must
+      // still have no tracking and still be at the stage we read. A customer
+      // submitting, or ops rejecting a number (which sets stage 2), between
+      // the read and this write makes it match nothing, and nothing is sent.
+      const claimed = await db
         .update(orders)
         .set({ trackingNudgeStage: decision.nextStage })
-        .where(eq(orders.id, order.id));
+        .where(
+          and(
+            eq(orders.id, order.id),
+            isNull(orders.trackingSubmittedAt),
+            eq(orders.trackingNudgeStage, order.trackingNudgeStage ?? 0)
+          )
+        )
+        .returning({ id: orders.id });
+      if (claimed.length === 0) continue;
 
       if (decision.due === "reminder") {
         const status = await sendSelfReturnReminder(

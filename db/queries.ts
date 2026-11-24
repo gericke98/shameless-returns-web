@@ -1,4 +1,6 @@
-"use server";
+// NOT "use server": every export of such a module is a public endpoint
+// anyone can call with arguments of their choosing, and these are internal
+// reads (customer emails, orders, tracking). Only server code imports them.
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
 import db from "./drizzle";
@@ -98,6 +100,32 @@ export async function getOrderByNumberFresh(orderNumber: string) {
  * Deliberately NOT cached — the nudge sweep must see stage changes made by its
  * own previous pass.
  */
+/**
+ * Self-booked tracking saved but not verified: ops confirms or rejects it in
+ * the dashboard before it reaches Amphora (write-once). Not cached: the
+ * dashboard acts on it.
+ */
+export async function getSelfTrackingToConfirm() {
+  return db.query.orders.findMany({
+    where: and(
+      eq(orders.returnMethod, "SELF"),
+      isNotNull(orders.locator),
+      isNull(orders.trackingVerifiedAt)
+    ),
+    columns: {
+      id: true,
+      orderNumber: true,
+      email: true,
+      carrier: true,
+      locator: true,
+      carrierUrl: true,
+      trackingSubmittedAt: true,
+      trackingSubmissionId: true,
+    },
+    orderBy: (o, { asc }) => [asc(o.trackingSubmittedAt)],
+  });
+}
+
 export async function getSelfReturnsAwaitingTracking() {
   return db.query.orders.findMany({
     where: and(

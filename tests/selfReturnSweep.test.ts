@@ -12,6 +12,7 @@ const written: any[] = [];
 // interleaved log can prove the write happened BEFORE the send, not just that
 // both happened.
 const events: string[] = [];
+let claimLost = false;
 
 vi.mock("@/db/queries", () => ({
   getSelfReturnsAwaitingTracking: async () => rows,
@@ -42,7 +43,11 @@ vi.mock("@/db/drizzle", () => {
       written.push(values);
       return chain;
     },
-    where: () => Promise.resolve(),
+    where: () => chain,
+    // The claim is conditional on the state the sweep read; `claimLost`
+    // simulates the row changing in between (tracking submitted, or ops
+    // rejecting a number, which sets stage 2).
+    returning: async () => (claimLost ? [] : [{ id: "x" }]),
   };
   return { default: chain };
 });
@@ -71,6 +76,7 @@ beforeEach(() => {
   alerts.length = 0;
   written.length = 0;
   events.length = 0;
+  claimLost = false;
 });
 
 describe("sweepSelfReturns", () => {
@@ -125,3 +131,22 @@ describe("sweepSelfReturns", () => {
     expect(reminders).toEqual(["second@example.com"]);
   });
 });
+
+describe("sweepSelfReturns — the row changed after it was read", () => {
+  it("sends nothing when its stage claim matches nothing", async () => {
+    rows.push(row());
+    claimLost = true;
+
+    await expect(sweep()).resolves.toEqual({ reminded: 0, alerted: 0 });
+    expect(reminders).toHaveLength(0);
+  });
+
+  it("raises no alert when its stage claim matches nothing", async () => {
+    rows.push(row({ returnSubmittedAt: daysAgo(11), trackingNudgeStage: 1 }));
+    claimLost = true;
+
+    await sweep();
+    expect(alerts).toHaveLength(0);
+  });
+});
+

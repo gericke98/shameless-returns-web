@@ -1,4 +1,5 @@
 // Pure — the carriers a customer may pick when shipping a return themselves.
+import type { Verifier } from "@/lib/trackingVerification";
 //
 // A fixed list rather than free text, for two reasons: it gives us a real
 // tracking URL to store, and it gives `tracksWithCorreos` a value it can reason
@@ -33,6 +34,12 @@ export type CarrierOption = {
   readonly link: CarrierLink;
   /** A number in this carrier's format, shown as the input's placeholder. */
   readonly example?: string;
+  /**
+   * How we can ask the carrier whether a number is real (lib/carrierLookup).
+   * Absent: it cannot be read from a server (bot protection, captcha, or an
+   * API that needs an account), so ops confirms the number instead.
+   */
+  readonly verify?: Verifier;
 };
 
 const built = (build: (trackingNumber: string) => string | null): CarrierLink => ({
@@ -56,6 +63,7 @@ export const CARRIERS: readonly CarrierOption[] = Object.freeze([
   {
     code: "CORREOS",
     label: "Correos",
+    verify: "correos",
     // Picking Correos is legitimate and works: tracksWithCorreos matches this
     // code, so the dashboard shows real phases exactly as it does for a label
     // we booked ourselves.
@@ -70,6 +78,7 @@ export const CARRIERS: readonly CarrierOption[] = Object.freeze([
   {
     code: "NACEX",
     label: "NACEX",
+    verify: "nacex",
     example: "7280/13972666",
     link: built((n) => {
       const parts = nacexParts(n);
@@ -122,6 +131,7 @@ export const CARRIERS: readonly CarrierOption[] = Object.freeze([
   {
     code: "BPOST",
     label: "bpost",
+    verify: "bpost",
     link: built((n) => `https://track.bpost.cloud/btr/web/#/search?itemCode=${q(n)}&lang=en`),
   },
   {

@@ -94,6 +94,14 @@ export const orders = pgTable("orders", {
   returnSubmittedAt: timestamp("return_submitted_at", { withTimezone: true }),
   // Null while a SELF return is still waiting for the customer's tracking.
   trackingSubmittedAt: timestamp("tracking_submitted_at", { withTimezone: true }),
+  // Self-booked tracking reaches Amphora (write-once) only once verified: by
+  // the carrier at submit, or by an admin in the dashboard. Null with a
+  // locator = waiting for ops. drizzle/0013_tracking_verification.sql.
+  trackingVerifiedAt: timestamp("tracking_verified_at", { withTimezone: true }),
+  trackingVerifiedBy: text("tracking_verified_by"),
+  // Identity of THIS tracking submission, new on every submit. Ops review acts
+  // on the submission it showed, never on "whatever the order holds now".
+  trackingSubmissionId: uuid("tracking_submission_id"),
   // 0 none, 1 reminder sent, 2 ops alerted. A stored fact, so a cron running
   // every 15 minutes cannot re-send by recomputing from age.
   trackingNudgeStage: smallint("tracking_nudge_stage").notNull().default(0),

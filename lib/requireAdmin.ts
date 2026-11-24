@@ -19,3 +19,13 @@ export async function isAdmin(): Promise<boolean> {
   const session = await getServerSession(authOptions);
   return session?.user?.role === "admin";
 }
+
+/**
+ * The admin's email when the caller holds an admin session, else null. For
+ * actions that record WHO did something (actions/selfTrackingReview).
+ */
+export async function adminEmail(): Promise<string | null> {
+  const session = await getServerSession(authOptions);
+  if (session?.user?.role !== "admin") return null;
+  return session.user.email ?? "admin";
+}

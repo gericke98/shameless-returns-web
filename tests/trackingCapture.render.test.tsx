@@ -34,6 +34,7 @@ vi.mock("@/lib/i18n/context", () => ({
       noLink: "No link? Email us.",
       orderNumber: "That is your order number.",
       wrongFormat: "Not this carrier's format. Example:",
+      tooLong: "Too long.",
     },
   }),
   useLocale: () => "en",
@@ -221,6 +222,19 @@ describe("a number that cannot be the tracking number", () => {
     await user.click(screen.getByRole("button"));
 
     expect((await screen.findByRole("alert")).textContent).toBe("That is your order number.");
+  });
+
+  // Codex review: the server's 64-character bound was unknown to the form, so
+  // a long value was sendable and its refusal read as a format error with an
+  // empty example. One shared check now gives each problem its own message.
+  it("says a too-long number is too long, before sending", async () => {
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" orderNumber="#313127" />);
+    await user.selectOptions(screen.getByLabelText("Carrier"), "DHL");
+    await user.type(screen.getByLabelText("Tracking number"), "1".repeat(65));
+
+    expect(screen.getByRole("alert").textContent).toBe("Too long.");
+    expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
   });
 });
 

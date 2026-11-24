@@ -161,3 +161,44 @@ export function isOrderReference(
   if (typed === "") return false;
   return [order.orderNumber, order.id].some((ref) => !!ref && bare(ref) === typed);
 }
+
+/**
+ * Bounded because Amphora pins the value WRITE-ONCE: an unbounded string on an
+ * uncorrectable field is not a minor concern. The longest real reference is
+ * ~35 characters (UPS 18, DHL 20, Correos 23).
+ */
+export const MAX_TRACKING_NUMBER_LENGTH = 64;
+
+export type TrackingNumberProblem = "empty-tracking" | "too-long" | "wrong-format" | "order-number";
+
+export type TrackingNumberCheck =
+  | {
+      ok: true;
+      number: string;
+      /** The link we build for this carrier, or null where the customer gives it. */
+      link: string | null;
+    }
+  | { ok: false; reason: TrackingNumberProblem };
+
+/**
+ * Everything we can know about a tracking number before it is pinned, in one
+ * place: the portal runs it as the customer types, and submitReturnTracking
+ * runs it again before the write-once claim, so the two cannot disagree about
+ * what is refused or why.
+ */
+export function checkTrackingNumber(
+  carrier: CarrierOption,
+  raw: unknown,
+  order: { orderNumber?: string | null; id?: string | null }
+): TrackingNumberCheck {
+  // A server action receives whatever the caller sent: never coerce an object
+  // or an array into a number that gets pinned.
+  if (typeof raw !== "string") return { ok: false, reason: "empty-tracking" };
+  const number = raw.trim();
+  if (number === "") return { ok: false, reason: "empty-tracking" };
+  if (number.length > MAX_TRACKING_NUMBER_LENGTH) return { ok: false, reason: "too-long" };
+  if (isOrderReference(number, order)) return { ok: false, reason: "order-number" };
+  if (carrier.link.kind === "customer") return { ok: true, number, link: null };
+  const link = carrier.link.build(number);
+  return link === null ? { ok: false, reason: "wrong-format" } : { ok: true, number, link };
+}

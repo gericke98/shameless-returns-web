@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CARRIERS, carrierByCode, isOrderReference, nacexParts } from "@/lib/carriers";
+import { CARRIERS, carrierByCode, checkTrackingNumber, isOrderReference, nacexParts } from "@/lib/carriers";
 
 // Each built link was opened in a browser on 2026-11-24 and lands on the
 // number's tracking. These pin the exact shapes that were checked.
@@ -50,5 +50,28 @@ describe("isOrderReference", () => {
   });
   it.each(["CD0CPS0001314360028110S", "3131270", "7280/13972666", ""])("is not: %s", (n) => {
     expect(isOrderReference(n, order)).toBe(false);
+  });
+});
+
+describe("checkTrackingNumber — the one check the portal and the server share", () => {
+  const order = { orderNumber: "#313127", id: "13579117199686" };
+  const dhl = carrierByCode("DHL")!;
+  it.each([
+    [dhl, { n: 1 }, "empty-tracking"],
+    [dhl, "   ", "empty-tracking"],
+    [dhl, "1".repeat(65), "too-long"],
+    [dhl, "#313127", "order-number"],
+    [carrierByCode("NACEX")!, "13972666", "wrong-format"],
+  ] as const)("%#: refuses with %s", (carrier, raw, reason) => {
+    expect(checkTrackingNumber(carrier, raw, order)).toEqual({ ok: false, reason });
+  });
+
+  it("returns the trimmed number and our link, or no link where the customer gives it", () => {
+    expect(checkTrackingNumber(dhl, " CY444710999DE ", order)).toEqual({
+      ok: true,
+      number: "CY444710999DE",
+      link: "https://www.dhl.com/global-en/home/tracking.html?tracking-id=CY444710999DE&submit=1",
+    });
+    expect(checkTrackingNumber(carrierByCode("OTHER")!, "X1", order)).toEqual({ ok: true, number: "X1", link: null });
   });
 });

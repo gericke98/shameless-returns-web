@@ -209,7 +209,7 @@ describe("submitReturnTracking", () => {
     // is around 35 characters.
     const result = await submit("DHL", "1Z".repeat(200));
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, reason: "too-long" });
     expect(written).toHaveLength(0);
     expect(approved).toHaveLength(0);
   });
@@ -310,7 +310,7 @@ describe("submitReturnTracking — numbers that cannot be pinned", () => {
   );
 
   it("refuses a NACEX number its link cannot be built from", async () => {
-    await expect(submit("NACEX", "13972666")).resolves.toEqual({ ok: false, reason: "invalid-tracking" });
+    await expect(submit("NACEX", "13972666")).resolves.toEqual({ ok: false, reason: "wrong-format" });
     expect(written).toHaveLength(0);
     expect(approved).toHaveLength(0);
   });

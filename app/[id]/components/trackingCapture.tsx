@@ -2,7 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { submitReturnTracking } from "@/actions/selfBookedTracking";
-import { CARRIERS, carrierByCode, isOrderReference } from "@/lib/carriers";
+import {
+  CARRIERS,
+  carrierByCode,
+  checkTrackingNumber,
+  type TrackingNumberProblem,
+} from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { useT } from "@/lib/i18n/context";
 
@@ -27,9 +32,9 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
   const [number, setNumber] = useState("");
   const [link, setLink] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState<
-    "idle" | "done" | "error" | "invalid-url" | "order-number" | "wrong-format"
-  >("idle");
+  const [result, setResult] = useState<"idle" | "done" | "error" | "invalid-url">("idle");
+  // A refusal of the number from the server, shown until the number changes.
+  const [refusedNumber, setRefusedNumber] = useState<TrackingNumberProblem | null>(null);
   const [isPending, startTransition] = useTransition();
 
   // Derived during render: whether this carrier needs the customer's link,
@@ -37,22 +42,16 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
   const option = carrierByCode(carrier);
   const needsLink = option?.link.kind === "customer";
   const trimmed = number.trim();
-  const numberProblem: "order-number" | "wrong-format" | null =
-    trimmed === ""
-      ? null
-      : isOrderReference(trimmed, { orderNumber, id })
-        ? "order-number"
-        : option?.link.kind === "built" && option.link.build(trimmed) === null
-          ? "wrong-format"
-          : null;
-  // A refusal from the server for the number shows until the number changes.
+  // The server's own check (lib/carriers), run as the customer types.
+  const numberCheck = option ? checkTrackingNumber(option, number, { orderNumber, id }) : null;
+  const numberProblem = numberCheck && !numberCheck.ok ? numberCheck.reason : null;
+  // "Empty" is not an error to show while nothing is typed yet.
   const shownNumberProblem =
-    numberProblem ?? (result === "order-number" || result === "wrong-format" ? result : null);
+    (numberProblem === "empty-tracking" ? null : numberProblem) ?? refusedNumber;
   const linkCheck = needsLink ? checkTrackingUrl(link) : null;
   const linkTyped = link.trim() !== "";
   const linkBad = linkCheck !== null && !linkCheck.ok && linkTyped;
-  const ready =
-    trimmed !== "" && numberProblem === null && (linkCheck === null || linkCheck.ok);
+  const ready = numberProblem === null && (linkCheck === null || linkCheck.ok);
 
   if (result === "done") {
     return <p className="text-sm font-bold">{t.tracking.done}</p>;
@@ -71,7 +70,7 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
           onChange={(e) => {
             setCarrier(e.target.value);
             setConfirming(false);
-            setResult("idle");
+            setRefusedNumber(null);
           }}
         >
           {CARRIERS.map((c) => (
@@ -92,7 +91,7 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
           onChange={(e) => {
             setNumber(e.target.value);
             setConfirming(false);
-            setResult("idle");
+            setRefusedNumber(null);
           }}
         />
       </label>
@@ -102,7 +101,11 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
         </p>
       ) : shownNumberProblem === "wrong-format" ? (
         <p role="alert" className="text-xs text-red-600">
-          {t.tracking.wrongFormat} {option?.example}
+          {option?.example ? `${t.tracking.wrongFormat} ${option.example}` : t.tracking.error}
+        </p>
+      ) : shownNumberProblem === "too-long" ? (
+        <p role="alert" className="text-xs text-red-600">
+          {t.tracking.tooLong}
         </p>
       ) : null}
 
@@ -165,9 +168,13 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
             if (outcome.ok) setResult("done");
             else if (outcome.reason === "missing-url" || outcome.reason === "invalid-url") {
               setResult("invalid-url");
-            } else if (outcome.reason === "order-number") setResult("order-number");
-            else if (outcome.reason === "invalid-tracking") setResult("wrong-format");
-            else setResult("error");
+            } else if (
+              outcome.reason === "order-number" ||
+              outcome.reason === "wrong-format" ||
+              outcome.reason === "too-long"
+            ) {
+              setRefusedNumber(outcome.reason);
+            } else setResult("error");
             setConfirming(false);
           });
         }}

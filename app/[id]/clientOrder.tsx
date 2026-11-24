@@ -52,6 +52,13 @@ const ClientOrderShell = ({
           {order.returnSubmittedAt != null && order.trackingSubmittedAt == null && (
             <TrackingCapture id={order.id} orderNumber={order.orderNumber} />
           )}
+          {/* Saved but waiting for ops to confirm it with the carrier: from
+              the stored state, so it survives a reload (Codex review). */}
+          {order.returnSubmittedAt != null &&
+            order.trackingSubmittedAt != null &&
+            order.trackingVerifiedAt == null && (
+              <p className="text-sm font-bold">{t.tracking.pending}</p>
+            )}
           <OrderWindow
             name={name}
             items={items}

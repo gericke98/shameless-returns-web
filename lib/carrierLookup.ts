@@ -68,13 +68,13 @@ async function bpost(number: string): Promise<Verdict> {
   }
 }
 
+const LOOKUPS: Record<Verifier, (number: string) => Promise<Verdict>> = { correos, nacex, bpost };
+
+/** Never throws: anything that goes wrong, including reading the body, is "unreadable". */
 export async function verifyWithCarrier(verifier: Verifier, number: string): Promise<Verdict> {
-  switch (verifier) {
-    case "correos":
-      return correos(number);
-    case "nacex":
-      return nacex(number);
-    case "bpost":
-      return bpost(number);
+  try {
+    return await LOOKUPS[verifier](number);
+  } catch {
+    return "unreadable";
   }
 }

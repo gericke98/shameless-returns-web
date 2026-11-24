@@ -1,4 +1,6 @@
-"use server";
+// NOT "use server": every export of such a module is a public endpoint, and
+// these send our email to whatever address the caller passes. Only server
+// code imports them (selfBookedReturn, selfReturnSweep, selfTrackingReview).
 
 // Postmark transport for the self-booked-return lane. `lib/emails.ts` stays
 // pure (no I/O, no env) — this module owns the axios POST, the token check,

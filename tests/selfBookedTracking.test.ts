@@ -139,6 +139,7 @@ describe("submitReturnTracking", () => {
       carrier_url: expect.stringContaining("PQ0B7K0000043680128110B"),
     });
     expect(order.trackingVerifiedBy).toBe("correos");
+    expect(order.trackingSubmissionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(order.trackingVerifiedAt).toBeInstanceOf(Date);
   });
 

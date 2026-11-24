@@ -6,9 +6,11 @@
 // would be pinned write-once.
 //
 // Both actions are public endpoints whatever renders them, so each checks the
-// admin session itself. Both decide through ONE conditional UPDATE on
-// `tracking_verified_at IS NULL`, so a confirm and a reject racing on the same
-// order cannot both act: whichever lands first wins, the other changes nothing.
+// admin session itself. Both act on ONE tracking submission, named by its id
+// (orders.tracking_submission_id, new on every submit), through ONE
+// conditional UPDATE that also requires it to be unverified. So a confirm and
+// a reject racing cannot both act, and a stale screen cannot confirm or clear
+// a number the customer submitted after it was rendered.
 import { revalidatePath } from "next/cache";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
@@ -23,24 +25,27 @@ export type ReviewOutcome =
   | { ok: true; pinned?: boolean }
   | { ok: false; reason: "not-admin" | "not-pending" };
 
-const pendingRow = (id: string) =>
+const pendingSubmission = (id: string, submissionId: string) =>
   and(
     eq(orders.id, id),
+    eq(orders.trackingSubmissionId, submissionId),
     eq(orders.returnMethod, "SELF"),
     isNotNull(orders.locator),
     isNull(orders.trackingVerifiedAt)
   );
 
+const isId = (v: unknown): v is string => typeof v === "string" && v !== "";
+
 /** The admin opened the link and the parcel is real: send it to Amphora. */
-export async function confirmSelfTracking(id: string): Promise<ReviewOutcome> {
+export async function confirmSelfTracking(id: string, submissionId: string): Promise<ReviewOutcome> {
   const admin = await adminEmail();
   if (!admin) return { ok: false, reason: "not-admin" };
-  if (typeof id !== "string" || id === "") return { ok: false, reason: "not-pending" };
+  if (!isId(id) || !isId(submissionId)) return { ok: false, reason: "not-pending" };
 
   const [claimed] = await db
     .update(orders)
     .set({ trackingVerifiedAt: new Date(), trackingVerifiedBy: admin })
-    .where(pendingRow(id))
+    .where(pendingSubmission(id, submissionId))
     .returning({
       id: orders.id,
       orderNumber: orders.orderNumber,
@@ -68,16 +73,15 @@ export async function confirmSelfTracking(id: string): Promise<ReviewOutcome> {
  * The number is not a real parcel: clear it, so the portal asks for it again,
  * and email the customer. Amphora was never told, so nothing there changes.
  */
-export async function rejectSelfTracking(id: string): Promise<ReviewOutcome> {
+export async function rejectSelfTracking(id: string, submissionId: string): Promise<ReviewOutcome> {
   const admin = await adminEmail();
   if (!admin) return { ok: false, reason: "not-admin" };
-  if (typeof id !== "string" || id === "") return { ok: false, reason: "not-pending" };
+  if (!isId(id) || !isId(submissionId)) return { ok: false, reason: "not-pending" };
 
-  // The number is read first so the email can quote it, and the UPDATE is
-  // conditional on that same number: a customer re-submitting in between, or
-  // a confirm landing first, makes this match nothing.
+  // Read first, only so the email can quote the number. The UPDATE decides:
+  // it matches only while this submission is still the pending one.
   const current = await db.query.orders.findFirst({
-    where: pendingRow(id),
+    where: pendingSubmission(id, submissionId),
     columns: { locator: true, orderNumber: true, email: true, shippingName: true, locale: true },
   });
   if (!current?.locator) return { ok: false, reason: "not-pending" };
@@ -89,11 +93,15 @@ export async function rejectSelfTracking(id: string): Promise<ReviewOutcome> {
       carrier: null,
       carrierUrl: null,
       trackingSubmittedAt: null,
-      // Ops is already handling this return: the abandonment sweep must not
-      // also remind the customer or re-alert ops about it.
+      trackingSubmissionId: null,
+      // Stage 2 = "ops has been told about this return's tracking", which is
+      // exactly true: ops just handled it and emailed the customer. The sweep
+      // must not also remind them or alert ops again (its claim is
+      // conditional on the stage it read, so a sweep already in flight
+      // cannot write over this either).
       trackingNudgeStage: 2,
     })
-    .where(and(pendingRow(id), eq(orders.locator, current.locator)))
+    .where(pendingSubmission(id, submissionId))
     .returning({ id: orders.id });
   if (cleared.length === 0) return { ok: false, reason: "not-pending" };
 

@@ -32,10 +32,28 @@ vi.mock("@/actions/opsAlert", () => ({
   },
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+// The actions name the submission through `eq(orders.trackingSubmissionId, x)`;
+// the fake reads that value so its predicate checks the same identity.
+vi.mock("drizzle-orm", async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    eq: (column: any, value: any) => {
+      if (column?.name === "tracking_submission_id") named = value;
+      return actual.eq(column, value);
+    },
+  };
+});
 
 const row: Record<string, any> = {};
+// The submission the dashboard rendered; the action names it.
+const SHOWN = "11111111-1111-4111-8111-111111111111";
+let named = "";
 const pending = () =>
-  row.returnMethod === "SELF" && row.locator != null && row.trackingVerifiedAt == null;
+  row.trackingSubmissionId === named &&
+  row.returnMethod === "SELF" &&
+  row.locator != null &&
+  row.trackingVerifiedAt == null;
 // Simulates another action landing between reject's read and its write.
 let interleave: (() => void) | null = null;
 
@@ -89,6 +107,7 @@ beforeEach(() => {
     trackingVerifiedAt: null,
     trackingVerifiedBy: null,
     trackingNudgeStage: 0,
+    trackingSubmissionId: SHOWN,
   });
 });
 
@@ -96,14 +115,14 @@ describe("confirmSelfTracking", () => {
   it("refuses without an admin session, changing nothing", async () => {
     admin = null;
     const { confirmSelfTracking } = await load();
-    await expect(confirmSelfTracking(row.id)).resolves.toEqual({ ok: false, reason: "not-admin" });
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-admin" });
     expect(row.trackingVerifiedAt).toBeNull();
     expect(pinned).toHaveLength(0);
   });
 
   it("records who confirmed it and sends the stored number to Amphora", async () => {
     const { confirmSelfTracking } = await load();
-    await expect(confirmSelfTracking(row.id)).resolves.toEqual({ ok: true, pinned: true });
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: true, pinned: true });
     expect(row.trackingVerifiedBy).toBe("ops@example.com");
     expect(row.trackingVerifiedAt).toBeInstanceOf(Date);
     expect(pinned).toEqual([
@@ -114,13 +133,13 @@ describe("confirmSelfTracking", () => {
   it("says so when Amphora refused the confirmed number", async () => {
     pinOk = false;
     const { confirmSelfTracking } = await load();
-    await expect(confirmSelfTracking(row.id)).resolves.toEqual({ ok: true, pinned: false });
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: true, pinned: false });
   });
 
   it("never pins twice: a second confirm finds nothing pending", async () => {
     const { confirmSelfTracking } = await load();
-    await confirmSelfTracking(row.id);
-    await expect(confirmSelfTracking(row.id)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    await confirmSelfTracking(row.id, SHOWN);
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-pending" });
     expect(pinned).toHaveLength(1);
   });
 
@@ -128,7 +147,7 @@ describe("confirmSelfTracking", () => {
     row.trackingVerifiedAt = new Date();
     row.trackingVerifiedBy = "correos";
     const { confirmSelfTracking } = await load();
-    await expect(confirmSelfTracking(row.id)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-pending" });
     expect(pinned).toHaveLength(0);
   });
 });
@@ -137,14 +156,14 @@ describe("rejectSelfTracking", () => {
   it("refuses without an admin session, changing nothing", async () => {
     admin = null;
     const { rejectSelfTracking } = await load();
-    await expect(rejectSelfTracking(row.id)).resolves.toEqual({ ok: false, reason: "not-admin" });
+    await expect(rejectSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-admin" });
     expect(row.locator).toBe("#311595");
     expect(emailed).toHaveLength(0);
   });
 
   it("clears the number so the portal asks again, and emails the customer quoting it", async () => {
     const { rejectSelfTracking } = await load();
-    await expect(rejectSelfTracking(row.id)).resolves.toEqual({ ok: true });
+    await expect(rejectSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: true });
     expect(row.locator).toBeNull();
     expect(row.carrier).toBeNull();
     expect(row.carrierUrl).toBeNull();
@@ -158,7 +177,7 @@ describe("rejectSelfTracking", () => {
   it("alerts ops when the customer could not be emailed", async () => {
     emailStatus = 500;
     const { rejectSelfTracking } = await load();
-    await rejectSelfTracking(row.id);
+    await rejectSelfTracking(row.id, SHOWN);
     expect(alerts).toHaveLength(1);
     expect(alerts[0].subject).toContain("CUSTOMER NOT EMAILED");
     expect(alerts[0].body).toContain("#311595");
@@ -170,15 +189,49 @@ describe("rejectSelfTracking", () => {
       row.trackingVerifiedBy = "other-admin@example.com";
     };
     const { rejectSelfTracking } = await load();
-    await expect(rejectSelfTracking(row.id)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    await expect(rejectSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-pending" });
     expect(row.locator).toBe("#311595");
     expect(emailed).toHaveLength(0);
   });
 
+  it("clears the submission id with the number", async () => {
+    const { rejectSelfTracking } = await load();
+    await rejectSelfTracking(row.id, SHOWN);
+    expect(row.trackingSubmissionId).toBeNull();
+  });
+
   it("a confirm after a reject finds nothing to confirm", async () => {
     const { rejectSelfTracking, confirmSelfTracking } = await load();
-    await rejectSelfTracking(row.id);
-    await expect(confirmSelfTracking(row.id)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    await rejectSelfTracking(row.id, SHOWN);
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    expect(pinned).toHaveLength(0);
+  });
+});
+
+// Codex review P1: admin A renders tracking X; it is rejected and the customer
+// submits Y; A's stale Confirm must not verify and pin Y, which nobody saw.
+describe("review acts only on the submission it showed", () => {
+  it("a stale Confirm does not pin a newer submission", async () => {
+    row.locator = "JD0123456789";
+    row.trackingSubmissionId = "22222222-2222-4222-8222-222222222222";
+    const { confirmSelfTracking } = await load();
+    await expect(confirmSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    expect(pinned).toHaveLength(0);
+    expect(row.trackingVerifiedAt).toBeNull();
+  });
+
+  it("a stale Reject does not clear a newer submission", async () => {
+    row.locator = "JD0123456789";
+    row.trackingSubmissionId = "22222222-2222-4222-8222-222222222222";
+    const { rejectSelfTracking } = await load();
+    await expect(rejectSelfTracking(row.id, SHOWN)).resolves.toEqual({ ok: false, reason: "not-pending" });
+    expect(row.locator).toBe("JD0123456789");
+    expect(emailed).toHaveLength(0);
+  });
+
+  it.each([[""], [undefined], [{ id: SHOWN }]])("refuses a missing or junk submission id (%s)", async (junk) => {
+    const { confirmSelfTracking } = await load();
+    await expect(confirmSelfTracking(row.id, junk as any)).resolves.toEqual({ ok: false, reason: "not-pending" });
     expect(pinned).toHaveLength(0);
   });
 });

@@ -126,6 +126,7 @@ export async function submitReturnTracking(
       trackingSubmittedAt: new Date(),
       trackingVerifiedAt: verified ? new Date() : null,
       trackingVerifiedBy: verified ? carrier.verify! : null,
+      trackingSubmissionId: crypto.randomUUID(),
     })
     .where(and(eq(orders.id, id), isNull(orders.locator)))
     .returning({ id: orders.id });

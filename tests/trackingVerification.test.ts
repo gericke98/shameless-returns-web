@@ -69,7 +69,10 @@ describe("nacexVerdict", () => {
   it("is unreadable when the page shows a different number", () => {
     expect(nacexVerdict(NACEX_FOUND, { agency: "7280", note: "13971190" })).toBe("unreadable");
   });
-  it("is unreadable for a page it does not recognise", () => {
+  it("never verifies a page that also says the shipment does not exist", () => {
+    expect(nacexVerdict(NACEX_FOUND + NACEX_NOT_FOUND, parts)).toBe("unreadable");
+  });
+    it("is unreadable for a page it does not recognise", () => {
     expect(nacexVerdict("<html><body>Mantenimiento</body></html>", parts)).toBe("unreadable");
   });
 });
@@ -85,7 +88,9 @@ describe("bpostVerdict", () => {
     ["another error", { error: "RATE_LIMITED" }],
     ["items for another code", { items: [{ itemCode: "CE111111111BE" }] }],
     ["null", null],
+    // Codex review: searchCode echoes the query; it can be another parcel's reference.
+    ["a search hit on another parcel", { items: [{ itemCode: "CE111111111BE", searchCode: "313127" }] }],
   ])("is unreadable for %s", (_l, payload) => {
-    expect(bpostVerdict(payload, "CE643871536BE")).toBe("unreadable");
+    expect(bpostVerdict(payload, payload && (payload as any).items?.[0]?.searchCode === "313127" ? "313127" : "CE643871536BE")).toBe("unreadable");
   });
 });

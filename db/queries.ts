@@ -1,4 +1,6 @@
-"use server";
+// NOT "use server": every export of such a module is a public endpoint
+// anyone can call with arguments of their choosing, and these are internal
+// reads (customer emails, orders, tracking). Only server code imports them.
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
 import db from "./drizzle";
@@ -118,6 +120,7 @@ export async function getSelfTrackingToConfirm() {
       locator: true,
       carrierUrl: true,
       trackingSubmittedAt: true,
+      trackingSubmissionId: true,
     },
     orderBy: (o, { asc }) => [asc(o.trackingSubmittedAt)],
   });

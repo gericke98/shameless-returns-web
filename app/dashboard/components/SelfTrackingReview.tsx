@@ -10,6 +10,8 @@ export type TrackingToConfirm = {
   carrier: string | null;
   locator: string | null;
   carrierUrl: string | null;
+  /** The submission this row shows; review acts on it and nothing else. */
+  trackingSubmissionId: string | null;
 };
 
 /**
@@ -47,7 +49,7 @@ function ReviewRow({ row }: { row: TrackingToConfirm }) {
 
   const act = (action: typeof confirmSelfTracking, done: string) =>
     startTransition(async () => {
-      const outcome = await action(row.id);
+      const outcome = await action(row.id, row.trackingSubmissionId ?? "");
       setMessage(
         outcome.ok
           ? outcome.pinned === false

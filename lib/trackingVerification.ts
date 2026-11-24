@@ -51,15 +51,17 @@ export function nacexVerdict(
   html: string,
   parts: { agency: string; note: string }
 ): Verdict {
+  const refused = /No existe ning/.test(html);
   const table = /<table[^>]*id="tabla_estado"[^>]*>([\s\S]*?)<\/table>/i.exec(html)?.[1];
-  if (table) {
-    const shown = /<b>\s*([^<]+?)\s*<\/b>/i.exec(table)?.[1];
-    const status = /class="fuente_titulo[^"]*"[^>]*>\s*([^<]+?)\s*</i.exec(table)?.[1];
-    if (shown === `${parts.agency}/${parts.note}` && status) return "verified";
-    return "unreadable";
-  }
-  if (/No existe ning/.test(html)) return "unknown";
-  return "unreadable";
+  // A page that both shows a shipment and says there is none proves nothing.
+  if (table && refused) return "unreadable";
+  if (refused) return "unknown";
+  if (!table) return "unreadable";
+  const shown = /<b>\s*([^<]+?)\s*<\/b>/i.exec(table)?.[1];
+  const status = /class="fuente_titulo[^"]*"[^>]*>\s*([^<]+?)\s*</i.exec(table)?.[1];
+  // Layout drift lands here as "unreadable", which sends the number to ops:
+  // it can cost a manual check, never a wrong pin.
+  return shown === `${parts.agency}/${parts.note}` && status ? "verified" : "unreadable";
 }
 
 /** bpost public tracking JSON (`track.bpost.cloud/track/items`). */
@@ -68,7 +70,8 @@ export function bpostVerdict(payload: unknown, trackingNumber: string): Verdict 
   const body = payload as Record<string, any>;
   if (body.error === "NO_DATA_FOUND") return "unknown";
   if (!Array.isArray(body.items)) return "unreadable";
-  return body.items.some((i: any) => same(i?.itemCode, trackingNumber) || same(i?.searchCode, trackingNumber))
-    ? "verified"
-    : "unreadable";
+  // `itemCode` is the shipment's own code. NOT `searchCode`: that echoes what
+  // was searched for, which can be a reference belonging to another parcel
+  // (Codex review: "313127" with a foreign itemCode verified).
+  return body.items.some((i: any) => same(i?.itemCode, trackingNumber)) ? "verified" : "unreadable";
 }

@@ -1,17 +1,23 @@
 "use client";
-import { useMemo, useState, useTransition } from "react";
+import { useTransition } from "react";
 import { ClientOrderProps } from "@/types";
-import type { ReturnMethod } from "@/lib/returnMethods";
 import { AsyncButton } from "@/app/[id]/components/buttons/asyncButton";
 import { TrackingCapture } from "@/app/[id]/components/trackingCapture";
 import { ContinueButton } from "./components/buttons/nextButton";
 import { OrderWindow } from "./windows/orderWindow";
 import { Header } from "./windows/header";
 import { useT } from "@/lib/i18n/context";
-import { useFeeLegs } from "./feesContext";
-import { calculatePrices } from "@/lib/portalPrices";
+import { PortalWizardProvider, usePortalWizard } from "./wizardContext";
 
-export const ClientOrder = ({
+export const ClientOrder = (props: ClientOrderProps) => (
+  // The wizard (lib/portalWizard) lives here: the lowest common ancestor of
+  // the windows that move through it and the buttons below them.
+  <PortalWizardProvider items={props.items} allProducts={props.allProducts}>
+    <ClientOrderShell {...props} />
+  </PortalWizardProvider>
+);
+
+const ClientOrderShell = ({
   name,
   items,
   order,
@@ -19,53 +25,9 @@ export const ClientOrder = ({
   allProducts,
   statusPanel,
 }: ClientOrderProps) => {
-  const [position, setPosition] = useState<number>(1);
-  // No default (#312385): a pre-selected "store credit" paid customers in gift
-  // cards they never chose. Null until the customer picks on step 3; step 3's
-  // Continue stays hidden until then (see `needsTender`).
-  const [credito, setCredito] = useState<boolean | null>(null);
-  const legs = useFeeLegs();
-  // Lowest common ancestor of ReturnMethodChoice (inside LastWindow) and
-  // AsyncButton, which are siblings under this component. "CORREOS" matches
-  // what AsyncButton effectively sent before self-booking existed.
-  const [method, setMethod] = useState<ReturnMethod>("CORREOS");
+  const wizard = usePortalWizard();
   const [isPending, startTransition] = useTransition();
   const t = useT();
-
-  // Compute a flag whether any item is selected (memoized)
-  const hasSelectedItems = useMemo(
-    () => items.some((item) => item.action),
-    [items]
-  );
-  // Step 3 (the payout choice) exists only when money comes back to the
-  // customer: the same valuation OrderWindowContent uses to decide whether to
-  // render it, so this gate and the screen cannot disagree.
-  const needsTender = useMemo(
-    () =>
-      position === 3 &&
-      credito === null &&
-      calculatePrices(items, allProducts, legs).totalPrice > 0,
-    [position, credito, items, allProducts, legs]
-  );
-
-  // Any basket change voids the payout choice: it was made for a different
-  // total. This replaces "an exchange forces card refund", which pre-selected
-  // the card when the exchange was later removed and money came back.
-  //
-  // Voiding the choice also sends the customer back to where it is made. The
-  // summary (step 4) lets them edit items, and staying there after the void
-  // left a live submit with no payout: the server refused it and the customer
-  // got the crash screen (#312973). From step 3 they choose again, or — if
-  // nothing comes back any more — step 3 is empty and Continue moves on.
-  const handleItemChange = () => {
-    setCredito(null);
-    setPosition((prev) => Math.min(prev, 3));
-  };
-  const handleContinue = () => {
-    startTransition(() => {
-      setPosition((prev) => prev + 1);
-    });
-  };
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between bg-brand-paper gap-10 pb-20">
@@ -91,33 +53,31 @@ export const ClientOrder = ({
             <TrackingCapture id={order.id} />
           )}
           <OrderWindow
-            position={position}
             name={name}
             items={items}
             order={order}
             id={id}
-            setPosition={setPosition}
-            credito={credito}
-            setCredito={setCredito}
-            method={method}
-            setMethod={setMethod}
-            onItemChange={handleItemChange}
+            onItemChange={wizard.itemChanged}
             allProducts={allProducts}
           />
           <div className="w-full mt-4">
-            {position >= 4 ? (
+            {wizard.step === "summary" ? (
               <AsyncButton
                 text={t.common.updateOrder}
                 id={id}
-                isCredit={credito}
+                // Never a default (#312385): null only when nothing comes back,
+                // which is the one case the server accepts it.
+                isCredit={wizard.payout === null ? null : wizard.payout === "credit"}
                 email={order.email}
-                method={method}
+                method={wizard.method}
+                disabled={!wizard.canSubmit}
+                onPayoutRefused={wizard.payoutRefused}
               />
-            ) : (
+            ) : wizard.step === "address" ? null : (
+              // The address step submits its own form (SecondWindowForm).
               <ContinueButton
-                position={position}
-                hasChanges={hasSelectedItems && !needsTender}
-                onClick={handleContinue}
+                visible={wizard.canContinue}
+                onClick={() => startTransition(() => wizard.next())}
                 isPending={isPending}
               />
             )}

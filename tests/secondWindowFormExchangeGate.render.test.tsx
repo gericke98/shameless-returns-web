@@ -9,31 +9,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-// SecondWindowForm calls useFormState(updateData, position). The real
-// updateData ("use server") pulls in db/queries.ts and friends; stub it the
-// same way tests/returnMethodThreading.render.test.tsx stubs the sibling
-// action, since nothing here exercises an actual submission.
+// SecondWindowForm saves through saveAddress ("use server"), which pulls in
+// db/queries.ts and friends. Nothing here submits, so a stub is enough.
 vi.mock("@/actions/updateOrder", () => ({
-  updateData: (state: number) => state,
+  saveAddress: async () => ({ ok: true }),
 }));
 
-// The installed react-dom (18.3.1, plain npm) does not export useFormState --
-// that hook is only supplied by Next's patched react-dom at build/runtime.
-// Plain vitest resolves the unpatched package, so it has to be shimmed the
-// same way tests/anularOrder.test.ts shims React's `cache()` for the same
-// class of reason. The shim never runs the action; nothing here submits.
-vi.mock("react-dom", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-dom")>();
-  return {
-    ...actual,
-    useFormState: (action: unknown, initialState: unknown) => [
-      initialState,
-      action,
-    ],
-  };
-});
-
 import { SecondWindowForm } from "@/app/[id]/components/secondWindowForm";
+import { PortalWizardProvider } from "@/app/[id]/wizardContext";
 import { FeesProvider } from "@/app/[id]/feesContext";
 import { LocaleProvider } from "@/lib/i18n/context";
 import { DEFAULT_FEE_KEY, UNBOUNDED_MAX_GRAMS, type FeeTable } from "@/lib/fees";
@@ -102,13 +85,13 @@ function mount(items: (typeof productsOrder.$inferSelect)[]) {
   return render(
     <LocaleProvider locale="en">
       <FeesProvider table={TABLE} order={ORDER}>
+        <PortalWizardProvider items={items as any} allProducts={[]}>
         <SecondWindowForm
           order={ORDER as any}
-          position={2}
-          setPosition={() => {}}
           items={items}
           allProducts={[]}
         />
+        </PortalWizardProvider>
       </FeesProvider>
     </LocaleProvider>
   );

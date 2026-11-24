@@ -1,33 +1,18 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect } from "react";
 import { Progress } from "@/components/ui/progress";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
 import Image from "next/image";
-import { productsOrder } from "@/db/schema";
-import { Product } from "@/types";
 import { cn } from "@/lib/utils";
 import RegaloWhite from "@/public/giftWhite.svg";
 import RegaloBlack from "@/public/giftBlack.svg";
 import CardWhite from "@/public/cardWhite.svg";
 import CardBlack from "@/public/cardBlack.svg";
-import { useFeeLegs } from "../feesContext";
-import { valueBasket } from "@/lib/basket";
-import { centsToEuros, resolveFee } from "@/lib/fees";
+import { creditTotal } from "@/lib/agreement";
+import { usePortalWizard } from "../wizardContext";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros, type Dictionary, type Locale } from "@/lib/i18n";
-
-type Props = {
-  items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
-  shipping: boolean;
-  position: number;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
-  onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
-  id: string;
-  credito: boolean | null;
-  allProducts: Product[];
-};
 
 // Reusable sub-component for Store Credit.
 // `t` and `locale` arrive as props, for consistency with sibling components
@@ -92,7 +77,7 @@ const StoreCredit = ({
         isSelected ? "text-white" : "text-black"
       )}
     >
-      {t.third.totalRefund}: {formatEuros(totalPrice * 1.15, locale)}
+      {t.third.totalRefund}: {formatEuros(totalPrice, locale)}
     </p>
   </div>
 );
@@ -162,38 +147,18 @@ const OriginalPayment = ({
   </div>
 );
 
-const ThirdWindowBase = ({
-  items,
-  shipping,
-  position,
-  setPosition,
-  setCredito,
-  credito,
-  allProducts,
-}: Props) => {
-  const legs = useFeeLegs();
+const ThirdWindowBase = () => {
+  const wizard = usePortalWizard();
   const t = useT();
   const locale = useLocale();
 
-  // Compute the total price after subtracting the "CAMBIO" items and shipping.
-  //
-  // This used to re-implement valueBasket inline, pricing a replacement off
-  // the first variant of the new product rather than the chosen one and
-  // never applying a line's own discount depth. That disagreed with the
-  // amount Stripe actually charges the moment an order carried lines at
-  // different sale depths. One shared valuation (lib/basket.ts) now backs
-  // both this screen and the charge, so the two cannot drift apart again.
-  const totalPrice = useMemo(() => {
-    const basket = valueBasket(items, allProducts);
-    let result = basket.netAmount;
-    const { feeCents } = resolveFee(legs, {
-      hasItems: basket.hasItems,
-      netAmount: result,
-      grams: basket.grams,
-    });
-    if (shipping) result -= centsToEuros(feeCents);
-    return result;
-  }, [allProducts, items, shipping, legs]);
+  // The cash value coming back, from the same terms the server agrees the
+  // submit from (lib/selectionTerms) — including the return method, which the
+  // old inline valuation here ignored. Credit is the server's own rounding
+  // (creditTotal: 115%, half up, in cents), not `total * 1.15` in floats.
+  const netCents = wizard.terms.netCents;
+  const refundTotal = netCents / 100;
+  const creditTotalEuros = creditTotal(netCents) / 100;
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -209,7 +174,7 @@ const ThirdWindowBase = ({
       <FaArrowAltCircleLeft
         size={25}
         className="mt-2 cursor-pointer"
-        onClick={() => setPosition(position - 1)}
+        onClick={wizard.back}
       />
 
       {/* Title */}
@@ -220,16 +185,16 @@ const ThirdWindowBase = ({
       {/* Two reembolso options side by side on large screens, stacked on mobile */}
       <div className="flex flex-col gap-3 w-full">
         <StoreCredit
-          totalPrice={totalPrice}
-          isSelected={credito === true}
-          onClick={() => setCredito(true)}
+          totalPrice={creditTotalEuros}
+          isSelected={wizard.payout === "credit"}
+          onClick={() => wizard.choosePayout("credit")}
           t={t}
           locale={locale}
         />
         <OriginalPayment
-          totalPrice={totalPrice}
-          isSelected={credito === false}
-          onClick={() => setCredito(false)}
+          totalPrice={refundTotal}
+          isSelected={wizard.payout === "refund"}
+          onClick={() => wizard.choosePayout("refund")}
           t={t}
           locale={locale}
         />

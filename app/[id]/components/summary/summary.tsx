@@ -12,9 +12,10 @@ import {
 } from "@/components/ui/accordion";
 import { Product } from "@/types";
 import { useFeeLegs } from "../../feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
+import { centsToEuros } from "@/lib/fees";
 import { valueBasket } from "@/lib/basket";
-import { buildAgreement, shownTotalEuros } from "@/lib/agreement";
+import { shownTotalEuros, type Tender } from "@/lib/agreement";
+import { selectionTerms } from "@/lib/selectionTerms";
 import {
   indexCatalogue,
   orderRatio,
@@ -29,7 +30,13 @@ type Props = {
   items: (typeof productsOrder.$inferSelect)[];
   shipping: boolean;
   final: boolean;
-  credito?: boolean;
+  /**
+   * The payout the customer chose, or null. Never defaulted: a null payout on
+   * money coming back shows the cash total and no tender-specific line, where
+   * `credito || false` once showed "Reembolso tradicional" for a choice
+   * nobody made (#312875).
+   */
+  payout?: Tender | null;
   allProducts?: Product[];
   /**
    * The lane the customer has chosen, where a choice has been offered. This box
@@ -47,7 +54,7 @@ export const SummaryComponent = ({
   items,
   shipping,
   final,
-  credito,
+  payout = null,
   allProducts = [],
   method,
 }: Props) => {
@@ -92,30 +99,18 @@ export const SummaryComponent = ({
   const totalPriceCambio = basket.exchangePrice;
 
   const legs = useFeeLegs();
-  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(
-    legs,
-    basket
-  );
-  // Mirror actions/payments.ts exactly: a self-booked return pays the outbound
-  // leg only, never the return leg. The customer is paying their own courier
-  // for that journey.
+  // The terms the server agrees the submit from (lib/selectionTerms), so the
+  // box, the paragraph under it and the charge cannot disagree.
+  const terms = selectionTerms(basket, legs, method ?? "CORREOS", payout);
+  const { returnLegCents, outboundLegCents, feeCents } = terms.fee;
+  // A self-booked return pays the outbound leg only, never the return leg.
+  // The customer is paying their own courier for that journey.
   const selfBooked = method === "SELF";
   const chargeCents = selfBooked ? outboundLegCents : feeCents;
   const shippingCost = centsToEuros(chargeCents);
   // Split for display only. The charge is chargeCents; these two add up to it.
   const returnLegCost = centsToEuros(selfBooked ? 0 : returnLegCents);
   const outboundLegCost = centsToEuros(outboundLegCents);
-
-  // The agreement is the one source for the total: the Stripe charge and the
-  // stored submission read the same function (lib/agreement.ts).
-  const agreement = buildAgreement({
-    lines: basket.lines,
-    returnLegCents,
-    outboundLegCents,
-    feeCents,
-    selfBooked,
-    tender: credito ? "credit" : "refund",
-  });
 
   // The second section holds replacement items and the shipping fee, and its
   // heading has to describe whichever of those it actually contains. A pure
@@ -134,13 +129,14 @@ export const SummaryComponent = ({
   const showsShipping =
     shipping && itemsToDevolver.length > 0 && chargeCents > 0;
 
-  const finalTotal = shownTotalEuros(agreement);
+  // Until a required payout is chosen there is no agreement: show the cash
+  // value, never a tender's.
+  const agreement = terms.agreement;
+  const finalTotal = agreement ? shownTotalEuros(agreement) : terms.netCents / 100;
+  const isCredit = agreement?.tender === "credit" && agreement.netCents > 0;
   // The bonus is what credit adds on top of the cash value — only ever on
   // money coming back, never on a charge.
-  const creditBonus =
-    credito && agreement.netCents > 0
-      ? (agreement.owedCents - agreement.netCents) / 100
-      : 0;
+  const creditBonus = isCredit ? (agreement.owedCents - agreement.netCents) / 100 : 0;
 
   // Helper function to find a product by variant ID
   const findProductByVariantId = (variantId: string | null) => {
@@ -236,7 +232,7 @@ export const SummaryComponent = ({
       </Accordion>
 
       {/* Crédito en tienda */}
-      {credito && (
+      {isCredit && (
         <div className="w-full flex flex-row justify-between items-center mt-3 sm:mt-4">
           <span className="font-semibold text-sm">{t.summary.bonus}</span>
           <span className="font-semibold text-sm">

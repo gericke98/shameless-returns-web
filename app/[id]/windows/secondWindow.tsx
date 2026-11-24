@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect } from "react";
 import { Progress } from "@/components/ui/progress";
 import Image from "next/image";
 import Link from "next/link";
@@ -10,17 +10,15 @@ import { SecondWindowForm } from "../components/secondWindowForm";
 import { orders, productsOrder } from "@/db/schema";
 import { Product } from "@/types";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
-import { useFeeLegs } from "../feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
-import { valueBasket } from "@/lib/basket";
+import { centsToEuros } from "@/lib/fees";
 import { isInternationalOrder } from "@/lib/countries";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
+import { ReturnMethodChoice } from "../components/returnMethodChoice";
+import { usePortalWizard } from "../wizardContext";
 
 type Props = {
   order: typeof orders.$inferSelect;
-  position: number;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
@@ -29,8 +27,6 @@ type Props = {
 
 const SecondWindowBase = ({
   order,
-  position,
-  setPosition,
   items,
   onItemChange,
   id,
@@ -38,19 +34,15 @@ const SecondWindowBase = ({
 }: Props) => {
   const t = useT();
   const locale = useLocale();
-  // One shared valuation (lib/basket.ts), the same one payments.ts charges
-  // from, so the "Cost" line below cannot drift from what Stripe bills.
-  const basket = useMemo(
-    () => valueBasket(items, allProducts),
-    [allProducts, items]
-  );
-  const legs = useFeeLegs();
+  // The wizard's terms (lib/selectionTerms): the same fee the server agrees
+  // the submit from, so the "Cost" line below cannot drift from it.
+  const wizard = usePortalWizard();
   // The legs are shown separately because this screen is about choosing a
   // RETURN METHOD. Only the return leg is the cost of the drop-off; the rest
   // is delivering the replacement, which happens whatever method is chosen.
   // Billing the combined figure against the method overstated it — an Italian
   // exchange read "Cost: 18.20 €" for a drop-off that costs 11.00 €.
-  const { returnLegCents, outboundLegCents } = resolveFee(legs, basket);
+  const { returnLegCents, outboundLegCents } = wizard.terms.fee;
 
   // Spain drops the parcel at a Correos point; everything else is collected
   // from the customer's address through Amphora. Read from the stored
@@ -70,7 +62,7 @@ const SecondWindowBase = ({
       <FaArrowAltCircleLeft
         size={25}
         className="mt-2 cursor-pointer"
-        onClick={() => setPosition(position - 1)}
+        onClick={wizard.back}
       />
       <div className="space-y-8 p-0">
         {/* Title */}
@@ -128,6 +120,19 @@ const SecondWindowBase = ({
           </div>
         </div>
 
+        {/*
+          Self-booking is chosen HERE, before the payout step, because it
+          decides whether that step exists: it removes the return leg from
+          the fee, and can turn "nothing comes back" into "money comes back".
+          On the summary it came too late (#312875 class). Changing it voids
+          a payout already chosen (wizard "methodChanged").
+        */}
+        <ReturnMethodChoice
+          value={wizard.method}
+          onChange={wizard.chooseMethod}
+          returnLegCents={returnLegCents}
+        />
+
         {/* Secondary Info Section */}
         <div className="w-full flex flex-col mt-2 p-0">
           {/* Title row */}
@@ -159,8 +164,6 @@ const SecondWindowBase = ({
           {/* Form */}
           <SecondWindowForm
             order={order}
-            position={position}
-            setPosition={setPosition}
             items={items}
             onItemChange={onItemChange}
             allProducts={allProducts}

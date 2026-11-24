@@ -11,6 +11,8 @@ export const AsyncButton = ({
   isCredit,
   email,
   method,
+  disabled,
+  onPayoutRefused,
 }: {
   text: string;
   id: string;
@@ -24,6 +26,14 @@ export const AsyncButton = ({
    * resolveReturnMethod and ignores any claim that is not exactly "SELF".
    */
   method: ReturnMethod;
+  /**
+   * The wizard's canSubmit is false: the terms are not agreed yet (a required
+   * payout is missing). The server refuses the same case; this keeps the
+   * customer from reaching it.
+   */
+  disabled: boolean;
+  /** The server refused for a missing payout: send the customer to choose one. */
+  onPayoutRefused: () => void;
 }) => {
   const t = useT();
   const [isPending, startTransition] = useTransition();
@@ -33,7 +43,7 @@ export const AsyncButton = ({
       className={cn(
         // Matches ContinueButton — see nextButton.tsx for why the border stays.
         "bg-white text-black border border-black py-4 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold",
-        isPending && "opacity-60 cursor-not-allowed"
+        (isPending || disabled) && "opacity-60 cursor-not-allowed"
       )}
       type="submit"
       // This submit takes ~8 seconds: a Shopify return, then an Amphora
@@ -44,12 +54,16 @@ export const AsyncButton = ({
       //
       // `isPending` stays true through the redirect that ends returnFunction,
       // so the button does not flicker back to clickable mid-flight.
-      disabled={isPending}
+      disabled={isPending || disabled}
       aria-busy={isPending}
       onClick={() => {
-        if (isPending) return;
+        if (isPending || disabled) return;
         startTransition(async () => {
-          await returnFunction(id, isCredit, email, method);
+          // Success redirects (to Stripe or /success) and never returns here.
+          // A refusal for a missing payout comes back as a value, not the
+          // crash screen.
+          const refusal = await returnFunction(id, isCredit, email, method);
+          if (refusal?.reason === "payout-required") onPayoutRefused();
         });
       }}
     >

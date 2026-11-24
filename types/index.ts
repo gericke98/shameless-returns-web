@@ -343,39 +343,17 @@ export type ClientOrderWindowContentProps = {
   items: OrderItem[];
   order: typeof orders.$inferSelect;
   id: string;
-  setPosition: Dispatch<SetStateAction<number>>;
-  /** The customer's payout choice. Null until they pick one: never defaulted. */
-  credito: boolean | null;
-  setCredito: Dispatch<SetStateAction<boolean | null>>;
-  /**
-   * The customer's claimed return lane, chosen on the summary screen
-   * (ReturnMethodChoice, inside LastWindow) and consumed by AsyncButton — two
-   * siblings of OrderWindow under ClientOrder. Threaded through as plain
-   * props, same as credito/setCredito, so the choice actually reaches the
-   * submit button instead of dying inside LastWindow's own state.
-   */
-  method: ReturnMethod;
-  setMethod: Dispatch<SetStateAction<ReturnMethod>>;
-};
-
-export type OrderWindowContentProps = {
-  position: number;
-  name: string;
-  items: OrderItem[];
-  order: typeof orders.$inferSelect;
-  id: string;
-  setPosition: Dispatch<SetStateAction<number>>;
-  setCredito: Dispatch<SetStateAction<boolean | null>>;
-  credito: boolean | null;
   allProducts: Product[];
-  method: ReturnMethod;
-  setMethod: Dispatch<SetStateAction<ReturnMethod>>;
 };
 
-export type Prices = {
-  returnPrice: number;
-  exchangePrice: number;
-  totalPrice: number;
+/**
+ * What a window needs besides the wizard. The step, the payout choice and the
+ * return method are NOT props: every window reads them from the wizard
+ * context (app/[id]/wizardContext.tsx), so none of them can move the step on
+ * its own.
+ */
+export type OrderWindowContentProps = ClientOrderWindowContentProps & {
+  onItemChange?: (updatedItem: any) => void;
 };
 
 // ==========================================
@@ -390,8 +368,8 @@ export const ACTION_TYPES = {
 export type ActionType = (typeof ACTION_TYPES)[keyof typeof ACTION_TYPES];
 
 export type ContinueButtonProps = {
-  position: number;
-  hasChanges: boolean;
+  /** The wizard's canContinue for the current step. */
+  visible: boolean;
   onClick: () => void;
   isPending: boolean;
 };

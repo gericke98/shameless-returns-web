@@ -7,12 +7,13 @@
 import { getFeeTable } from "@/db/fees";
 import { getOrderTotal } from "@/db/queries";
 import { proposeSubmission, type SubmissionLineInput } from "@/db/submissions";
-import { buildAgreement, type Agreement } from "@/lib/agreement";
+import type { Agreement } from "@/lib/agreement";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { resolveFulfillmentLineItems } from "@/lib/fulfillmentLines";
-import { resolveFee } from "@/lib/fees";
 import { loadBasket } from "@/lib/loadBasket";
 import type { ReturnMethod } from "@/lib/returnMethods";
+import { selectionTerms, tenderFromIsCredit } from "@/lib/selectionTerms";
+import { PayoutRequiredError } from "@/lib/payoutRequired";
 
 export type Proposal = {
   submissionId: string;
@@ -39,25 +40,17 @@ async function currentAgreement(orderId: string, isCredit: boolean | null, metho
   // the replacement is delivered to the delivery address, which is the same
   // place unless the customer named a different one.
   const legs = feeLegsForOrder(await getFeeTable(), order);
-  const { feeCents, returnLegCents, outboundLegCents } = resolveFee(legs, basket);
 
-  // A self-booked return pays its own courier, so it is billed the outbound
-  // leg alone. `method` has already been through resolveReturnMethod on the
-  // server, so it cannot be a client claiming SELF where SELF is not offered.
-  const agreement = buildAgreement({
-    lines: basket.lines,
-    returnLegCents,
-    outboundLegCents,
-    feeCents,
-    selfBooked: method === "SELF",
-    tender: isCredit === true ? "credit" : "refund",
-  });
+  // The same function the portal decides its payout step from, so the two
+  // cannot disagree about whether a choice is owed. `method` has already been
+  // through resolveReturnMethod on the server, so it cannot be a client
+  // claiming SELF where SELF is not offered.
+  const terms = selectionTerms(basket, legs, method, tenderFromIsCredit(isCredit));
   // The payout is the customer's choice, never a default (#312385). When money
-  // comes back it must have been made explicitly; when nothing comes back
-  // (netCents <= 0) the tender moves no money and the portal shows no choice.
-  if (agreement.netCents > 0 && typeof isCredit !== "boolean") {
-    throw new Error(`Order ${orderId}: money is owed back but no payout was chosen`);
-  }
+  // comes back it must have been made explicitly; when nothing comes back the
+  // tender moves no money and the portal shows no choice.
+  if (!terms.agreement) throw new PayoutRequiredError(orderId);
+  const agreement = terms.agreement;
 
   const rowById = new Map<number, any>(
     (order.products ?? []).map((row: any) => [Number(row.id), row])

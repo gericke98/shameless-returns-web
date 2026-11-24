@@ -173,7 +173,20 @@ export async function anularOrder(productOrderId: number, orderId: string) {
   revalidatePath("/", "layout");
 }
 
-export async function updateData(prevState: number, formData: FormData) {
+/** What saving the address form did. Never a step: the wizard decides where to go. */
+export type SaveAddressResult =
+  | { ok: true }
+  | { ok: false; reason: "no-session" | "incomplete" | "invalid-delivery" };
+
+/**
+ * Save the portal's address form. Returns what happened, never a step number:
+ * it used to return `prevState + 1` through useFormState, and React queues a
+ * repeated submit with the previous result as its prevState, so a double-tap
+ * counted 2 → 3 → 4 and skipped the payout step (#312875, reproduced
+ * 2026-11-24). The write itself is idempotent (the same address twice is the
+ * same row), and so is the wizard's `addressSaved`.
+ */
+export async function saveAddress(formData: FormData): Promise<SaveAddressResult> {
   const data = parseFormData(formData);
 
   // Unlike updateOrder's form, this one submits the ORDER id as "id" (see
@@ -181,11 +194,11 @@ export async function updateData(prevState: number, formData: FormData) {
   // rewrites the shipping address, which redirects where the return label is
   // sent — the most consequential customer-facing write on the portal.
   if (!data.orderId || !(await hasOrderAccess(data.orderId))) {
-    return prevState;
+    return { ok: false, reason: "no-session" };
   }
 
   if (!data.orderId || !data.name || !data.address) {
-    return prevState;
+    return { ok: false, reason: "incomplete" };
   }
 
   // The delivery block is validated before anything is written, and a bad one
@@ -197,7 +210,7 @@ export async function updateData(prevState: number, formData: FormData) {
     console.warn(
       `updateData: rejected the delivery address on order ${data.orderId} (${delivery.reason})`
     );
-    return prevState;
+    return { ok: false, reason: "invalid-delivery" };
   }
 
   // NOTE: `shippingCountry` is deliberately absent from this payload.
@@ -260,5 +273,5 @@ export async function updateData(prevState: number, formData: FormData) {
     .where(eq(orders.id, data.orderId));
 
   revalidatePath("/", "layout");
-  return prevState + 1;
+  return { ok: true };
 }

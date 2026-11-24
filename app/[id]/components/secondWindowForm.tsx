@@ -1,23 +1,19 @@
-import { updateData } from "@/actions/updateOrder";
+import { saveAddress } from "@/actions/updateOrder";
 import { FormInput } from "@/components/formInput";
 import { orders, productsOrder } from "@/db/schema";
 import { countryDisplayName } from "@/lib/countries";
-import { useEffect } from "react";
-import { useFormState } from "react-dom";
+import { useState, useTransition } from "react";
 import { SummaryComponent } from "../components/summary/summary";
 import { Product } from "@/types";
-import { useFeeLegs } from "../feesContext";
-import { centsToEuros, resolveFee } from "@/lib/fees";
-import { valueBasket } from "@/lib/basket";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { DeliveryAddressFields } from "./deliveryAddressFields";
 import type { OrderAddressFields } from "@/lib/deliveryAddress";
 import { ACTIONS } from "@/placeholder";
+import { cn } from "@/lib/utils";
+import { usePortalWizard } from "../wizardContext";
 
 type Props = {
   order: typeof orders.$inferSelect;
-  position: number;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   allProducts: Product[];
@@ -25,23 +21,15 @@ type Props = {
 
 export const SecondWindowForm = ({
   order,
-  position,
-  setPosition,
   items,
-  onItemChange,
   allProducts,
 }: Props) => {
   const t = useT();
   const locale = useLocale();
-  // useFormState returns [state, formAction]
-  const [state, formAction] = useFormState(updateData, position);
+  const wizard = usePortalWizard();
+  const [isPending, startTransition] = useTransition();
+  const [saveFailed, setSaveFailed] = useState(false);
 
-  // Same valuation the server charges from: payments.ts -> loadBasket ->
-  // valueBasket, over the RAW catalogue — there is no discounted product
-  // list any more; each replacement is priced against the line it replaces
-  // (lib/replacementPricing.ts). This used to be a hand-rolled copy of that
-  // reduce; the two agreed, but nothing made them keep agreeing.
-  const basket = valueBasket(items, allProducts);
   // Only an exchange has a replacement to deliver. A pure return must not be
   // offered a delivery address: there is nothing to send, and the outbound leg
   // it would price is zero.
@@ -49,29 +37,32 @@ export const SecondWindowForm = ({
   // ACTIONS.CHANGE, never the literal "CAMBIO" and never the dropdown's label:
   // productsorder.action stores the stable code, and comparing against the
   // localized text is what once made an English exchange save as a return.
-  // `!confirmed` matches the filter orderWindowContent already uses — a line
+  // `!confirmed` matches the filter valueBasket already uses — a line
   // already submitted on an earlier pass is not part of this basket.
   const hasExchange = items.some(
     (item) => item.action === ACTIONS.CHANGE && !item.confirmed
   );
-  const legs = useFeeLegs();
-  const { feeCents } = resolveFee(legs, basket);
-  const totalPrice = basket.netAmount - centsToEuros(feeCents);
 
-  useEffect(() => {
-    if (state !== 2) {
-      setPosition(totalPrice > 0 ? state : state + 1);
-    }
-  }, [state, totalPrice, setPosition]);
-
+  // The save runs from the submit EVENT, and the wizard moves on only when it
+  // reports success. This used to be useFormState returning `prevState + 1`
+  // and an effect copying that number into the step: React queues a repeated
+  // submit with the previous result as its prevState, so a double-tap counted
+  // 2 → 3 → 4 and skipped the payout step (#312875). Now the button is
+  // disabled while saving, and even a save that slips through lands on the
+  // same step — `addressSaved` is idempotent.
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (isPending) return;
     const formData = new FormData(e.currentTarget);
-    formAction(formData);
-    if (onItemChange) {
-      // Cast the order to the expected type.
-      onItemChange(order as unknown as typeof productsOrder.$inferSelect);
-    }
+    setSaveFailed(false);
+    startTransition(async () => {
+      const result = await saveAddress(formData);
+      if (result.ok) {
+        wizard.addressSaved();
+      } else {
+        setSaveFailed(true);
+      }
+    });
   };
 
   return (
@@ -162,13 +153,24 @@ export const SecondWindowForm = ({
           shipping={true}
           final={false}
           allProducts={allProducts}
+          method={wizard.method}
         />
       </div>
+      {saveFailed && (
+        <p role="alert" className="text-sm text-red-600">
+          {t.second.saveError}
+        </p>
+      )}
       <button
         type="submit"
-        className="bg-white text-black border border-black py-4 lg:-my-8 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold"
+        disabled={isPending}
+        aria-busy={isPending}
+        className={cn(
+          "bg-white text-black border border-black py-4 lg:-my-8 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold",
+          isPending && "opacity-60 cursor-not-allowed"
+        )}
       >
-        {t.common.continue}
+        {isPending ? t.common.processing : t.common.continue}
       </button>
     </form>
   );

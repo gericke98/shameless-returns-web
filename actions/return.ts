@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import db from "@/db/drizzle";
@@ -240,6 +241,11 @@ export async function returnFunction(
     // A missing payout is the customer's to fix, not a crash: the portal sends
     // them to the payout step instead of the crash screen.
     if (error instanceof PayoutRequiredError) {
+      // The server's basket is the truth, and this tab's may be stale (another
+      // tab changed the selection). Revalidating sends the stored selection
+      // back with this same response, so the portal re-derives "is a payout
+      // owed" from the data the server just refused on, not from its own copy.
+      revalidatePath("/", "layout");
       return { ok: false, reason: "payout-required" };
     }
     throw error;

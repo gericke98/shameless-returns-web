@@ -5,7 +5,7 @@
 // the current step, the terms and the actions it needs, instead of position,
 // credito and method being threaded through four layers of props (which is
 // how five different components each came to move the step on their own).
-import { createContext, useCallback, useContext, useMemo, useReducer } from "react";
+import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
 import type { Tender } from "@/lib/agreement";
 import { valueBasket } from "@/lib/basket";
 import {
@@ -63,6 +63,15 @@ export function PortalWizardProvider({
     [basket, legs, state.method, state.payout]
   );
   const hasItems = basket.hasItems;
+  // React's "adjusting state when a prop changes": the selection arrives as
+  // props after the server saves it, so the moment it becomes empty is seen
+  // here, during render, not in an effect (which would paint the stale step
+  // first).
+  const [hadItems, setHadItems] = useState(hasItems);
+  if (hadItems !== hasItems) {
+    setHadItems(hasItems);
+    if (!hasItems) dispatch({ type: "selectionEmptied" });
+  }
   const payoutRequired = terms.payoutRequired;
   const ctx: WizardContext = useMemo(
     () => ({ hasItems, payoutRequired }),

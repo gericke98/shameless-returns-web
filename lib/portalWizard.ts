@@ -34,6 +34,13 @@ export type WizardEvent =
   | { type: "back"; ctx: WizardContext }
   /** An item was added, edited or cleared: the terms changed. */
   | { type: "itemChanged" }
+  /**
+   * The selection went from something to nothing. Navigation starts over: a
+   * customer who clears everything and picks again walks every step again
+   * (the delivery address, the method), instead of landing back where they
+   * left off.
+   */
+  | { type: "selectionEmptied" }
   /** The address form was saved. Its delivery address can reprice the outbound leg. */
   | { type: "addressSaved"; ctx: WizardContext }
   | { type: "methodChanged"; method: ReturnMethod }
@@ -129,6 +136,8 @@ export function wizardReducer(state: WizardState, event: WizardEvent): WizardSta
       return { ...state, step: stepBefore(currentStep(state, event.ctx), event.ctx) };
     case "itemChanged":
       return repriced(state);
+    case "selectionEmptied":
+      return { ...state, step: "items", payout: null };
     case "addressSaved": {
       // Idempotent by construction: a second save (double-tap, retried POST)
       // lands on the same step as the first, whatever order they resolve in.

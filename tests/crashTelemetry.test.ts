@@ -34,6 +34,14 @@ vi.mock("next/navigation", () => ({
     throw Object.assign(new Error("NEXT_REDIRECT"), { to });
   },
 }));
+const revalidated: string[] = [];
+vi.mock("next/cache", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/cache")>()),
+  unstable_cache: (fn: unknown) => fn,
+  revalidatePath: (path: string) => {
+    revalidated.push(path);
+  },
+}));
 vi.mock("next/headers", () => ({
   cookies: () => ({ get: () => ({ name: "locale", value: "es" }) }),
 }));
@@ -143,6 +151,9 @@ describe("a submit refused before anything is booked", () => {
     expect(queued[0].subject).toContain("13577291399494");
     expect(queued[0].body).toContain("no payout was chosen");
     expect(queued[0].body).toContain("Payout sent by the browser: none");
+    // The refusal carries the server's selection back, so a tab with a stale
+    // basket re-derives the payout step from what the server refused on.
+    expect(revalidated).toContain("/");
   });
 
   it("any other refusal still fails for the customer, with the real error sent to ops", async () => {

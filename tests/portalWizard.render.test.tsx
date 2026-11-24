@@ -99,12 +99,12 @@ const ORDER: any = {
   trackingSubmittedAt: null,
 };
 
-function renderPortal(price = "50.00") {
-  return render(
+function portal(items: any[]) {
+  return (
     <FeesProvider table={TABLE} order={ORDER}>
       <ClientOrder
         name="Ana"
-        items={[item(price)]}
+        items={items}
         order={ORDER}
         id={ORDER_ID}
         allProducts={[]}
@@ -112,6 +112,10 @@ function renderPortal(price = "50.00") {
       />
     </FeesProvider>
   );
+}
+
+function renderPortal(price = "50.00") {
+  return render(portal([item(price)]));
 }
 
 const heading = (text: string) => screen.queryByRole("heading", { name: text });
@@ -278,4 +282,44 @@ describe("the portal wizard", () => {
 
     expect(heading(en.second.title)).not.toBeNull();
   });
+
+  // Codex review, 2026-11-24: another tab changed the stored selection, so
+  // this tab believed nothing was owed while the server knew money was. The
+  // refusal revalidates (actions/return.ts); here the fresh selection arrives
+  // as new props, and the payout step must follow from it.
+  it("a refusal from a tab with a stale basket lands on the payout step once the server's basket arrives", async () => {
+    const user = userEvent.setup();
+    returnFunction.mockResolvedValue({ ok: false, reason: "payout-required" });
+    const view = renderPortal("4.00");
+    await toAddress(user);
+    await user.click(continueButton());
+    await waitFor(() => expect(heading(en.last.title)).not.toBeNull());
+
+    await user.click(submitButton()!);
+    await waitFor(() => expect(returnFunction).toHaveBeenCalled());
+    view.rerender(portal([item("50.00")]));
+
+    await waitFor(() => expect(heading(en.third.title)).not.toBeNull());
+    expect(submitButton()).toBeNull();
+  });
+
+  // Codex review, 2026-11-24: clearing the only item used to keep the old
+  // step, so picking again jumped straight back to the summary, past the
+  // address step and the method choice.
+  it("emptying the selection starts the walk over", async () => {
+    const user = userEvent.setup();
+    const view = renderPortal("4.00");
+    await toAddress(user);
+    await user.click(continueButton());
+    await waitFor(() => expect(heading(en.last.title)).not.toBeNull());
+
+    view.rerender(portal([{ ...item("4.00"), action: null, reason: null }]));
+    view.rerender(portal([item("4.00")]));
+
+    expect(heading(en.last.title)).toBeNull();
+    expect(heading(en.second.title)).toBeNull();
+    expect(continueButton()).toBeTruthy();
+    expect(submitButton()).toBeNull();
+  });
 });
+

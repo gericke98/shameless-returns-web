@@ -22,7 +22,7 @@ UPDATE orders
    AND tracking_submission_id IS NULL;
 
 -- Mark the ones Amphora ALREADY PINNED, so "Tracking to confirm" does not
--- re-offer them. Named one by one: the cohort audited on prod 2026-11-24
+-- re-offer them. Named one by one, by orders.id: the cohort audited on prod 2026-11-24
 -- (Amphora status APROVED or RECEIVED for each). Not inferred from a status
 -- rule, so a row that appears later, or one whose approve never happened,
 -- is never stamped by this. Left out on purpose: #311595 (PENDING at Amphora,
@@ -35,8 +35,23 @@ UPDATE orders
  WHERE return_method = 'SELF'
    AND locator IS NOT NULL
    AND tracking_verified_at IS NULL
-   AND order_number IN (
-     '#311658', '#311607', '#311349', '#311811', '#311531', '#311812',
-     '#311801', '#312011', '#311997', '#312152', '#312202', '#312332',
-     '#312577', '#312284', '#312665', '#312783', '#312737', '#313127'
+   AND id IN (  -- orders.id, with order number and Amphora status as audited
+     '13241157779782', -- #311349 RECEIVED
+     '13261798801734', -- #311531 RECEIVED
+     '13269784822086', -- #311607 RECEIVED
+     '13273500451142', -- #311658 RECEIVED
+     '13287776944454', -- #311801 RECEIVED
+     '13288358707526', -- #311811 RECEIVED
+     '13288504328518', -- #311812 RECEIVED
+     '13311092064582', -- #311997 RECEIVED
+     '13315041100102', -- #312011 RECEIVED
+     '13385395011910', -- #312152 APROVED
+     '13398442705222', -- #312202 APROVED
+     '13421796426054', -- #312284 RECEIVED
+     '13431698358598', -- #312332 RECEIVED
+     '13481797026118', -- #312577 APROVED
+     '13508827447622', -- #312665 RECEIVED
+     '13530002227526', -- #312737 APROVED
+     '13540873732422', -- #312783 APROVED
+     '13579117199686'  -- #313127 APROVED
    );

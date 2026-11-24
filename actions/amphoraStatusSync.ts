@@ -44,6 +44,7 @@ export type SyncableOrder = {
    *  cannot email the same milestone again on every 15-minute poll. */
   lastTrackingKey?: string | null;
   lastTrackingLocator?: string | null;
+  returnMethod?: string | null;
   products?: unknown;
 };
 

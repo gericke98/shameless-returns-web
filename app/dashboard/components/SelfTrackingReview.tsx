@@ -35,7 +35,9 @@ export default function SelfTrackingReview({ rows }: { rows: TrackingToConfirm[]
       </p>
       <ul className="mt-3 divide-y divide-amber-200">
         {rows.map((row) => (
-          <ReviewRow key={row.id} row={row} />
+          // Keyed by the SUBMISSION, not the order: a new number on the same
+          // order is a new review, and must not inherit the last one's state.
+          <ReviewRow key={row.trackingSubmissionId ?? row.id} row={row} />
         ))}
       </ul>
     </section>

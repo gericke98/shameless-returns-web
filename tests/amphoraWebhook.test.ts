@@ -311,3 +311,44 @@ describe("decideWebhookActions — the two milestones international was missing"
     expect(actions.emails).toEqual(["trackingInTransit"]);
   });
 });
+
+// Codex review round 2: Amphora wrote its own number onto a self-booked order
+// still waiting for ops review, under the old submission id, so a stale
+// Confirm would have pinned a number nobody reviewed.
+describe("decideWebhookActions — Amphora's number on a self-booked return", () => {
+  const NOW = new Date("2026-11-24T12:00:00Z");
+  const pendingSelf = { returnStatus: "PENDING", locator: "#311595", returnMethod: "SELF" };
+
+  it("records Amphora's pinned number as the warehouse's and retires the pending submission", () => {
+    const actions = decideWebhookActions(
+      pendingSelf,
+      { internal_status: "APROVED", carrier: "UPS", carrier_number: "1Z999AA10123456784" },
+      NOW
+    );
+    expect(actions.persist).toMatchObject({
+      locator: "1Z999AA10123456784",
+      trackingSubmissionId: null,
+      trackingVerifiedAt: NOW,
+      trackingVerifiedBy: "amphora",
+    });
+  });
+
+  it("leaves the submission alone when Amphora echoes the number we hold", () => {
+    const actions = decideWebhookActions(
+      pendingSelf,
+      { internal_status: "APROVED", carrier_number: "#311595" },
+      NOW
+    );
+    expect(actions.persist).not.toHaveProperty("trackingSubmissionId");
+    expect(actions.persist).not.toHaveProperty("trackingVerifiedBy");
+  });
+
+  it("does not touch review state on returns that are not self-booked", () => {
+    const actions = decideWebhookActions(
+      { returnStatus: "PENDING", locator: null, returnMethod: "AMPHORA" },
+      { internal_status: "APROVED", carrier: "UPS", carrier_number: "1Z999AA10123456784" },
+      NOW
+    );
+    expect(actions.persist).not.toHaveProperty("trackingVerifiedBy");
+  });
+});

@@ -41,6 +41,10 @@ export type WebhookActions = {
      *  that flaps cannot re-announce a milestone. See below. */
     lastTrackingKey?: TrackingKey;
     lastTrackingLocator?: string;
+    /** See "Amphora's number on a self-booked return" below. */
+    trackingSubmissionId?: null;
+    trackingVerifiedAt?: Date;
+    trackingVerifiedBy?: string;
   } | null;
   emails: WebhookEmail[];
   /** Whether a human has to be told about this event.
@@ -90,8 +94,10 @@ export function decideWebhookActions(
      *  compiling; absent simply means "no milestone recorded yet". */
     lastTrackingKey?: string | null;
     lastTrackingLocator?: string | null;
+    returnMethod?: string | null;
   },
-  payload: AmphoraWebhookReturn
+  payload: AmphoraWebhookReturn,
+  now: Date = new Date()
 ): WebhookActions {
   const status = payload.internal_status?.trim();
   if (!status) return NOOP;
@@ -123,6 +129,23 @@ export function decideWebhookActions(
     persist.carrier = UNKNOWN_CARRIER;
   }
   if (payload.carrier_url) persist.carrierUrl = payload.carrier_url;
+
+  // Amphora's number on a self-booked return. Amphora only reports a
+  // carrier_number it has PINNED (write-once at approve), so a number that
+  // differs from ours is the warehouse's truth, set outside our review (an
+  // approve by hand in Amphora, say). It is recorded as such, and the
+  // customer's submission it replaces is retired: ops review names a
+  // submission by id (actions/selfTrackingReview), and a stale Confirm must
+  // never pin a number that arrived under that id from another writer.
+  if (
+    order.returnMethod === "SELF" &&
+    payload.carrier_number &&
+    payload.carrier_number !== order.locator
+  ) {
+    persist.trackingSubmissionId = null;
+    persist.trackingVerifiedAt = now;
+    persist.trackingVerifiedBy = "amphora";
+  }
 
   const emails: WebhookEmail[] = [];
   // Keyed off tracking ARRIVING, not off a particular status: the carrier may

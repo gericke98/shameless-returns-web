@@ -10,8 +10,14 @@ import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
 import { describeError } from "@/lib/describeError";
+import { verifyWithCarrier } from "@/lib/carrierLookup";
 
-export type TrackingSubmission = { ok: boolean; reason?: string };
+export type TrackingSubmission = {
+  ok: boolean;
+  reason?: string;
+  /** Saved, but not yet sent to the warehouse: ops confirms the number first. */
+  pending?: boolean;
+};
 
 /**
  * The capture half of a self-booked return: the customer tells us who they
@@ -82,6 +88,18 @@ export async function submitReturnTracking(
     return { ok: false, reason: "already-submitted" };
   }
 
+  // A number reaches Amphora (write-once) only once it is verified
+  // (docs/superpowers/plans/2026-11-24-verify-tracking-before-pin.md).
+  // Asked BEFORE the claim, so a number the carrier says it does not know
+  // writes nothing and the customer can correct it (#311595 and #313127 sent
+  // their order number; Correos even returns a parcel for "313127" by
+  // reference, which the verdict refuses). "unreadable" (timeout, a page we do
+  // not recognise) proves nothing either way: it neither refuses the customer
+  // nor approves, it goes to ops like a carrier we cannot ask.
+  const verdict = carrier.verify ? await verifyWithCarrier(carrier.verify, number) : null;
+  if (verdict === "unknown") return { ok: false, reason: "not-at-carrier" };
+  const verified = verdict === "verified";
+
   // Written together, and BEFORE Amphora: `carrier` must never be null on a row
   // that has a locator, or `tracksWithCorreos` reads the null as "our own
   // Correos label" and sends a foreign tracking number to localizador.correos.es.
@@ -107,6 +125,8 @@ export async function submitReturnTracking(
       carrier: carrier.code,
       carrierUrl,
       trackingSubmittedAt: new Date(),
+      trackingVerifiedAt: verified ? new Date() : null,
+      trackingVerifiedBy: verified ? carrier.verify! : null,
     })
     .where(and(eq(orders.id, id), isNull(orders.locator)))
     .returning({ id: orders.id });
@@ -116,6 +136,31 @@ export async function submitReturnTracking(
       `Order ${id}: lost the write-once race — another submit already claimed the tracking slot.`
     );
     return { ok: false, reason: "already-submitted" };
+  }
+
+  if (!verified) {
+    // Saved, NOT sent to Amphora: ops opens the link and confirms or rejects
+    // it in the dashboard (actions/selfTrackingReview.ts). Pinning an
+    // unchecked number is what this whole path exists to stop.
+    await alertOps(
+      `[returns] SELF TRACKING TO CONFIRM — ${order.orderNumber}`,
+      [
+        `A customer submitted tracking we could not check with the carrier.`,
+        `It is saved but NOT sent to the warehouse until someone confirms it.`,
+        ``,
+        `Order:     ${order.orderNumber} (id ${id})`,
+        `Customer:  ${order.email}`,
+        `Carrier:   ${carrier.code}`,
+        `Tracking:  ${number}`,
+        `Link:      ${carrierUrl}`,
+        `Why:       ${verdict === "unreadable" ? `${carrier.code} did not answer our check` : `${carrier.code} cannot be checked automatically`}`,
+        ``,
+        `Open the link. If the parcel is real, Confirm it in the dashboard;`,
+        `otherwise Reject it and the customer is asked for the right number:`,
+        `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
+      ].join("\n")
+    );
+    return { ok: true, pending: true };
   }
 
   // Best-effort, and swallowed: the customer has done everything asked of them

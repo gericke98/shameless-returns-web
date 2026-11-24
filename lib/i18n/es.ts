@@ -163,6 +163,10 @@ export const es = {
     orderNumber:
       "Ese es tu número de pedido. Necesitamos el número de seguimiento que te dio el transportista, en el recibo o en su email.",
     wrongFormat: "Ese número no parece de este transportista. Ejemplo:",
+    pending:
+      "¡Gracias! Lo hemos guardado. Vamos a comprobar el número con el transportista y avisaremos al almacén; si hay algún problema, te escribiremos.",
+    notAtCarrier:
+      "El transportista no reconoce este número. Revisa que esté bien copiado del recibo o de su email. Si acabas de enviar el paquete, vuelve a intentarlo en unas horas.",
     tooLong: "Es demasiado largo para un número de seguimiento. Revisa que hayas copiado solo el número.",
   },
   success: {

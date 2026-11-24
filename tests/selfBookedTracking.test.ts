@@ -40,6 +40,16 @@ let raceLoser = false;
 
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => access }));
 
+// What the carrier says about the number (lib/carrierLookup is the network).
+let verdict: "verified" | "unknown" | "unreadable" = "verified";
+const lookedUp: { verifier: string; number: string }[] = [];
+vi.mock("@/lib/carrierLookup", () => ({
+  verifyWithCarrier: async (verifier: string, number: string) => {
+    lookedUp.push({ verifier, number });
+    return verdict;
+  },
+}));
+
 vi.mock("@/db/queries", () => ({
   getOrderByIdFresh: async () => order,
   getOrderById: async () => order,
@@ -90,6 +100,8 @@ beforeEach(() => {
   raceLoser = false;
   approveError = null;
   alerts.length = 0;
+  verdict = "verified";
+  lookedUp.length = 0;
   order.locator = null;
   order.carrier = null;
   order.returnMethod = "SELF";
@@ -97,7 +109,7 @@ beforeEach(() => {
 
 describe("submitReturnTracking", () => {
   it("stores the carrier and tracking number", async () => {
-    await expect(submit()).resolves.toEqual({ ok: true });
+    await expect(submit()).resolves.toEqual({ ok: true, pending: true });
 
     expect(order.locator).toBe("JD0123456789");
     expect(order.carrier).toBe("DHL");
@@ -116,29 +128,32 @@ describe("submitReturnTracking", () => {
     expect(String(order.carrierUrl)).toContain("JD0123456789");
   });
 
-  it("approves Amphora with the customer's carrier data", async () => {
-    await submit();
+  it("approves Amphora with a number the carrier verified", async () => {
+    await expect(submit("CORREOS", "PQ0B7K0000043680128110B")).resolves.toEqual({ ok: true });
 
+    expect(lookedUp).toEqual([{ verifier: "correos", number: "PQ0B7K0000043680128110B" }]);
     expect(approved).toHaveLength(1);
     expect(approved[0].data).toEqual({
-      carrier: "DHL",
-      carrier_number: "JD0123456789",
-      carrier_url: expect.stringContaining("JD0123456789"),
+      carrier: "CORREOS",
+      carrier_number: "PQ0B7K0000043680128110B",
+      carrier_url: expect.stringContaining("PQ0B7K0000043680128110B"),
     });
+    expect(order.trackingVerifiedBy).toBe("correos");
+    expect(order.trackingVerifiedAt).toBeInstanceOf(Date);
   });
 
   it("refuses a second submit rather than re-approving", async () => {
     // carrier_number is pinned at the first approve. A second attempt 422s and
     // cancel+recreate hands back the OLD number, desyncing the warehouse
     // forever, so this must stop before it reaches Amphora.
-    await submit();
+    await submit("CORREOS", "PQ0B7K0000043680128110B");
     approved.length = 0;
 
     const second = await submit("UPS", "1Z999");
 
     expect(second.ok).toBe(false);
     expect(approved).toHaveLength(0);
-    expect(order.locator).toBe("JD0123456789");
+    expect(order.locator).toBe("PQ0B7K0000043680128110B");
   });
 
   it("refuses tracking when a concurrent submit wins the write-once race", async () => {
@@ -152,7 +167,7 @@ describe("submitReturnTracking", () => {
     // pin cannot be undone, so only the write's real winner may call approve.
     raceLoser = true;
 
-    const result = await submit();
+    const result = await submit("CORREOS", "PQ0B7K0000043680128110B");
 
     expect(result).toEqual({ ok: false, reason: "already-submitted" });
     expect(approved).toHaveLength(0);
@@ -261,27 +276,22 @@ describe("submitReturnTracking — a carrier whose link the customer gives", () 
     expect(approved).toHaveLength(0);
   });
 
-  it("stores and sends the customer's link for 'Other'", async () => {
-    await expect(submit("OTHER", "7280/13972666", `  ${LINK}  `)).resolves.toEqual({ ok: true });
+  it("stores the customer's link for 'Other' and gives it to ops", async () => {
+    await expect(submit("OTHER", "7280/13972666", `  ${LINK}  `)).resolves.toEqual({ ok: true, pending: true });
     expect(order.carrierUrl).toBe(LINK);
-    expect(approved[0].data).toEqual({
-      carrier: "OTHER",
-      carrier_number: "7280/13972666",
-      carrier_url: LINK,
-    });
+    expect(alerts[0].body).toContain(LINK);
   });
 
   // Amphora's carrier_url is a plain string: any http(s) link a browser can
   // open is the carrier's to choose, including an IP host (Codex review).
   it("accepts any http(s) link, whatever its host looks like", async () => {
-    await expect(submit("OTHER", "7280/13972666", "http://10.0.0.1/track?id=7280")).resolves.toEqual({ ok: true });
-    expect(approved[0].data.carrier_url).toBe("http://10.0.0.1/track?id=7280");
+    await expect(submit("OTHER", "7280/13972666", "http://10.0.0.1/track?id=7280")).resolves.toEqual({ ok: true, pending: true });
+    expect(order.carrierUrl).toBe("http://10.0.0.1/track?id=7280");
   });
 
   it("ignores a client link for a carrier whose link we build", async () => {
     await submit("DHL", "JD0123456789", "https://evil.example.com/x");
     expect(order.carrierUrl).toContain("dhl.com");
-    expect(approved[0].data.carrier_url).toContain("dhl.com");
   });
 });
 
@@ -291,7 +301,7 @@ describe("submitReturnTracking — when Amphora refuses", () => {
       response: { status: 422, data: { message: "carrier_url is required" } },
     });
 
-    await expect(submit()).resolves.toEqual({ ok: true });
+    await expect(submit("CORREOS", "PQ0B7K0000043680128110B")).resolves.toEqual({ ok: true });
 
     expect(alerts).toHaveLength(1);
     expect(alerts[0].body).not.toContain("[object Object]");
@@ -315,7 +325,7 @@ describe("submitReturnTracking — numbers that cannot be pinned", () => {
     expect(approved).toHaveLength(0);
   });
 
-  it("pins a NACEX number with its NACEX tracking page", async () => {
+  it("pins a NACEX number NACEX verified, with its NACEX tracking page", async () => {
     await expect(submit("NACEX", "7280/13972666")).resolves.toEqual({ ok: true });
     expect(approved[0].data).toEqual({
       carrier: "NACEX",
@@ -326,3 +336,45 @@ describe("submitReturnTracking — numbers that cannot be pinned", () => {
   });
 });
 
+// docs/superpowers/plans/2026-11-24-verify-tracking-before-pin.md: a number
+// reaches Amphora (write-once) only once it is verified.
+describe("submitReturnTracking — verified before it is pinned", () => {
+  it("refuses a number the carrier says it does not know, writing nothing and telling Amphora nothing", async () => {
+    verdict = "unknown";
+
+    await expect(submit("CORREOS", "PQ0000000000000000000XX")).resolves.toEqual({
+      ok: false,
+      reason: "not-at-carrier",
+    });
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+    expect(order.locator).toBeNull();
+  });
+
+  it.each([
+    ["a carrier we cannot ask", "DHL", "JD0123456789", "cannot be checked"],
+    ["a carrier that did not answer", "CORREOS", "PQ0B7K0000043680128110B", "did not answer"],
+  ])("saves %s for ops, unverified, and does NOT approve", async (_l, carrier, number, why) => {
+    verdict = "unreadable";
+
+    await expect(submit(carrier, number)).resolves.toEqual({ ok: true, pending: true });
+    expect(order.locator).toBe(number);
+    expect(order.trackingVerifiedAt).toBeNull();
+    expect(order.trackingVerifiedBy).toBeNull();
+    expect(approved).toHaveLength(0);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].subject).toContain("SELF TRACKING TO CONFIRM");
+    expect(alerts[0].body).toContain(number);
+    expect(alerts[0].body).toContain(why);
+  });
+
+  it("does not ask a carrier that has no check", async () => {
+    await submit("DHL", "JD0123456789");
+    expect(lookedUp).toHaveLength(0);
+  });
+
+  it("does not ask the carrier about a number already refused for its shape", async () => {
+    await submit("CORREOS", "#311174");
+    expect(lookedUp).toHaveLength(0);
+  });
+});

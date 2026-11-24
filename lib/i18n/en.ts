@@ -157,6 +157,10 @@ export const en: Dictionary = {
       "Paste the tracking link your carrier gave you (in their email or on the receipt). The warehouse needs it to expect your parcel.",
     linkInvalid: "That doesn't look like a link. It should start with https://",
     noLink: "No link? Email hello@shamelesscollective.com with your order number.",
+    orderNumber:
+      "That is your order number. We need the tracking number the carrier gave you, on the receipt or in their email.",
+    wrongFormat: "That doesn't look like a number from this carrier. Example:",
+    tooLong: "That is too long for a tracking number. Check you copied only the number.",
   },
   success: {
     title: "We have received your request!",

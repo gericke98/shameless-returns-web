@@ -5,7 +5,7 @@ import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getOrderByIdFresh } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
-import { carrierByCode } from "@/lib/carriers";
+import { carrierByCode, checkTrackingNumber } from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
@@ -44,40 +44,31 @@ export async function submitReturnTracking(
   const carrier = carrierByCode(carrierCode);
   if (!carrier) return { ok: false, reason: "unknown-carrier" };
 
-  // A server action is an independently addressable endpoint — the form in
-  // front of it protects the button, not this function — so the argument is
-  // whatever the caller sent. `String(...)` would happily coerce an object or
-  // an array into a tracking number and pin THAT at Amphora, write-once.
-  if (typeof trackingNumber !== "string") {
-    return { ok: false, reason: "empty-tracking" };
-  }
-
-  const number = trackingNumber.trim();
-  if (!number) return { ok: false, reason: "empty-tracking" };
-  // Bounded because the column is unbounded `text` and the value is pinned
-  // WRITE-ONCE at Amphora: `carrier_number` cannot be corrected afterwards, so
-  // an unbounded string on an uncorrectable field is not a minor concern. The
-  // longest real carrier reference is ~35 characters (UPS 18, DHL 20, Correos
-  // 23); 64 leaves room without being a place to store a megabyte.
-  if (number.length > 64) return { ok: false, reason: "invalid-tracking" };
-
-  // `carrier_url` is required by Amphora's approve and pinned with the
-  // number, write-once. Decided here, before the write-once claim below, so a
-  // missing or bad link refuses the submit with nothing written anywhere —
-  // the customer can correct it and submit again.
-  let carrierUrl: string;
-  if (carrier.link.kind === "built") {
-    carrierUrl = carrier.link.build(number);
-  } else {
-    const checked = checkTrackingUrl(trackingUrl);
-    if (!checked.ok) return { ok: false, reason: checked.reason };
-    carrierUrl = checked.url;
-  }
-
   const order = await getOrderByIdFresh(id);
   if (!order) return { ok: false, reason: "no-order" };
   if ((order as any).returnMethod !== "SELF") {
     return { ok: false, reason: "not-self-booked" };
+  }
+
+  // The same check the portal runs as the customer types (lib/carriers):
+  // never a coerced non-string, bounded, not the customer's own order number
+  // (#311595, #313127 sent theirs and Amphora pinned it), and one this
+  // carrier's link can be built from. Before the write-once claim below, so a
+  // refusal writes nothing anywhere and the customer can correct it.
+  const checkedNumber = checkTrackingNumber(carrier, trackingNumber, order);
+  if (!checkedNumber.ok) return { ok: false, reason: checkedNumber.reason };
+  const number = checkedNumber.number;
+
+  // `carrier_url` is required by Amphora's approve and pinned with the
+  // number, write-once. Built by us where we can, so a client cannot replace
+  // it; given by the customer, and validated, where we cannot.
+  let carrierUrl: string;
+  if (checkedNumber.link !== null) {
+    carrierUrl = checkedNumber.link;
+  } else {
+    const checked = checkTrackingUrl(trackingUrl);
+    if (!checked.ok) return { ok: false, reason: checked.reason };
+    carrierUrl = checked.url;
   }
 
   // Idempotency, and the reason it matters more here than anywhere else:

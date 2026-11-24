@@ -209,7 +209,7 @@ describe("submitReturnTracking", () => {
     // is around 35 characters.
     const result = await submit("DHL", "1Z".repeat(200));
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, reason: "too-long" });
     expect(written).toHaveLength(0);
     expect(approved).toHaveLength(0);
   });
@@ -298,3 +298,31 @@ describe("submitReturnTracking — when Amphora refuses", () => {
     expect(alerts[0].body).toContain('HTTP 422: {"message":"carrier_url is required"}');
   });
 });
+
+describe("submitReturnTracking — numbers that cannot be pinned", () => {
+  it.each(["#311174", "311174", "311 174", order.id])(
+    "refuses the order's own reference (%s), writing nothing and telling Amphora nothing",
+    async (typed) => {
+      await expect(submit("CORREOS", typed)).resolves.toEqual({ ok: false, reason: "order-number" });
+      expect(written).toHaveLength(0);
+      expect(approved).toHaveLength(0);
+    }
+  );
+
+  it("refuses a NACEX number its link cannot be built from", async () => {
+    await expect(submit("NACEX", "13972666")).resolves.toEqual({ ok: false, reason: "wrong-format" });
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+  });
+
+  it("pins a NACEX number with its NACEX tracking page", async () => {
+    await expect(submit("NACEX", "7280/13972666")).resolves.toEqual({ ok: true });
+    expect(approved[0].data).toEqual({
+      carrier: "NACEX",
+      carrier_number: "7280/13972666",
+      carrier_url:
+        "https://www.nacex.es/seguimientoDetalle.do?agencia_origen=7280&numero_albaran=13972666&externo=N",
+    });
+  });
+});
+

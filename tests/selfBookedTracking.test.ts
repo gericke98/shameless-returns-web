@@ -250,8 +250,7 @@ describe("submitReturnTracking — a carrier whose link the customer gives", () 
 
   it.each([
     ["not a URL", "my parcel"],
-    ["no host name", "https://tracking"],
-    ["a bare IP", "http://10.0.0.1/track"],
+    ["no host", "https://"],
     ["a script", "javascript:alert(1)"],
     ["a data URL", "data:text/html,hi"],
     ["far too long", `https://example.com/${"a".repeat(600)}`],
@@ -270,6 +269,13 @@ describe("submitReturnTracking — a carrier whose link the customer gives", () 
       carrier_number: "7280/13972666",
       carrier_url: LINK,
     });
+  });
+
+  // Amphora's carrier_url is a plain string: any http(s) link a browser can
+  // open is the carrier's to choose, including an IP host (Codex review).
+  it("accepts any http(s) link, whatever its host looks like", async () => {
+    await expect(submit("OTHER", "7280/13972666", "http://10.0.0.1/track?id=7280")).resolves.toEqual({ ok: true });
+    expect(approved[0].data.carrier_url).toBe("http://10.0.0.1/track?id=7280");
   });
 
   it("ignores a client link for a carrier whose link we build", async () => {

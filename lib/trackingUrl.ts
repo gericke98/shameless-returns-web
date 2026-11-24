@@ -29,9 +29,5 @@ export function checkTrackingUrl(input: unknown): TrackingUrlCheck {
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     return { ok: false, reason: "invalid-url" };
   }
-  // A real host name, not "http://tracking" or a bare IP someone guessed.
-  if (!url.hostname.includes(".") || /^[\d.]+$/.test(url.hostname)) {
-    return { ok: false, reason: "invalid-url" };
-  }
   return { ok: true, url: url.href };
 }

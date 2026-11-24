@@ -154,6 +154,12 @@ export const es = {
       "No podremos cambiarlo después, así que revísalo bien antes de enviarlo.",
     done: "¡Gracias! El almacén ya sabe que tu paquete está en camino.",
     error: "No hemos podido guardarlo. Revisa los datos e inténtalo de nuevo.",
+    // Only for a carrier whose tracking link we cannot build ("Otro").
+    link: "Enlace de seguimiento",
+    linkHelp:
+      "Pega el enlace de seguimiento que te dio el transportista (en su email o en el recibo). El almacén lo necesita para esperar tu paquete.",
+    linkInvalid: "Eso no parece un enlace. Debe empezar por https://",
+    noLink: "¿No tienes enlace? Escríbenos a hello@shamelesscollective.com con tu número de pedido.",
   },
   success: {
     title: "¡Hemos recibido tu solicitud correctamente!",

@@ -24,6 +24,14 @@ const order: Record<string, any> = {
 };
 
 const approved: any[] = [];
+// When set, Amphora refuses the approve with this axios-shaped error.
+let approveError: any = null;
+const alerts: { subject: string; body: string }[] = [];
+vi.mock("@/actions/opsAlert", () => ({
+  alertOps: async (subject: string, body: string) => {
+    alerts.push({ subject, body });
+  },
+}));
 const written: any[] = [];
 let access = true;
 // Simulates a competitor submit winning the conditional UPDATE between our
@@ -42,6 +50,7 @@ vi.mock("@/actions/amphora", async (importOriginal) => {
   return {
     ...actual,
     approveAmphoraReturn: async (id: string, data: any) => {
+      if (approveError) throw approveError;
       approved.push({ id, data });
       return { id, internal_status: "APROVED" };
     },
@@ -69,9 +78,9 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
-async function submit(carrier = "DHL", number = "JD0123456789") {
+async function submit(carrier = "DHL", number = "JD0123456789", url?: unknown) {
   const { submitReturnTracking } = await import("@/actions/selfBookedTracking");
-  return submitReturnTracking(order.id, carrier, number);
+  return submitReturnTracking(order.id, carrier, number, url);
 }
 
 beforeEach(() => {
@@ -79,6 +88,8 @@ beforeEach(() => {
   written.length = 0;
   access = true;
   raceLoser = false;
+  approveError = null;
+  alerts.length = 0;
   order.locator = null;
   order.carrier = null;
   order.returnMethod = "SELF";
@@ -219,5 +230,71 @@ describe("submitReturnTracking", () => {
 
     expect(result.ok).toBe(false);
     expect(approved).toHaveLength(0);
+  });
+
+});
+
+// #312783 / #312737 (2026-11-23): "Other" sent `carrier_url: ""`, a field
+// Amphora's approve requires, and the approvals failed. The link is pinned
+// write-once with the number, so it is checked before anything is written.
+describe("submitReturnTracking — a carrier whose link the customer gives", () => {
+  const LINK = "https://www.cttexpresso.pt/track?ref=7280-13972666";
+
+  it("refuses 'Other' with no link, writing nothing and telling Amphora nothing", async () => {
+    await expect(submit("OTHER", "7280/13972666")).resolves.toEqual({ ok: false, reason: "missing-url" });
+    await expect(submit("OTHER", "7280/13972666", "   ")).resolves.toEqual({ ok: false, reason: "missing-url" });
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+    expect(order.locator).toBeNull();
+  });
+
+  it.each([
+    ["not a URL", "my parcel"],
+    ["no host", "https://"],
+    ["a script", "javascript:alert(1)"],
+    ["a data URL", "data:text/html,hi"],
+    ["far too long", `https://example.com/${"a".repeat(600)}`],
+    ["not a string", { href: "https://example.com" }],
+  ])("refuses 'Other' with %s, writing nothing", async (_label, url) => {
+    await expect(submit("OTHER", "7280/13972666", url)).resolves.toEqual({ ok: false, reason: "invalid-url" });
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+  });
+
+  it("stores and sends the customer's link for 'Other'", async () => {
+    await expect(submit("OTHER", "7280/13972666", `  ${LINK}  `)).resolves.toEqual({ ok: true });
+    expect(order.carrierUrl).toBe(LINK);
+    expect(approved[0].data).toEqual({
+      carrier: "OTHER",
+      carrier_number: "7280/13972666",
+      carrier_url: LINK,
+    });
+  });
+
+  // Amphora's carrier_url is a plain string: any http(s) link a browser can
+  // open is the carrier's to choose, including an IP host (Codex review).
+  it("accepts any http(s) link, whatever its host looks like", async () => {
+    await expect(submit("OTHER", "7280/13972666", "http://10.0.0.1/track?id=7280")).resolves.toEqual({ ok: true });
+    expect(approved[0].data.carrier_url).toBe("http://10.0.0.1/track?id=7280");
+  });
+
+  it("ignores a client link for a carrier whose link we build", async () => {
+    await submit("DHL", "JD0123456789", "https://evil.example.com/x");
+    expect(order.carrierUrl).toContain("dhl.com");
+    expect(approved[0].data.carrier_url).toContain("dhl.com");
+  });
+});
+
+describe("submitReturnTracking — when Amphora refuses", () => {
+  it("puts Amphora's actual answer in the alert, not [object Object]", async () => {
+    approveError = Object.assign(new Error("Request failed with status code 422"), {
+      response: { status: 422, data: { message: "carrier_url is required" } },
+    });
+
+    await expect(submit()).resolves.toEqual({ ok: true });
+
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].body).not.toContain("[object Object]");
+    expect(alerts[0].body).toContain('HTTP 422: {"message":"carrier_url is required"}');
   });
 });

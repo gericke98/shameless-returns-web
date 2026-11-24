@@ -8,6 +8,7 @@ import { amphoraOrderIdFromShopifyId, createAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
 import { sendSelfReturnInstructions } from "@/actions/selfReturnEmails";
 import { readLocale } from "@/lib/i18n";
+import { describeError } from "@/lib/describeError";
 
 /**
  * The submit half of a self-booked return.
@@ -110,7 +111,7 @@ export async function createSelfBookedReturn(id: string): Promise<number> {
         `Customer:  ${order.email}`,
         `Country:   ${order.shippingCountry}`,
         ``,
-        `Failure:   ${error?.response?.data || error?.message || error}`,
+        `Failure:   ${describeError(error)}`,
         ``,
         `The return itself is fine — the row is written and the customer will`,
         `still be emailed where to send the parcel. Only the Amphora ticket is`,

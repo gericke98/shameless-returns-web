@@ -6,8 +6,10 @@ import { orders } from "@/db/schema";
 import { getOrderByIdFresh } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { carrierByCode } from "@/lib/carriers";
+import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
+import { describeError } from "@/lib/describeError";
 
 export type TrackingSubmission = { ok: boolean; reason?: string };
 
@@ -26,7 +28,13 @@ export type TrackingSubmission = { ok: boolean; reason?: string };
 export async function submitReturnTracking(
   id: string,
   carrierCode: string,
-  trackingNumber: string
+  trackingNumber: string,
+  /**
+   * The customer's tracking link. Required for a carrier whose link we cannot
+   * build ("Other"); ignored otherwise, so a client cannot replace a link we
+   * build ourselves.
+   */
+  trackingUrl?: unknown
 ): Promise<TrackingSubmission> {
   if (!(await hasOrderAccess(id))) {
     console.error(`submitReturnTracking: rejected a call without a session for ${id}`);
@@ -53,6 +61,19 @@ export async function submitReturnTracking(
   // 23); 64 leaves room without being a place to store a megabyte.
   if (number.length > 64) return { ok: false, reason: "invalid-tracking" };
 
+  // `carrier_url` is required by Amphora's approve and pinned with the
+  // number, write-once. Decided here, before the write-once claim below, so a
+  // missing or bad link refuses the submit with nothing written anywhere —
+  // the customer can correct it and submit again.
+  let carrierUrl: string;
+  if (carrier.link.kind === "built") {
+    carrierUrl = carrier.link.build(number);
+  } else {
+    const checked = checkTrackingUrl(trackingUrl);
+    if (!checked.ok) return { ok: false, reason: checked.reason };
+    carrierUrl = checked.url;
+  }
+
   const order = await getOrderByIdFresh(id);
   if (!order) return { ok: false, reason: "no-order" };
   if ((order as any).returnMethod !== "SELF") {
@@ -69,8 +90,6 @@ export async function submitReturnTracking(
     );
     return { ok: false, reason: "already-submitted" };
   }
-
-  const carrierUrl = carrier.trackingUrl(number);
 
   // Written together, and BEFORE Amphora: `carrier` must never be null on a row
   // that has a locator, or `tracksWithCorreos` reads the null as "our own
@@ -127,7 +146,7 @@ export async function submitReturnTracking(
         `Carrier:   ${carrier.code}`,
         `Tracking:  ${number}`,
         ``,
-        `Failure:   ${error?.response?.data || error?.message || error}`,
+        `Failure:   ${describeError(error)}`,
         ``,
         `We hold the tracking; Amphora does not. Approve the ticket by hand`,
         `with this carrier data. Note carrier_number is write-once, so get it`,

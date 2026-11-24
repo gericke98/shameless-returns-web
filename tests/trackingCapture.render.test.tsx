@@ -28,6 +28,10 @@ vi.mock("@/lib/i18n/context", () => ({
       permanent: "We cannot change this later, so please check it carefully.",
       done: "Thank you! The warehouse now knows your parcel is on its way.",
       error: "We could not save that. Check the details and try again.",
+      link: "Tracking link",
+      linkHelp: "Paste the tracking link your carrier gave you.",
+      linkInvalid: "That doesn't look like a link.",
+      noLink: "No link? Email us.",
     },
   }),
   useLocale: () => "en",
@@ -117,5 +121,62 @@ describe("the confirm step", () => {
 
     await user.click(screen.getByRole("button"));
     expect(submitReturnTracking).toHaveBeenCalledWith("132210", "DHL", "ABC123");
+  });
+});
+
+// #312783 / #312737: "Other" sent Amphora an empty carrier_url. For a carrier
+// whose link we cannot build, the link is required (Santi, 2026-11-24).
+describe("a carrier whose tracking link the customer gives", () => {
+  const LINK = "https://www.cttexpresso.pt/track?ref=7280-13972666";
+
+  it("asks for a link only for 'Other'", async () => {
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" />);
+    expect(screen.queryByLabelText("Tracking link")).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText("Carrier"), "OTHER");
+
+    expect(screen.getByLabelText("Tracking link")).toBeTruthy();
+  });
+
+  it("cannot be sent without a link, or with something that is not one", async () => {
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" />);
+    await user.selectOptions(screen.getByLabelText("Carrier"), "OTHER");
+    await user.type(screen.getByLabelText("Tracking number"), "7280/13972666");
+
+    expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+
+    await user.type(screen.getByLabelText("Tracking link"), "my parcel");
+    expect(screen.getByRole("button", { name: "Send" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("alert").textContent).toBe("That doesn't look like a link.");
+    expect(submitReturnTracking).not.toHaveBeenCalled();
+  });
+
+  it("shows the link back on the confirm step, then sends it with the number", async () => {
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" />);
+    await user.selectOptions(screen.getByLabelText("Carrier"), "OTHER");
+    await user.type(screen.getByLabelText("Tracking number"), "7280/13972666");
+    await user.type(screen.getByLabelText("Tracking link"), LINK);
+
+    await user.click(screen.getByRole("button"));
+    expect(screen.getByText(LINK)).toBeTruthy();
+    await user.click(screen.getByRole("button"));
+
+    expect(submitReturnTracking).toHaveBeenCalledWith("132210", "OTHER", "7280/13972666", LINK);
+  });
+
+  it("says the link was refused when the server refuses it", async () => {
+    submitReturnTracking.mockResolvedValue({ ok: false, reason: "invalid-url" });
+    const user = userEvent.setup();
+    render(<TrackingCapture id="132210" />);
+    await user.selectOptions(screen.getByLabelText("Carrier"), "OTHER");
+    await user.type(screen.getByLabelText("Tracking number"), "7280/13972666");
+    await user.type(screen.getByLabelText("Tracking link"), LINK);
+    await user.click(screen.getByRole("button"));
+    await user.click(screen.getByRole("button"));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("That doesn't look like a link.");
   });
 });

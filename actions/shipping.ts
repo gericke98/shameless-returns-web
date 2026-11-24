@@ -24,6 +24,7 @@ import axios from "axios";
 import { eq } from "drizzle-orm";
 import { preregisterDomesticReturn } from "./amphoraReturn";
 import { alertOps } from "./opsAlert";
+import { describeError } from "@/lib/describeError";
 
 // Types
 type ShippingResponse = {
@@ -276,10 +277,7 @@ async function sendEmail(
     // Carry Postmark's own words up to the alert. "Failed to send email" is
     // what three days of this outage looked like from the outside; the reason
     // it actually refused is the whole diagnosis.
-    const detail =
-      typeof error?.response?.data === "object"
-        ? JSON.stringify(error.response.data)
-        : error?.response?.data || error?.message || String(error);
+    const detail = describeError(error);
     console.error("Email error:", detail);
     return { status: 500, error: `Postmark refused the message: ${detail}` };
   }

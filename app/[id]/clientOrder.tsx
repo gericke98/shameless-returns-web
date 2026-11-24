@@ -50,7 +50,7 @@ const ClientOrderShell = ({
               tracking onto an order with no return and firing an
               `approveAmphoraReturn` 404 into a false ops alert. */}
           {order.returnSubmittedAt != null && order.trackingSubmittedAt == null && (
-            <TrackingCapture id={order.id} />
+            <TrackingCapture id={order.id} orderNumber={order.orderNumber} />
           )}
           <OrderWindow
             name={name}

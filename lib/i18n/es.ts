@@ -160,6 +160,9 @@ export const es = {
       "Pega el enlace de seguimiento que te dio el transportista (en su email o en el recibo). El almacén lo necesita para esperar tu paquete.",
     linkInvalid: "Eso no parece un enlace. Debe empezar por https://",
     noLink: "¿No tienes enlace? Escríbenos a hello@shamelesscollective.com con tu número de pedido.",
+    orderNumber:
+      "Ese es tu número de pedido. Necesitamos el número de seguimiento que te dio el transportista, en el recibo o en su email.",
+    wrongFormat: "Ese número no parece de este transportista. Ejemplo:",
   },
   success: {
     title: "¡Hemos recibido tu solicitud correctamente!",

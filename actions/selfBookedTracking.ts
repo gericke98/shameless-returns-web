@@ -5,7 +5,7 @@ import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getOrderByIdFresh } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
-import { carrierByCode } from "@/lib/carriers";
+import { carrierByCode, isOrderReference } from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
@@ -67,7 +67,10 @@ export async function submitReturnTracking(
   // the customer can correct it and submit again.
   let carrierUrl: string;
   if (carrier.link.kind === "built") {
-    carrierUrl = carrier.link.build(number);
+    const link = carrier.link.build(number);
+    // Not a number this carrier issues (a NACEX reference without its agency).
+    if (link === null) return { ok: false, reason: "invalid-tracking" };
+    carrierUrl = link;
   } else {
     const checked = checkTrackingUrl(trackingUrl);
     if (!checked.ok) return { ok: false, reason: checked.reason };
@@ -79,6 +82,10 @@ export async function submitReturnTracking(
   if ((order as any).returnMethod !== "SELF") {
     return { ok: false, reason: "not-self-booked" };
   }
+  // The customer's own order number is not a tracking number, and once
+  // Amphora pins it the warehouse can never match the parcel (#311595,
+  // #313127). Refused before the write-once claim, so they can correct it.
+  if (isOrderReference(number, order)) return { ok: false, reason: "order-number" };
 
   // Idempotency, and the reason it matters more here than anywhere else:
   // Amphora pins `carrier_number` at approve. Re-approving 422s, and

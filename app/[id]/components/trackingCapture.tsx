@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { submitReturnTracking } from "@/actions/selfBookedTracking";
-import { CARRIERS, carrierByCode } from "@/lib/carriers";
+import { CARRIERS, carrierByCode, isOrderReference } from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { useT } from "@/lib/i18n/context";
 
@@ -16,23 +16,43 @@ import { useT } from "@/lib/i18n/context";
  * For a carrier whose tracking link we cannot build ("Other"), the link is
  * required (Santi, 2026-11-24): Amphora's approve needs one, and sending `""`
  * is what failed #312783 and #312737. The same check runs on the server.
+ *
+ * The number is checked here too, with the server's own rules: it cannot be
+ * the customer's order number (#311595 and #313127 sent theirs, and Amphora
+ * pinned it), and it must be one this carrier can link (NACEX needs agency/note).
  */
-export function TrackingCapture({ id }: { id: string }) {
+export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: string }) {
   const t = useT();
   const [carrier, setCarrier] = useState(CARRIERS[0].code);
   const [number, setNumber] = useState("");
   const [link, setLink] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState<"idle" | "done" | "error" | "invalid-url">("idle");
+  const [result, setResult] = useState<
+    "idle" | "done" | "error" | "invalid-url" | "order-number" | "wrong-format"
+  >("idle");
   const [isPending, startTransition] = useTransition();
 
   // Derived during render: whether this carrier needs the customer's link,
   // and whether what they typed is one.
-  const needsLink = carrierByCode(carrier)?.link.kind === "customer";
+  const option = carrierByCode(carrier);
+  const needsLink = option?.link.kind === "customer";
+  const trimmed = number.trim();
+  const numberProblem: "order-number" | "wrong-format" | null =
+    trimmed === ""
+      ? null
+      : isOrderReference(trimmed, { orderNumber, id })
+        ? "order-number"
+        : option?.link.kind === "built" && option.link.build(trimmed) === null
+          ? "wrong-format"
+          : null;
+  // A refusal from the server for the number shows until the number changes.
+  const shownNumberProblem =
+    numberProblem ?? (result === "order-number" || result === "wrong-format" ? result : null);
   const linkCheck = needsLink ? checkTrackingUrl(link) : null;
   const linkTyped = link.trim() !== "";
   const linkBad = linkCheck !== null && !linkCheck.ok && linkTyped;
-  const ready = number.trim() !== "" && (linkCheck === null || linkCheck.ok);
+  const ready =
+    trimmed !== "" && numberProblem === null && (linkCheck === null || linkCheck.ok);
 
   if (result === "done") {
     return <p className="text-sm font-bold">{t.tracking.done}</p>;
@@ -51,6 +71,7 @@ export function TrackingCapture({ id }: { id: string }) {
           onChange={(e) => {
             setCarrier(e.target.value);
             setConfirming(false);
+            setResult("idle");
           }}
         >
           {CARRIERS.map((c) => (
@@ -66,12 +87,24 @@ export function TrackingCapture({ id }: { id: string }) {
         <input
           className="border rounded-lg p-2"
           value={number}
+          placeholder={option?.example}
+          aria-invalid={shownNumberProblem !== null}
           onChange={(e) => {
             setNumber(e.target.value);
             setConfirming(false);
+            setResult("idle");
           }}
         />
       </label>
+      {shownNumberProblem === "order-number" ? (
+        <p role="alert" className="text-xs text-red-600">
+          {t.tracking.orderNumber}
+        </p>
+      ) : shownNumberProblem === "wrong-format" ? (
+        <p role="alert" className="text-xs text-red-600">
+          {t.tracking.wrongFormat} {option?.example}
+        </p>
+      ) : null}
 
       {needsLink ? (
         <div className="flex flex-col gap-1">
@@ -126,19 +159,20 @@ export function TrackingCapture({ id }: { id: string }) {
             return;
           }
           startTransition(async () => {
-            const trimmed = number.trim();
             const outcome = needsLink
               ? await submitReturnTracking(id, carrier, trimmed, link.trim())
               : await submitReturnTracking(id, carrier, trimmed);
             if (outcome.ok) setResult("done");
             else if (outcome.reason === "missing-url" || outcome.reason === "invalid-url") {
               setResult("invalid-url");
-            } else setResult("error");
+            } else if (outcome.reason === "order-number") setResult("order-number");
+            else if (outcome.reason === "invalid-tracking") setResult("wrong-format");
+            else setResult("error");
             setConfirming(false);
           });
         }}
       >
-        {confirming ? `${t.tracking.submit} — ${number.trim()}` : t.tracking.submit}
+        {confirming ? `${t.tracking.submit} — ${trimmed}` : t.tracking.submit}
       </button>
     </div>
   );

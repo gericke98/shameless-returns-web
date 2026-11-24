@@ -18,6 +18,7 @@ import {
   getAmphoraReturnsByOrderName,
   type AmphoraReturn,
 } from "./amphora";
+import { describeError } from "@/lib/describeError";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
@@ -65,10 +66,7 @@ async function sendAmphoraConfirmationEmail(
   } catch (error: any) {
     // Postmark's own words, carried up to the alert. A bare 500 is what made
     // the August 2026 outage undiagnosable after the logs expired.
-    const detail =
-      typeof error?.response?.data === "object"
-        ? JSON.stringify(error.response.data)
-        : error?.response?.data || error?.message || String(error);
+    const detail = describeError(error);
     console.error("Amphora email error:", detail);
     return { status: 500, error: `Postmark refused the message: ${detail}` };
   }

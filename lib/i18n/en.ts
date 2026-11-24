@@ -150,6 +150,12 @@ export const en: Dictionary = {
     permanent: "We cannot change this later, so please check it carefully.",
     done: "Thank you! The warehouse now knows your parcel is on its way.",
     error: "We could not save that. Check the details and try again.",
+    // Only for a carrier whose tracking link we cannot build ("Other").
+    link: "Tracking link",
+    linkHelp:
+      "Paste the tracking link your carrier gave you (in their email or on the receipt). The warehouse needs it to expect your parcel.",
+    linkInvalid: "That doesn't look like a link. It should start with https://",
+    noLink: "No link? Email hello@shamelesscollective.com with your order number.",
   },
   success: {
     title: "We have received your request!",

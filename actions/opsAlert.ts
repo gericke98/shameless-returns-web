@@ -13,6 +13,7 @@
 // maintained here; check with grep before relying on it.
 
 import axios from "axios";
+import { describeError } from "@/lib/describeError";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 const OPS_ADDRESS = "hello@shamelesscollective.com";
@@ -84,7 +85,6 @@ export async function sendOpsAlert(
     }
     return { ok: true };
   } catch (error: any) {
-    const detail = error?.response?.data || error?.message || error;
-    return { ok: false, error: typeof detail === "string" ? detail : JSON.stringify(detail) };
+    return { ok: false, error: describeError(error) };
   }
 }

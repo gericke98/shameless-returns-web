@@ -2,22 +2,37 @@
 
 import { useState, useTransition } from "react";
 import { submitReturnTracking } from "@/actions/selfBookedTracking";
-import { CARRIERS } from "@/lib/carriers";
+import { CARRIERS, carrierByCode } from "@/lib/carriers";
+import { checkTrackingUrl } from "@/lib/trackingUrl";
 import { useT } from "@/lib/i18n/context";
 
 /**
  * Shown when a self-booked return is still waiting for its tracking number.
  *
- * The confirm step is not decoration: Amphora pins `carrier_number` at approve
- * and it can never be corrected, so a typo desyncs the warehouse permanently.
+ * The confirm step is not decoration: Amphora pins `carrier_number` and
+ * `carrier_url` at approve and they can never be corrected, so a typo desyncs
+ * the warehouse permanently.
+ *
+ * For a carrier whose tracking link we cannot build ("Other"), the link is
+ * required (Santi, 2026-11-24): Amphora's approve needs one, and sending `""`
+ * is what failed #312783 and #312737. The same check runs on the server.
  */
 export function TrackingCapture({ id }: { id: string }) {
   const t = useT();
   const [carrier, setCarrier] = useState(CARRIERS[0].code);
   const [number, setNumber] = useState("");
+  const [link, setLink] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState<"idle" | "done" | "error">("idle");
+  const [result, setResult] = useState<"idle" | "done" | "error" | "invalid-url">("idle");
   const [isPending, startTransition] = useTransition();
+
+  // Derived during render: whether this carrier needs the customer's link,
+  // and whether what they typed is one.
+  const needsLink = carrierByCode(carrier)?.link.kind === "customer";
+  const linkCheck = needsLink ? checkTrackingUrl(link) : null;
+  const linkTyped = link.trim() !== "";
+  const linkBad = linkCheck !== null && !linkCheck.ok && linkTyped;
+  const ready = number.trim() !== "" && (linkCheck === null || linkCheck.ok);
 
   if (result === "done") {
     return <p className="text-sm font-bold">{t.tracking.done}</p>;
@@ -58,23 +73,67 @@ export function TrackingCapture({ id }: { id: string }) {
         />
       </label>
 
+      {needsLink ? (
+        <div className="flex flex-col gap-1">
+          <label className="flex flex-col gap-1 text-sm">
+            {t.tracking.link}
+            <input
+              className="border rounded-lg p-2"
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              required
+              aria-invalid={linkBad}
+              aria-describedby="tracking-link-help"
+              placeholder="https://"
+              value={link}
+              onChange={(e) => {
+                setLink(e.target.value);
+                setConfirming(false);
+                if (result === "invalid-url") setResult("idle");
+              }}
+            />
+          </label>
+          <p id="tracking-link-help" className="text-xs text-slate-600">
+            {t.tracking.linkHelp}
+          </p>
+          {(linkBad || result === "invalid-url") && (
+            <p role="alert" className="text-xs text-red-600">
+              {t.tracking.linkInvalid}
+            </p>
+          )}
+          <p className="text-xs text-slate-600">{t.tracking.noLink}</p>
+        </div>
+      ) : null}
+
       <p className="text-xs text-slate-600">{t.tracking.permanent}</p>
       {result === "error" && (
         <p className="text-xs text-red-600">{t.tracking.error}</p>
       )}
 
+      {confirming && needsLink && linkCheck?.ok ? (
+        // What will be pinned, shown back before the click that pins it.
+        <p className="text-xs break-all">{linkCheck.url}</p>
+      ) : null}
+
       <button
         type="button"
         className="bg-white text-black border border-black py-3 rounded-full font-bold disabled:opacity-60"
-        disabled={isPending || !number.trim()}
+        disabled={isPending || !ready}
         onClick={() => {
           if (!confirming) {
             setConfirming(true);
             return;
           }
           startTransition(async () => {
-            const outcome = await submitReturnTracking(id, carrier, number.trim());
-            setResult(outcome.ok ? "done" : "error");
+            const trimmed = number.trim();
+            const outcome = needsLink
+              ? await submitReturnTracking(id, carrier, trimmed, link.trim())
+              : await submitReturnTracking(id, carrier, trimmed);
+            if (outcome.ok) setResult("done");
+            else if (outcome.reason === "missing-url" || outcome.reason === "invalid-url") {
+              setResult("invalid-url");
+            } else setResult("error");
             setConfirming(false);
           });
         }}

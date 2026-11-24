@@ -1,90 +1,56 @@
-import { useEffect, useMemo } from "react";
 import { OrderWindowContentProps } from "@/types";
 import { FirstWindow } from "./firstWindow";
 import { SecondWindow } from "./secondWindow";
 import { ThirdWindow } from "./thirdWindow";
 import { LastWindow } from "./lastWindow";
-import { useFeeLegs } from "../feesContext";
-import { calculatePrices } from "@/lib/portalPrices";
+import { usePortalWizard } from "../wizardContext";
 
+/**
+ * One window per step, chosen by NAME from the wizard's derived step. There is
+ * no position arithmetic and no effect resetting it: an empty selection, a
+ * payout step that no longer applies, and a summary reached without a required
+ * payout are all resolved by `currentStep` (lib/portalWizard) before render.
+ */
 export const OrderWindowContent = ({
-  position,
   name,
   items,
   order,
   id,
-  setPosition,
-  setCredito,
-  credito,
-  method,
-  setMethod,
   onItemChange,
   allProducts,
-}: OrderWindowContentProps & { onItemChange?: (updatedItem: any) => void }) => {
-  const legs = useFeeLegs();
-  const { totalPrice } = useMemo(
-    () => calculatePrices(items, allProducts, legs),
-    [items, allProducts, legs]
-  );
-  const itemsToShow = useMemo(
-    () => items.filter((item) => item.action && !item.confirmed),
-    [items]
-  );
+}: OrderWindowContentProps) => {
+  const { step } = usePortalWizard();
 
-  useEffect(() => {
-    if (itemsToShow.length === 0 && position !== 1) {
-      setPosition(1);
-    }
-  }, [itemsToShow, position, setPosition]);
-
-  const windows = {
-    1: (
-      <FirstWindow
-        name={name}
-        items={items}
-        onItemChange={onItemChange}
-        allProducts={allProducts}
-      />
-    ),
-    2: (
-      <SecondWindow
-        order={order}
-        position={position}
-        setPosition={setPosition}
-        items={items}
-        onItemChange={onItemChange}
-        id={id}
-        allProducts={allProducts}
-      />
-    ),
-    3:
-      totalPrice > 0 ? (
-        <ThirdWindow
+  switch (step) {
+    case "items":
+      return (
+        <FirstWindow
+          name={name}
           items={items}
-          shipping={true}
-          position={position}
-          setPosition={setPosition}
-          setCredito={setCredito}
           onItemChange={onItemChange}
-          id={id}
-          credito={credito}
           allProducts={allProducts}
         />
-      ) : null,
-    4: (
-      <LastWindow
-        items={items}
-        position={position}
-        setPosition={setPosition}
-        credito={credito}
-        method={method}
-        setMethod={setMethod}
-        onItemChange={onItemChange}
-        id={id}
-        allProducts={allProducts}
-      />
-    ),
-  };
-
-  return windows[position as keyof typeof windows] || null;
+      );
+    case "address":
+      return (
+        <SecondWindow
+          order={order}
+          items={items}
+          onItemChange={onItemChange}
+          id={id}
+          allProducts={allProducts}
+        />
+      );
+    case "payout":
+      return <ThirdWindow />;
+    case "summary":
+      return (
+        <LastWindow
+          items={items}
+          onItemChange={onItemChange}
+          id={id}
+          allProducts={allProducts}
+        />
+      );
+  }
 };

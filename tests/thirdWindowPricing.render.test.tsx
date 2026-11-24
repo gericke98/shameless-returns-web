@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ThirdWindow } from "@/app/[id]/windows/thirdWindow";
 import { FeesProvider } from "@/app/[id]/feesContext";
+import { PortalWizardProvider } from "@/app/[id]/wizardContext";
 import type { FeeTable } from "@/lib/fees";
 import type { OrderAddressFields } from "@/lib/deliveryAddress";
 import { valueBasket } from "@/lib/basket";
@@ -135,16 +136,9 @@ describe("ThirdWindow total agrees with valueBasket", () => {
 
     render(
       <FeesProvider table={EMPTY_TABLE} order={ORDER}>
-        <ThirdWindow
-          items={ITEMS}
-          shipping={false}
-          position={2}
-          setPosition={() => {}}
-          setCredito={() => {}}
-          credito={false}
-          allProducts={CATALOGUE}
-          id="13217168851270"
-        />
+        <PortalWizardProvider items={ITEMS} allProducts={CATALOGUE}>
+          <ThirdWindow />
+        </PortalWizardProvider>
       </FeesProvider>
     );
 

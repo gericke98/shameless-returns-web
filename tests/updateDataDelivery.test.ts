@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// `updateData` is the server action behind the portal's address form — the
+// `saveAddress` is the server action behind the portal's address form — the
 // most consequential customer-facing write in the app, since it redirects
 // where the return label (and now the replacement garment) is sent.
 //
@@ -12,8 +12,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 //  - a complete block writes the parsed values, with the country normalised
 //    to its ISO-2 code;
 //  - a partial or unsupported-country block rejects the WHOLE submission —
-//    `db.update` must never be called, and `updateData` must return
-//    `prevState` unchanged;
+//    `db.update` must never be called, and `saveAddress` must return
+//    `{ ok: false }`;
 //  - a PURE-RETURN pass — deliveryBlockOffered absent, because
 //    <DeliveryAddressFields> is only rendered for an exchange basket — OMITS
 //    all seven delivery_* keys from the payload entirely, rather than
@@ -59,7 +59,6 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
-const PREV_STATE = 7;
 
 /**
  * A base form covering the required shipping-address fields, plus whatever
@@ -107,15 +106,15 @@ const COMPLETE_DELIVERY = {
   deliveryCountry: "Estados Unidos",
 };
 
-describe("updateData — delivery address write behaviour", () => {
+describe("saveAddress — delivery address write behaviour", () => {
   beforeEach(() => {
     updates.length = 0;
     access.granted = true;
   });
 
   it("clears all seven delivery columns to null when no delivery block is submitted", async () => {
-    const { updateData } = await import("@/actions/updateOrder");
-    const result = await updateData(PREV_STATE, buildFormData());
+    const { saveAddress } = await import("@/actions/updateOrder");
+    const result = await saveAddress(buildFormData());
 
     expect(updates).toHaveLength(1);
     const values = updates[0];
@@ -145,12 +144,12 @@ describe("updateData — delivery address write behaviour", () => {
       expect(Object.prototype.hasOwnProperty.call(values, key)).toBe(true);
     }
 
-    expect(result).toBe(PREV_STATE + 1);
+    expect(result).toEqual({ ok: true });
   });
 
   it("writes a complete delivery block, normalising the country to its ISO-2 code", async () => {
-    const { updateData } = await import("@/actions/updateOrder");
-    const result = await updateData(PREV_STATE, buildFormData(COMPLETE_DELIVERY));
+    const { saveAddress } = await import("@/actions/updateOrder");
+    const result = await saveAddress(buildFormData(COMPLETE_DELIVERY));
 
     expect(updates).toHaveLength(1);
     const values = updates[0];
@@ -165,27 +164,25 @@ describe("updateData — delivery address write behaviour", () => {
       deliveryCountry: "US",
     });
 
-    expect(result).toBe(PREV_STATE + 1);
+    expect(result).toEqual({ ok: true });
   });
 
   it("rejects a partial delivery block: db.update is never called, and prevState is returned unchanged", async () => {
     const { deliveryCity, ...partial } = COMPLETE_DELIVERY;
-    const { updateData } = await import("@/actions/updateOrder");
-    const result = await updateData(PREV_STATE, buildFormData(partial));
+    const { saveAddress } = await import("@/actions/updateOrder");
+    const result = await saveAddress(buildFormData(partial));
 
     expect(updates).toHaveLength(0);
-    expect(result).toBe(PREV_STATE);
+    expect(result).toEqual({ ok: false, reason: "invalid-delivery" });
   });
 
   it("rejects a delivery country outside SUPPORTED_COUNTRIES: db.update is never called, and prevState is returned unchanged", async () => {
-    const { updateData } = await import("@/actions/updateOrder");
-    const result = await updateData(
-      PREV_STATE,
-      buildFormData({ ...COMPLETE_DELIVERY, deliveryCountry: "Freedonia" })
+    const { saveAddress } = await import("@/actions/updateOrder");
+    const result = await saveAddress(buildFormData({ ...COMPLETE_DELIVERY, deliveryCountry: "Freedonia" })
     );
 
     expect(updates).toHaveLength(0);
-    expect(result).toBe(PREV_STATE);
+    expect(result).toEqual({ ok: false, reason: "invalid-delivery" });
   });
 
   it("omits all seven delivery columns from the payload on a pure-return pass (no delivery block offered)", async () => {
@@ -195,10 +192,8 @@ describe("updateData — delivery address write behaviour", () => {
     // <DeliveryAddressFields> never renders, `deliveryBlockOffered` is never
     // submitted, and this form submission carries no delivery_* fields at
     // all — indistinguishable, by the OLD code, from unticking the box.
-    const { updateData } = await import("@/actions/updateOrder");
-    const result = await updateData(
-      PREV_STATE,
-      buildFormDataWithoutDeliveryBlockOffered()
+    const { saveAddress } = await import("@/actions/updateOrder");
+    const result = await saveAddress(buildFormDataWithoutDeliveryBlockOffered()
     );
 
     expect(updates).toHaveLength(1);
@@ -226,14 +221,14 @@ describe("updateData — delivery address write behaviour", () => {
       shippingAddress1: "Calle Mayor 12",
     });
 
-    expect(result).toBe(PREV_STATE + 1);
+    expect(result).toEqual({ ok: true });
   });
 
   it("never writes shippingCountry, on the clearing path or the complete path", async () => {
-    const { updateData } = await import("@/actions/updateOrder");
+    const { saveAddress } = await import("@/actions/updateOrder");
 
-    await updateData(PREV_STATE, buildFormData());
-    await updateData(PREV_STATE, buildFormData(COMPLETE_DELIVERY));
+    await saveAddress(buildFormData());
+    await saveAddress(buildFormData(COMPLETE_DELIVERY));
 
     expect(updates).toHaveLength(2);
     for (const values of updates) {

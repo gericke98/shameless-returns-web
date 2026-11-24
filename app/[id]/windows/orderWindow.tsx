@@ -1,38 +1,9 @@
 import { memo } from "react";
 import { OrderWindowContent } from "./orderWindowContent";
-import { ClientOrderWindowContentProps, Product } from "@/types";
+import type { OrderWindowContentProps } from "@/types";
 
-type OrderWindowProps = {
-  position: number;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
-  setCredito: React.Dispatch<React.SetStateAction<boolean | null>>;
-  credito: boolean | null;
-  allProducts: Product[];
-} & ClientOrderWindowContentProps & {
-    onItemChange?: (updatedItem: any) => void;
-  };
-
-const OrderWindowBase = ({
-  position,
-  onItemChange,
-  ...props
-}: OrderWindowProps) => {
-  return (
-    <OrderWindowContent
-      position={position}
-      name={props.name}
-      items={props.items}
-      order={props.order}
-      id={props.id}
-      setPosition={props.setPosition}
-      setCredito={props.setCredito}
-      credito={props.credito}
-      method={props.method}
-      setMethod={props.setMethod}
-      onItemChange={onItemChange}
-      allProducts={props.allProducts}
-    />
-  );
-};
+const OrderWindowBase = (props: OrderWindowContentProps) => (
+  <OrderWindowContent {...props} />
+);
 
 export const OrderWindow = memo(OrderWindowBase);

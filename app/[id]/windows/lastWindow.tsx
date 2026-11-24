@@ -5,14 +5,10 @@ import { Product } from "@/types";
 import { SummaryComponent } from "../components/summary/summary";
 import { ProductLineClient } from "../components/productLineClient";
 import { FaArrowAltCircleLeft } from "react-icons/fa";
-import { useFeeLegs } from "../feesContext";
-import { resolveFee } from "@/lib/fees";
-import { valueBasket } from "@/lib/basket";
-import { buildAgreement, shownTotalEuros } from "@/lib/agreement";
+import { shownTotalEuros } from "@/lib/agreement";
 import { useLocale, useT } from "@/lib/i18n/context";
 import { formatEuros } from "@/lib/i18n";
-import { ReturnMethodChoice } from "../components/returnMethodChoice";
-import type { ReturnMethod } from "@/lib/returnMethods";
+import { usePortalWizard } from "../wizardContext";
 import {
   indexCatalogue,
   orderRatio,
@@ -21,66 +17,20 @@ import {
 
 type Props = {
   items: (typeof productsOrder.$inferSelect & { newp?: Product })[];
-  position: number;
-  setPosition: React.Dispatch<React.SetStateAction<number>>;
-  credito: boolean | null;
-  /**
-   * The customer's claimed return lane. Lifted up to ClientOrder — the
-   * lowest common ancestor of this component and AsyncButton — so the choice
-   * made here actually reaches the submit button. See ReturnMethodChoice for
-   * the gate that decides whether the control is shown at all.
-   */
-  method: ReturnMethod;
-  setMethod: React.Dispatch<React.SetStateAction<ReturnMethod>>;
   onItemChange?: (updatedItem: typeof productsOrder.$inferSelect) => void;
   id: string;
   allProducts: Product[];
 };
 
-const LastWindowBase = ({
-  items,
-  position,
-  setPosition,
-  credito,
-  method,
-  setMethod,
-  onItemChange,
-  id,
-  allProducts,
-}: Props) => {
-  const legs = useFeeLegs();
+const LastWindowBase = ({ items, onItemChange, allProducts }: Props) => {
+  const wizard = usePortalWizard();
   const t = useT();
   const locale = useLocale();
-  const { finalTotal, returnLegCents } = useMemo(() => {
-    // One shared valuation (lib/basket.ts) — the same one payments.ts charges
-    // from. Only the numbers are needed here; nothing on this screen renders a
-    // filtered item list of its own.
-    const basket = valueBasket(items, allProducts);
-
-    // Rule A, shared with every other site and with the server-side charge.
-    // This previously used a Rule B variant keyed on action type, which
-    // disagreed with the checkout total on a cheaper-item exchange.
-    const { feeCents, returnLegCents, outboundLegCents } = resolveFee(
-      legs,
-      basket
-    );
-
-    // The same agreement actions/payments.ts charges and stores, so the
-    // number on screen is the number Stripe takes (lib/agreement.ts).
-    const agreement = buildAgreement({
-      lines: basket.lines,
-      returnLegCents,
-      outboundLegCents,
-      feeCents,
-      selfBooked: method === "SELF",
-      tender: credito ? "credit" : "refund",
-    });
-
-    return {
-      finalTotal: shownTotalEuros(agreement),
-      returnLegCents,
-    };
-  }, [allProducts, credito, items, legs, method]);
+  // The wizard never renders this step while a required payout is missing
+  // (currentStep in lib/portalWizard), so the agreement exists here. The
+  // number on screen is the number the server agrees and Stripe takes.
+  const agreement = wizard.terms.agreement;
+  const finalTotal = agreement ? shownTotalEuros(agreement) : 0;
 
   // Same value SummaryComponent derives internally for its own cards, threaded
   // down to ProductLineClient so its "chosen replacement" card cannot show a
@@ -95,17 +45,13 @@ const LastWindowBase = ({
     [items, allProducts]
   );
 
-  const handleBack = () => {
-    setPosition(finalTotal > 0 ? position - 1 : position - 2);
-  };
-
   return (
     <div className="w-full h-full flex flex-col mb-3">
       <Progress value={100} />
       <FaArrowAltCircleLeft
         size={25}
         className="mt-4 cursor-pointer"
-        onClick={handleBack}
+        onClick={wizard.back}
       />
       <h3 className="font-bold text-2xl text-left mt-1">{t.last.title}</h3>
       <div className="w-full h-full mt-5 rounded-xl hover:cursor-pointer flex flex-col gap-4">
@@ -126,22 +72,17 @@ const LastWindowBase = ({
         )}
       </div>
       <span className="border-b border-slate-200 w-full" />
-      <ReturnMethodChoice
-        value={method}
-        onChange={setMethod}
-        returnLegCents={returnLegCents}
-      />
       <div className="w-full mt-2 flex flex-col">
         {items.some((item) => item.action !== null) && (
           <SummaryComponent
             items={items}
             shipping={true}
             final={true}
-            credito={credito || false}
+            payout={wizard.payout}
             allProducts={allProducts}
-            // Rendered two lines below the choice control. Without this the box
-            // and the paragraph beneath it disagree by exactly the return leg.
-            method={method}
+            // The lane chosen on step 2. Without it the box and the paragraph
+            // beneath it disagree by exactly the return leg.
+            method={wizard.method}
           />
         )}
         {finalTotal < 0 ? (
@@ -152,7 +93,7 @@ const LastWindowBase = ({
               {t.last.exchangeBodyRest}{" "}
             </p>
           </div>
-        ) : credito ? (
+        ) : !agreement || agreement.netCents <= 0 ? null : agreement.tender === "credit" ? (
           <div className="w-full flex flex-col">
             <h3 className="font-bold text-base">{t.last.creditTitle}</h3>
             <p className="text-black text-sm">

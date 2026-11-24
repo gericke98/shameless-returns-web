@@ -59,6 +59,7 @@ export const en: Dictionary = {
   },
   second: {
     title: "Return method",
+    saveError: "We could not save the address. Check the details and try again.",
     subtitle: "Choose the shipping method you want to use to return the selected items",
     // Two different flows, not two wordings for one: a Spanish parcel is
     // dropped at a Correos point, an international one is collected from the

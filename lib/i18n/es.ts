@@ -59,6 +59,7 @@ export const es = {
   },
   second: {
     title: "Método de devolución",
+    saveError: "No hemos podido guardar la dirección. Revisa los datos e inténtalo de nuevo.",
     subtitle:
       "Escoge el método de envío que quieres usar para devolver los productos seleccionados",
     // Two different flows, not two wordings for one: a Spanish parcel is

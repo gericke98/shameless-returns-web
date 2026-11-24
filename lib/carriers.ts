@@ -151,6 +151,11 @@ export function carrierByCode(code: string): CarrierOption | null {
  * " 313-127" all match: punctuation and spacing do not make it a different
  * number. Compared against explicit data (the order's own references), never
  * against words a customer might type around it.
+ *
+ * STOPGAP, by decision (Santi, 2026-11-24): it refuses the two mistakes seen
+ * so far, but cannot prove a number is a real shipment ("Order #313127" still
+ * passes). The root fix is to verify the number with the carrier before it is
+ * pinned (Correos first; other carriers confirmed by ops), planned next.
  */
 export function isOrderReference(
   trackingNumber: string,

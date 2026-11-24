@@ -11,6 +11,7 @@ import { base64img } from "@/placeholder";
 import {
   buildSelfReturnInstructionsEmail,
   buildSelfReturnReminderEmail,
+  buildSelfTrackingRejectedEmail,
   type EmailPayload,
 } from "@/lib/emails";
 import type { Locale } from "@/lib/i18n";
@@ -80,6 +81,20 @@ export async function sendSelfReturnReminder(
   const portalUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
   return sendSelfReturnEmail(
     buildSelfReturnReminderEmail(name, locale, orderId, portalUrl),
+    to
+  );
+}
+
+export async function sendSelfTrackingRejected(
+  to: string,
+  name: string,
+  locale: Locale,
+  orderId: string,
+  number: string
+): Promise<number> {
+  const portalUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  return sendSelfReturnEmail(
+    buildSelfTrackingRejectedEmail(name, locale, orderId, portalUrl, number),
     to
   );
 }

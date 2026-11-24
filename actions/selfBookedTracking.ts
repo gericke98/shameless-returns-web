@@ -7,10 +7,9 @@ import { getOrderByIdFresh } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { carrierByCode, checkTrackingNumber } from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
-import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
-import { describeError } from "@/lib/describeError";
 import { verifyWithCarrier } from "@/lib/carrierLookup";
+import { pinSelfTracking } from "@/lib/pinSelfTracking";
 
 export type TrackingSubmission = {
   ok: boolean;
@@ -163,33 +162,14 @@ export async function submitReturnTracking(
     return { ok: true, pending: true };
   }
 
-  // Best-effort, and swallowed: the customer has done everything asked of them
-  // and the parcel is already moving. Never silent, though.
-  try {
-    await approveAmphoraReturn(amphoraOrderIdFromShopifyId(id), {
-      carrier: carrier.code,
-      carrier_number: number,
-      carrier_url: carrierUrl,
-    });
-  } catch (error: any) {
-    await alertOps(
-      `[returns] SELF RETURN NOT APPROVED — ${order.orderNumber}`,
-      [
-        `A customer submitted tracking and the warehouse was not told.`,
-        ``,
-        `Order:     ${order.orderNumber} (id ${id})`,
-        `Customer:  ${order.email}`,
-        `Carrier:   ${carrier.code}`,
-        `Tracking:  ${number}`,
-        ``,
-        `Failure:   ${describeError(error)}`,
-        ``,
-        `We hold the tracking; Amphora does not. Approve the ticket by hand`,
-        `with this carrier data. Note carrier_number is write-once, so get it`,
-        `right the first time.`,
-      ].join("\n")
-    );
-  }
+  await pinSelfTracking({
+    id,
+    orderNumber: order.orderNumber,
+    email: order.email,
+    carrier: carrier.code,
+    number,
+    carrierUrl,
+  });
 
   return { ok: true };
 }

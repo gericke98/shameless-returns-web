@@ -49,14 +49,17 @@ stockless order. Between the settlement stock read and `orderCreate` (seconds) a
 catches it if the mirror has caught up, and otherwise Amphora's own stock exception (`reserved`, tested on #313142) is the
 warehouse's existing path. A real reservation needs Amphora (questions below).
 
-## Decisions for Santi (A recommended)
-- D1 Refund after the size is gone: A = refund everything the customer paid for this line (garment + any exchange fees
-  paid by card), because the failure is ours. B = garment only, minus the return fee, as for a normal refund.
-- D2 Promise netting at accept: A = available-to-promise = Amphora available − units of our own open accepted exchanges
-  for that SKU (explicit data: open submissions), so two exchange customers cannot both be promised the last unit.
-  B = Amphora available alone.
-- D3 Customer self-service choice page: A = separate LIGHT phase after FX, writing the same `replacement_shortfalls`
-  decision; until then ops records it with the script after emailing the customer. B = inside FX.
+## Decisions (Santi, 2026-11-26)
+- D1 Refund after the size is gone: **same as a normal return: line total minus the return shipping fee.** The `refund`
+  decision converts the line to the refund lane, so the refund lane's existing fee rules compute it (no new formula).
+- D2 Two exchanges competing for the same units: **decide by time.** The earlier accepted submission
+  (`return_submissions.accepted_at`, explicit data) has priority. At accept: available-to-promise = Amphora available −
+  units of our open accepted exchanges for that SKU; short → `replacement-unavailable`. At settlement: a submission is
+  covered when Amphora available − units of open exchanges for that SKU accepted EARLIER than it ≥ its need. A later
+  submission settling first can never take an earlier one's unit.
+- D3 No self-service page. **Santi emails the customer and records the outcome by hand** with
+  `scripts/decide-shortfall.ts` (other variant or refund); settlement then executes it. Paying or creating the order
+  directly in Shopify instead is NOT supported: the ledger would pay again.
 
 ## Questions for Amphora (sent by Santi)
 1. Does your Shopify connector import an order whose fulfillment order is on hold / unpaid, and does an imported NEW or

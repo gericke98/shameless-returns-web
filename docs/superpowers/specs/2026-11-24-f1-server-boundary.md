@@ -376,4 +376,16 @@ handlers never mint (exception by design: the lookup handler is the credential c
   logged out; fee edit saved and restored; no `[action-error]`/`[client-error]`.
 - Pre-existing on main, not F1: lookup inputs' `pattern` attributes are invalid under the `v` flag (no browser-side
   validation); `formSelectSize.tsx` hard-codes English "Select a size"/"This field is required".
-- Still open: one real free Correos return on a fresh order (real senders); deployed-preview cache check.
+- Real free return, #38594 (owner's order, window exemption in the scratch worktree only, never committed; DB = branch,
+  Postmark/Correos/Amphora real, Stripe off), 23:19Z: submission accepted (refund, net 2300), Shopify R4 OPEN, Correos
+  PQAZXT9800007210128110P, Amphora EXTERNAL pre-registered, label email Delivered. Cancel through the portal: submission
+  cancelled, row reset, R4 CANCELED, Amphora cancel ran (no abort), cancel email Delivered. PASS.
+- Preview `shameless-returns-2d68n1fph` (anonymous, twice): 401 `private, no-store`, `x-vercel-cache: MISS`. Admin 200 also
+  `private, no-store` (local). PASS.
+- Side effect: Amphora's webhook for the branch-only return reached PRODUCTION (main) and matched by order id, writing
+  locator/carrier/carrier_url/return_status APROVED/last_tracking_* onto prod `orders` #38594 and sending "Tu recogida está
+  programada". Pre-run values (Neon point-in-time read at 23:10Z): all NULL, nudge 0. Root fix is F4's "resolve webhook
+  events through the persisted Amphora return id → shipment" (prod has no shipment for it → ignored); the same applies to
+  F2's per-preview Neon branches.
+- Pre-existing on main, not F1: cancel is not offered for ~5 min after booking (`cancelEligibility` → `carrier-unreadable`
+  while Correos has not registered the label yet); the cancel panel promises a refund on a return nothing was paid for.

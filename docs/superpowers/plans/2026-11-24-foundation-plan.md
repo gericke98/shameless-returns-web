@@ -59,6 +59,9 @@ It depends on F2 (CI proves the upgrade). F1 is written so it carries over uncha
   `/success`'s "any line confirmed" (Santi, 2026-11-24: owned here, not F1).
 - The Amphora webhook resolves events through the persisted Amphora return id → shipment, never by `payload.name`
   (`app/api/webhooks/amphora/route.ts:67`, a rule-4 violation found in the F1 review).
+  Seen 2026-11-25: a return pre-registered from a Neon-branch test reached prod's webhook, matched by order id, and wrote
+  prod `orders` + emailed. Keyed by shipment, prod would have ignored it. Also: cancel is refused as `carrier-unreadable`
+  for ~5 min after a Correos booking (label not yet at Correos); the shipment state should say "booked, not yet scanned".
 - Pinning self-booked tracking and cancelling are transitions of the same shipment row, so a cancel can never cross
   an Amphora pin in flight (the window F1 rev 3 §4 leaves open after its `FOR UPDATE` claim).
 - A submission is `accepted` only after its Shopify return exists; a failed confirm moves it to `failed`, never leaves it

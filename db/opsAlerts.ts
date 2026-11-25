@@ -59,13 +59,16 @@ export async function claimPendingOpsAlerts(limit: number): Promise<PendingOpsAl
       )
     )
     .orderBy(sql`${opsAlerts.lastAttemptAt} ASC NULLS FIRST`, asc(opsAlerts.createdAt))
-    .limit(limit)
+    // A placeholder, bound at execute: drizzle 0.30 drops LIMIT for a falsy
+    // number, and a limit of 0 must claim nothing, not everything.
+    .limit(sql.placeholder("limit"))
     .for("update", { skipLocked: true });
   const rows = await alerts
     .update()
     .set({ lastAttemptAt: sql`now()` })
     .where(inArray(opsAlerts.id, claimable))
-    .returning({ id: opsAlerts.id, dedupeKey: opsAlerts.dedupeKey, subject: opsAlerts.subject, body: opsAlerts.body });
+    .returning({ id: opsAlerts.id, dedupeKey: opsAlerts.dedupeKey, subject: opsAlerts.subject, body: opsAlerts.body })
+    .execute({ limit });
   return rows.map((r) => ({
     id: String(r.id),
     dedupeKey: String(r.dedupeKey),

@@ -104,4 +104,20 @@ describe("db/opsAlerts against Postgres", () => {
 
     expect(claimed.map((r) => r.dedupeKey)).toEqual(["fresh"]);
   });
+
+  // The limit is a bound parameter for EVERY value: drizzle 0.30 drops the
+  // LIMIT clause for a falsy number, so 0 would otherwise claim the whole
+  // backlog (Codex review of c4ec155).
+  it.each([
+    [0, 0],
+    [1, 1],
+    [2, 2],
+  ])("claims at most the limit: limit %i claims %i of three, and leases only those", async (limit, n) => {
+    const { insertOpsAlert, claimPendingOpsAlerts } = await repo();
+    for (const key of ["a", "b", "c"]) await insertOpsAlert(alert(key));
+
+    expect(await claimPendingOpsAlerts(limit)).toHaveLength(n);
+    const leased = await pg.query(`SELECT count(*)::int AS n FROM ops_alerts WHERE last_attempt_at IS NOT NULL`);
+    expect((leased.rows[0] as any).n).toBe(n);
+  });
 });

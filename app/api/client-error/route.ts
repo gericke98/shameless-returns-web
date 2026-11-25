@@ -13,7 +13,7 @@
 import { NextResponse } from "next/server";
 import { CLIENT_ERROR_MAX_BYTES, parseClientErrorReport } from "@/lib/clientErrorReport";
 import { currentOrderId } from "@/lib/orderAccess";
-import { enqueueOpsAlert } from "@/actions/opsAlertOutbox";
+import { enqueueOpsAlert } from "@/lib/server/opsAlertOutbox";
 
 export const dynamic = "force-dynamic";
 

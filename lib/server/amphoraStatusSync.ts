@@ -1,3 +1,4 @@
+import "server-only";
 // Applying an Amphora return-status change: persist it, and tell the customer.
 //
 // Extracted from the webhook route so that the PUSH path (Amphora calls us) and
@@ -24,7 +25,7 @@ import {
   decideWebhookActions,
   type AmphoraWebhookReturn,
 } from "@/lib/amphoraWebhook";
-import { alertOps } from "@/actions/opsAlert";
+import { alertOps } from "@/lib/server/opsAlert";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 

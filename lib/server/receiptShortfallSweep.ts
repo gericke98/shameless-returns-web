@@ -1,11 +1,12 @@
+import "server-only";
 // Short-receipt detection: the warehouse counted fewer units of a SKU than the
 // customer still has open. Records each case, resolves it on evidence, and
 // alerts ops durably (stage 1 at once, stage 2 after 7 days unresolved).
 //
 // NOT a server action: nothing here is callable from a client. Runs from
 // /api/cron/receipt-shortfalls. It never settles, refunds or emails a customer.
-import { getAmphoraReturns } from "@/actions/amphora";
-import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { getAmphoraReturns } from "@/lib/server/amphora";
+import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 import {
   getOrderByIdFresh,
   getOrdersWithUnsettledReturns,

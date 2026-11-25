@@ -45,7 +45,7 @@ beforeEach(() => {
 describe("obtainLastStatus", () => {
   it("reports what Correos returned", async () => {
     axiosGet.mockResolvedValue({ data: DELIVERED });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     const status = await obtainLastStatus("PQAZXT9800004250128221N");
 
@@ -54,7 +54,7 @@ describe("obtainLastStatus", () => {
 
   it("reports unknown — not Prerregistrado — when Correos has no traceability", async () => {
     axiosGet.mockResolvedValue({ data: NO_TRACEABILITY });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     const status = await obtainLastStatus("PQAZXT0710002040128224R");
 
@@ -67,7 +67,7 @@ describe("obtainLastStatus", () => {
     // sequentially inside a 300-second function, so a socket the localizador
     // never closes takes every parcel behind it down with it.
     axiosGet.mockResolvedValue({ data: DELIVERED });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     await obtainLastStatus("PQAZXT9800004250128221N");
 
@@ -77,14 +77,14 @@ describe("obtainLastStatus", () => {
   it("treats a network failure as unknown, never as a status", async () => {
     // A timeout is not evidence about the parcel.
     axiosGet.mockRejectedValue(new Error("ETIMEDOUT"));
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     expect((await obtainLastStatus("PQ123")).phase).toBe("sin_informacion");
   });
 
   it("does not call Correos at all without credentials", async () => {
     delete process.env.USERNAME_CORREOS;
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     const status = await obtainLastStatus("PQ123");
 
@@ -93,7 +93,7 @@ describe("obtainLastStatus", () => {
   });
 
   it("does not call Correos for a null locator", async () => {
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     expect((await obtainLastStatus(null)).phase).toBe("sin_informacion");
     expect(axiosGet).not.toHaveBeenCalled();
@@ -103,7 +103,7 @@ describe("obtainLastStatus", () => {
     // The locator reaches this from a query string; it must not be able to
     // append its own path segments or query parameters to the Correos URL.
     axiosGet.mockResolvedValue({ data: DELIVERED });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     await obtainLastStatus("PQ/123?x=1");
 

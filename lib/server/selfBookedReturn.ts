@@ -1,12 +1,11 @@
-"use server";
-
+import "server-only";
 import { and, eq, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getOrderByIdFresh, getVariantSkusByIds } from "@/db/queries";
 import { amphoraOrderIdFromShopifyId, createAmphoraReturn } from "./amphora";
 import { alertOps } from "./opsAlert";
-import { sendSelfReturnInstructions } from "@/actions/selfReturnEmails";
+import { sendSelfReturnInstructions } from "@/lib/server/selfReturnEmails";
 import { readLocale } from "@/lib/i18n";
 import { describeError } from "@/lib/describeError";
 

@@ -1,9 +1,8 @@
-"use server";
-
+import "server-only";
 import { stripe } from "@/lib/stripe";
 import { normalizeCountry } from "@/lib/countries";
 import { hasOrderAccess } from "@/lib/orderAccess";
-import { alertOps } from "@/actions/opsAlert";
+import { alertOps } from "@/lib/server/opsAlert";
 import { centsToEuros, checkoutLines, type CheckoutLine } from "@/lib/fees";
 import { dictionaries, readLocale } from "@/lib/i18n";
 import type { ReturnMethod } from "@/lib/returnMethods";

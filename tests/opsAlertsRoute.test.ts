@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // emails ops), and it must not depend on any other cron's work succeeding.
 
 const state = { throws: false, calls: 0 };
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   dispatchOpsAlerts: async () => {
     state.calls += 1;
     if (state.throws) throw new Error("neon 402");

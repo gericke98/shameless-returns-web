@@ -1,9 +1,9 @@
-"use server";
-
+import "server-only";
+// NOT "use server": every export of such a module is a public endpoint.
 import db from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { OrderData, OrderLineItem } from "@/types";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { formatOrderId } from "@/utils/order-utils";
 
 /**
@@ -104,27 +104,4 @@ export async function getOrderProductsById(orderId: string) {
   return db.query.productsOrder.findMany({
     where: eq(productsOrder.orderId, orderId),
   });
-}
-
-/**
- * Updates an order product
- *
- * @param variantId Variant ID of the product to update
- * @param orderId Order ID of the product to update
- * @param updates Updates to apply to the product
- */
-export async function updateOrderProduct(
-  variantId: string,
-  orderId: string,
-  updates: Partial<typeof productsOrder.$inferInsert>
-) {
-  return db
-    .update(productsOrder)
-    .set(updates)
-    .where(
-      and(
-        eq(productsOrder.variant_id, variantId),
-        eq(productsOrder.orderId, orderId)
-      )
-    );
 }

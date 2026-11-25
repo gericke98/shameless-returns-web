@@ -1,3 +1,4 @@
+import "server-only";
 // Server-only module (reads secret env, hits the Amphora API + DB). Imported
 // only by server actions / route handlers — NOT a "use server" action module,
 // because it also exports the sync helper `isInternationalOrder`.

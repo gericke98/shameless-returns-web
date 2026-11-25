@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
-import { applyReturnStatus } from "@/actions/amphoraStatusSync";
+import { applyReturnStatus } from "@/lib/server/amphoraStatusSync";
 import {
   orderIdFromWebhook,
   type AmphoraWebhookReturn,

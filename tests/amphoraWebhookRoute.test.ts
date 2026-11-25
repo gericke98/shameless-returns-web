@@ -49,7 +49,7 @@ vi.mock("@/db/drizzle", () => {
 // Mocked so an ops alert is not counted as a customer email: `alertOps` posts
 // to the same Postmark endpoint the axios mock below captures.
 const alerts: string[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string) => {
     alerts.push(subject);
   },

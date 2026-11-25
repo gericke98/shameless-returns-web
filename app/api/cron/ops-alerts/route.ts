@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { dispatchOpsAlerts } from "@/actions/opsAlertOutbox";
+import { dispatchOpsAlerts } from "@/lib/server/opsAlertOutbox";
 
 /**
  * Deliver the durable ops-alert outbox (`ops_alerts`).

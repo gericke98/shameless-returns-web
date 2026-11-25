@@ -18,7 +18,7 @@ vi.mock("@/db/queries", () => ({
   getSelfReturnsAwaitingTracking: async () => rows,
 }));
 
-vi.mock("@/actions/selfReturnEmails", () => ({
+vi.mock("@/lib/server/selfReturnEmails", () => ({
   sendSelfReturnReminder: async (to: string) => {
     if (to === "throws@example.com") {
       throw new Error("Postmark is down");
@@ -29,7 +29,7 @@ vi.mock("@/actions/selfReturnEmails", () => ({
   },
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -53,7 +53,7 @@ vi.mock("@/db/drizzle", () => {
 });
 
 async function sweep() {
-  const { sweepSelfReturns } = await import("@/actions/selfReturnSweep");
+  const { sweepSelfReturns } = await import("@/lib/server/selfReturnSweep");
   return sweepSelfReturns(NOW);
 }
 

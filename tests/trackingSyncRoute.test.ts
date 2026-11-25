@@ -38,7 +38,7 @@ const events: string[] = [];
 vi.mock("@/db/queries", () => ({
   getParcelsAwaitingTracking: async () => state.orders,
 }));
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   obtainLastStatus: async (loc: string) => {
     if (state.lookupThrowsOn === loc) throw new Error("correos down");
     return state.status[loc] ?? { label: "Sin información", phase: "sin_informacion" };
@@ -53,7 +53,7 @@ vi.mock("@/lib/emails", async (importOriginal) => {
     }),
   };
 });
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string) => { alerts.push(subject); },
 }));
 

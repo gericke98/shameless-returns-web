@@ -58,7 +58,7 @@ vi.mock("axios", () => ({
 }));
 
 async function readMovement(locator: string | null, carrier: string | null) {
-  const { readCarrierMovement } = await import("@/actions/shipping");
+  const { readCarrierMovement } = await import("@/lib/server/shipping");
   return readCarrierMovement(locator, carrier);
 }
 

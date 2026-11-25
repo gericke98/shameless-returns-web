@@ -8,7 +8,7 @@ import { cookies } from "next/headers";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import { LocaleProvider } from "@/lib/i18n/context";
 import { hasOrderAccess } from "@/lib/orderAccess";
-import { readCarrierMovement } from "@/actions/shipping";
+import { readCarrierMovement } from "@/lib/server/shipping";
 import { cancelEligibility } from "@/lib/cancelEligibility";
 import { ReturnStatusPanel } from "./components/returnStatusPanel";
 

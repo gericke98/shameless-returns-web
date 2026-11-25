@@ -6,8 +6,8 @@
 // (actions/selfTrackingReview). carrier_number and carrier_url are pinned
 // WRITE-ONCE at approve, so the caller has already won the database claim
 // that makes this the only call for the order.
-import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "@/actions/amphora";
-import { alertOps } from "@/actions/opsAlert";
+import { amphoraOrderIdFromShopifyId, approveAmphoraReturn } from "@/lib/server/amphora";
+import { alertOps } from "@/lib/server/opsAlert";
 import { describeError } from "@/lib/describeError";
 
 export type PinnableTracking = {

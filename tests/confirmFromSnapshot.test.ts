@@ -83,12 +83,12 @@ vi.mock("@/lib/fulfillmentLines", () => ({
     new Map(ids.filter((id) => state.refundable.has(id)).map((id) => [id, state.refundable.get(id)!])),
 }));
 
-vi.mock("@/actions/replacementOrder", () => ({
+vi.mock("@/lib/server/replacementOrder", () => ({
   refundSourceFor: async () => ({ transactionId: "t", transactionAmount: "50.00" }),
 }));
 
 const reserved = vi.fn(async (_id: string, _lines: any[]) => {});
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: (id: string, lines: any[]) => reserved(id, lines),
 }));
 vi.mock("@/lib/settlement/holdRelease", () => ({

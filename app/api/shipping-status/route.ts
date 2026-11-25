@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { obtainLastStatus } from "@/actions/shipping";
+import { obtainLastStatus } from "@/lib/server/shipping";
 import { UNKNOWN_TRACKING } from "@/lib/trackingStatus";
 
 export const revalidate = 300;

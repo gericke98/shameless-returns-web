@@ -72,7 +72,7 @@ describe("reserveExchangeStock", () => {
         reserveInventoryUntil: "2026-08-29T12:00:00.000Z",
       })
     );
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
     await reserveExchangeStock("13161229386054", state.order.products);
 
@@ -94,7 +94,7 @@ describe("reserveExchangeStock", () => {
         { variant_id: "111", new_variant_id: null, action: "DEVOLUCIÓN", quantity: 1, confirmed: true, refunded: false },
       ],
     };
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
     await reserveExchangeStock("13161229386054", paid);
 
@@ -107,7 +107,7 @@ describe("reserveExchangeStock", () => {
   it("does not place a second hold when one already exists", async () => {
     // A Stripe webhook retry must not freeze the stock twice.
     state.order = { ...state.order, exchangeReservationId: "gid://shopify/DraftOrder/1" };
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
     await reserveExchangeStock("13161229386054", state.order.products);
 
@@ -121,7 +121,7 @@ describe("reserveExchangeStock", () => {
         { variant_id: "111", new_variant_id: null, action: "DEVOLUCIÓN", quantity: 1, confirmed: true, refunded: false },
       ],
     };
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
     await reserveExchangeStock("13161229386054", state.order.products);
 
@@ -139,7 +139,7 @@ describe("reserveExchangeStock", () => {
         },
       }),
     });
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
     await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
     expect(updates).toHaveLength(0);
@@ -147,7 +147,7 @@ describe("reserveExchangeStock", () => {
 
   it("survives the network being down", async () => {
     fetchMock.mockRejectedValue(new Error("ECONNRESET"));
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
     await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
   });

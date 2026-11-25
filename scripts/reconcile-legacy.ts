@@ -61,8 +61,11 @@
  * it Shopify answers only the last 60 days of orders, and every "no evidence"
  * would be wrong.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/reconcile-legacy.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/reconcile-legacy.ts \
  *     --out <file.csv> [--write] [--approve-file <approvals.csv>] [--census] [--by <name>] [--order <orders.id>]
+ *
+ * `--conditions=react-server`: it reaches lib/server/ modules, which start with
+ * `import "server-only"`; that package throws outside the react-server condition.
  */
 import "dotenv/config";
 import { readFileSync, writeFileSync } from "node:fs";

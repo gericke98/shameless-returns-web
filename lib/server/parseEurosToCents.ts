@@ -1,3 +1,4 @@
+import "server-only";
 // Pure parsing helper, deliberately kept in its own module (no "use server",
 // no db import) so it — and its tests — can be exercised without a
 // DATABASE_URL and without pulling in the server-action transform that

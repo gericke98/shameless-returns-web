@@ -58,7 +58,7 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   getAmphoraReturnsByOrderName: async () => booked,
   createAmphoraReturn: async () => {
@@ -78,7 +78,7 @@ vi.mock("axios", () => ({
 }));
 
 async function submit() {
-  const { createInternationalReturn } = await import("@/actions/amphoraReturn");
+  const { createInternationalReturn } = await import("@/lib/server/amphoraReturn");
   return createInternationalReturn(order.id);
 }
 

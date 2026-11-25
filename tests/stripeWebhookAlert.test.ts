@@ -51,7 +51,7 @@ const behaviour: {
 const calls: string[] = [];
 const outbox: Array<{ dedupeKey: string; subject: string; body: string }> = [];
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -69,7 +69,7 @@ vi.mock("@/lib/submissionConfirmation", () => ({
   },
 }));
 
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlert: async (alert: { dedupeKey: string; subject: string; body: string }) => {
     outbox.push(alert);
   },
@@ -86,14 +86,14 @@ vi.mock("@/db/submissions", () => ({
   }),
 }));
 
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   createShippingLabel: async () => {
     calls.push("book:CORREOS");
     return behaviour.labelStatus;
   },
 }));
 
-vi.mock("@/actions/amphoraReturn", () => ({
+vi.mock("@/lib/server/amphoraReturn", () => ({
   createInternationalReturn: async () => {
     calls.push("book:AMPHORA");
     return behaviour.labelStatus;
@@ -101,7 +101,7 @@ vi.mock("@/actions/amphoraReturn", () => ({
   isInternationalOrder: () => false,
 }));
 
-vi.mock("@/actions/selfBookedReturn", () => ({
+vi.mock("@/lib/server/selfBookedReturn", () => ({
   createSelfBookedReturn: async () => {
     calls.push("book:SELF");
     return behaviour.labelStatus;
@@ -230,7 +230,7 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
     // The worst state: money taken, return possibly half-created, and the
     // database now disagreeing with reality. This must never be the quiet one.
     behaviour.confirmThrows = true;
-    const { alertOps } = await import("@/actions/opsAlert");
+    const { alertOps } = await import("@/lib/server/opsAlert");
     expect(typeof alertOps).toBe("function");
 
     await post();

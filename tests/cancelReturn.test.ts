@@ -136,13 +136,13 @@ vi.mock("@/lib/submissionCancellation", () => ({
     }));
   },
 }));
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   readCarrierMovement: async (locator: string | null | undefined, carrier?: string | null) => {
     calls.carrierRead.push(`${locator}/${carrier ?? ""}`);
     return behaviour.movement;
   },
 }));
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   cancelAmphoraReturn: async (id: string) => {
     if (behaviour.amphoraFails) {
@@ -164,7 +164,7 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
     return behaviour.releaseFails ? { released: false, reason: "draft still exists" } : { released: true };
   },
 }));
-vi.mock("@/actions/refundPayment", () => ({
+vi.mock("@/lib/server/refundPayment", () => ({
   refundOrderPayment: async (order: any, submissionKey: string) => {
     calls.refund.push(order.id);
     calls.refundIntent.push(order.stripePaymentIntent);
@@ -173,7 +173,7 @@ vi.mock("@/actions/refundPayment", () => ({
     return behaviour.refundOutcome;
   },
 }));
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     calls.opsAlert.push(`${subject}::${body}`);
   },

@@ -14,8 +14,8 @@ import { orderExists, saveOrderDetails, saveOrderItem } from "@/db/repository";
 import {
   planReplacementOrder,
   type ReplacementPlan,
-} from "@/actions/replacementOrder";
-import { isInternationalOrder } from "@/actions/amphoraReturn";
+} from "@/lib/server/replacementOrder";
+import { isInternationalOrder } from "@/lib/server/amphoraReturn";
 import { normalizeCountry } from "@/lib/countries";
 import { issueOrderAccess } from "@/lib/orderAccess";
 import { cookies, headers } from "next/headers";

@@ -56,7 +56,7 @@ vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // Nothing to pay, so returnFunction stays on the free path instead of leaving
 // for Stripe.
-vi.mock("@/actions/payments", () => ({
+vi.mock("@/lib/server/payments", () => ({
   createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
 }));
 

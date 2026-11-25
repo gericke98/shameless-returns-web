@@ -81,7 +81,7 @@ vi.mock("@/db/queries", () => ({
 
 vi.mock("@/db/fees", () => ({ getFeeTable: async () => [] }));
 vi.mock("@/lib/loadBasket", () => ({ loadBasket: async () => null }));
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: async () => {},
 }));
 vi.mock("@/lib/settlement/holdRelease", () => ({

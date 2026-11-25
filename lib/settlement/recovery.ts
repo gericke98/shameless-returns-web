@@ -6,7 +6,7 @@
 //
 // NOT "use server".
 import { randomUUID } from "node:crypto";
-import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 import { admit } from "./admission";
 import {
   approvalsAwaitingAdmission,

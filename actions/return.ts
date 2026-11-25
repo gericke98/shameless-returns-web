@@ -7,10 +7,10 @@ import { eq } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
-import { createShippingLabel } from "./shipping";
+import { createShippingLabel } from "@/lib/server/shipping";
 import { confirmSubmission, revertFinalOrder } from "@/lib/submissionConfirmation";
 import { acceptFreeSubmission } from "@/db/submissions";
-import { createStripeUrl } from "./payments";
+import { createStripeUrl } from "@/lib/server/payments";
 import { getOrderById } from "@/db/queries";
 import { defaultMethodFor, resolveReturnMethod, type ReturnMethod } from "@/lib/returnMethods";
 import { getFeeTable } from "@/db/fees";
@@ -18,10 +18,10 @@ import { loadBasket } from "@/lib/loadBasket";
 import { resolveFee } from "@/lib/fees";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { hasOrderAccess } from "@/lib/orderAccess";
-import { alertOps } from "./opsAlert";
-import { enqueueOpsAlert } from "./opsAlertOutbox";
-import { createInternationalReturn } from "./amphoraReturn";
-import { createSelfBookedReturn } from "./selfBookedReturn";
+import { alertOps } from "@/lib/server/opsAlert";
+import { enqueueOpsAlert } from "@/lib/server/opsAlertOutbox";
+import { createInternationalReturn } from "@/lib/server/amphoraReturn";
+import { createSelfBookedReturn } from "@/lib/server/selfBookedReturn";
 import { PayoutRequiredError, type SubmitRefusal } from "@/lib/payoutRequired";
 
 /**

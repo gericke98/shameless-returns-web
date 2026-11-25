@@ -38,7 +38,7 @@ const alertBodies: string[] = [];
 /** The clock the route reads. Advanced only by the settle mock below. */
 const clock = { t: 0 };
 
-vi.mock("@/actions/amphora", () => ({ getAmphoraReturns: async () => state.returns }));
+vi.mock("@/lib/server/amphora", () => ({ getAmphoraReturns: async () => state.returns }));
 vi.mock("@/db/queries", () => ({
   getOrdersWithUnsettledReturns: async () => state.orders,
   getReturnStatusesByIds: async () => state.shopifyStatuses,
@@ -84,14 +84,14 @@ vi.mock("@/lib/settlement/settle", () => ({
 // The outbox is tested on its own in tests/opsAlertOutbox.test.ts; here it
 // only records what the route queued.
 const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlerts: async (list: any[]) => {
     queued.push(...list);
     return { failed: 0 };
   },
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push(subject);
     alertBodies.push(body);

@@ -57,13 +57,13 @@ vi.mock("@/lib/submissionConfirmation", () => ({
   revertFinalOrder: async () => {},
 }));
 vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
 }));
 
-vi.mock("@/actions/payments", () => ({
+vi.mock("@/lib/server/payments", () => ({
   createStripeUrl: async (_id: string, _e: string, _c: boolean, method: string) => {
     events.push(`stripe:${method}`);
     stripeMethodSeen = method;
@@ -71,19 +71,19 @@ vi.mock("@/actions/payments", () => ({
   },
 }));
 
-vi.mock("@/actions/selfBookedReturn", () => ({
+vi.mock("@/lib/server/selfBookedReturn", () => ({
   createSelfBookedReturn: async () => {
     calls.self += 1;
     return 200;
   },
 }));
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   createShippingLabel: async () => {
     calls.correos += 1;
     return 200;
   },
 }));
-vi.mock("@/actions/amphoraReturn", () => ({
+vi.mock("@/lib/server/amphoraReturn", () => ({
   createInternationalReturn: async () => {
     calls.amphora += 1;
     return 200;

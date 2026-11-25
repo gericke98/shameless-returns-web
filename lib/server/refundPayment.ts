@@ -1,3 +1,4 @@
+import "server-only";
 // DELIBERATELY NOT a server action, and it must never be imported by a client
 // component — importing it from one is what would force `"use server"` back on.
 //

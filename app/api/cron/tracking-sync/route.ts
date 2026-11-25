@@ -4,13 +4,13 @@ import { eq } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders as ordersTable } from "@/db/schema";
 import { getParcelsAwaitingTracking } from "@/db/queries";
-import { obtainLastStatus } from "@/actions/shipping";
+import { obtainLastStatus } from "@/lib/server/shipping";
 import { decideTrackingUpdate } from "@/lib/trackingUpdate";
 import { buildTrackingUpdateEmail } from "@/lib/emails";
 import { isInternationalOrder } from "@/lib/countries";
 import { tracksWithCorreos } from "@/lib/trackingStatus";
 import { readLocale } from "@/lib/i18n";
-import { alertOps } from "@/actions/opsAlert";
+import { alertOps } from "@/lib/server/opsAlert";
 
 /**
  * Tell customers where their return has got to.

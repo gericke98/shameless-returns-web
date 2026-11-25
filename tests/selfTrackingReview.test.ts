@@ -18,7 +18,7 @@ vi.mock("@/lib/pinSelfTracking", () => ({
 
 const emailed: any[] = [];
 let emailStatus = 200;
-vi.mock("@/actions/selfReturnEmails", () => ({
+vi.mock("@/lib/server/selfReturnEmails", () => ({
   sendSelfTrackingRejected: async (...args: any[]) => {
     emailed.push(args);
     return emailStatus;
@@ -26,7 +26,7 @@ vi.mock("@/actions/selfReturnEmails", () => ({
 }));
 
 const alerts: { subject: string; body: string }[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },

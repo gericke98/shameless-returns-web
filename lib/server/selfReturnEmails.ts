@@ -1,3 +1,4 @@
+import "server-only";
 // NOT "use server": every export of such a module is a public endpoint, and
 // these send our email to whatever address the caller passes. Only server
 // code imports them (selfBookedReturn, selfReturnSweep, selfTrackingReview).

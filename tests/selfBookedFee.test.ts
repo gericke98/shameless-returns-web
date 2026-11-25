@@ -85,7 +85,7 @@ vi.mock("@/lib/stripe", () => ({
 }));
 
 async function priceIt(method: "AMPHORA" | "SELF") {
-  const { createStripeUrl } = await import("@/actions/payments");
+  const { createStripeUrl } = await import("@/lib/server/payments");
   return createStripeUrl(order.id, order.email, false, method);
 }
 

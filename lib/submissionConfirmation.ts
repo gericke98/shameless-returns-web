@@ -17,10 +17,10 @@ import {
   presentmentRateFromOrder,
   type ReturnableLine,
 } from "@/lib/returnPayload";
-import { reserveExchangeStock } from "@/actions/exchangeReservation";
+import { reserveExchangeStock } from "@/lib/server/exchangeReservation";
 import { releaseHoldForRevert } from "@/lib/settlement/holdRelease";
-import { alertOps } from "@/actions/opsAlert";
-import { refundSourceFor } from "@/actions/replacementOrder";
+import { alertOps } from "@/lib/server/opsAlert";
+import { refundSourceFor } from "@/lib/server/replacementOrder";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 

@@ -1,11 +1,10 @@
-"use server";
-
+import "server-only";
 import { and, eq, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getSelfReturnsAwaitingTracking } from "@/db/queries";
 import { nudgeDue, ALERT_AFTER_DAYS } from "@/lib/selfReturnNudges";
-import { sendSelfReturnReminder } from "@/actions/selfReturnEmails";
+import { sendSelfReturnReminder } from "@/lib/server/selfReturnEmails";
 import { readLocale } from "@/lib/i18n";
 import { alertOps } from "./opsAlert";
 

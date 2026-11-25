@@ -70,7 +70,7 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // Nothing to pay: this is the free lane, the one that had no alert.
-vi.mock("@/actions/payments", () => ({
+vi.mock("@/lib/server/payments", () => ({
   createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
 }));
 
@@ -80,7 +80,7 @@ vi.mock("@/lib/submissionConfirmation", () => ({
 }));
 vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },

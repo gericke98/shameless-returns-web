@@ -56,7 +56,7 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createShippingLabel } = await import("@/actions/shipping");
+  const { createShippingLabel } = await import("@/lib/server/shipping");
   return createShippingLabel(ORDER.id);
 }
 

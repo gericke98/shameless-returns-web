@@ -1,3 +1,4 @@
+import "server-only";
 // The durable ops-alert outbox. NOT a server action, for the same reason as
 // actions/opsAlert.ts: an exported action taking `subject`/`body` is an
 // unauthenticated endpoint that emails ops.

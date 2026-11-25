@@ -8,7 +8,7 @@ import { DEFAULT_FEE_KEY } from "@/lib/fees";
 import { SUB_ZONES } from "@/lib/zones";
 import { isAdmin } from "@/lib/requireAdmin";
 import { revalidateTag } from "next/cache";
-import { parseEurosToCents } from "./parseEurosToCents";
+import { parseEurosToCents } from "@/lib/server/parseEurosToCents";
 
 export async function saveShippingFee(
   formData: FormData

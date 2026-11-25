@@ -124,7 +124,7 @@ describe("countryDisplayName", () => {
 
 describe("an unnameable stored country still routes and prices safely", () => {
   it("counts as international, so Amphora still handles it", async () => {
-    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    const { isInternationalOrder } = await import("@/lib/server/amphoraReturn");
     expect(normalizeCountry("Wakanda")).toBeNull();
     expect(isInternationalOrder("Wakanda")).toBe(true);
   });
@@ -180,14 +180,14 @@ describe("lib/countries source hygiene", () => {
 
 describe("country helpers keep their previous semantics", () => {
   it("treats Spain in every stored spelling as national", async () => {
-    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    const { isInternationalOrder } = await import("@/lib/server/amphoraReturn");
     for (const spelling of ["Spain", "España", "Espana", "ES", "es", "esp"]) {
       expect(isInternationalOrder(spelling)).toBe(false);
     }
   });
 
   it("treats empty as not international, matching the old guard", async () => {
-    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    const { isInternationalOrder } = await import("@/lib/server/amphoraReturn");
     expect(isInternationalOrder("")).toBe(false);
     expect(isInternationalOrder(null)).toBe(false);
   });

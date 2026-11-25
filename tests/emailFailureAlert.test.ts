@@ -71,7 +71,7 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -90,7 +90,7 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createShippingLabel } = await import("@/actions/shipping");
+  const { createShippingLabel } = await import("@/lib/server/shipping");
   return createShippingLabel(ORDER.id);
 }
 

@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 const queued: { dedupeKey: string; subject: string; body: string }[] = [];
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlert: async (alert: any) => {
     queued.push(alert);
     return true;
@@ -46,12 +46,12 @@ vi.mock("next/headers", () => ({
   cookies: () => ({ get: () => ({ name: "locale", value: "es" }) }),
 }));
 const stripe = { error: null as Error | null };
-vi.mock("@/actions/payments", () => ({
+vi.mock("@/lib/server/payments", () => ({
   createStripeUrl: async () => {
     throw stripe.error;
   },
 }));
-vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 vi.mock("@/db/queries", () => ({ getOrderById: async () => ({ shippingCountry: "Spain" }) }));
 vi.mock("@/db/drizzle", () => {
   const chain: any = { update: () => chain, set: () => chain, where: () => Promise.resolve() };

@@ -12,7 +12,7 @@ vi.mock("@/db/queries", () => ({
   getOrderByIdFresh: async (id: string) => ({ id, exchangeOf: LINKS[id] ?? null }),
   getOrderTransactions: async (id: string) => TX[id] ?? null,
 }));
-vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 vi.mock("@/db/replacementLines", () => ({ replacementFundingOf: async () => null }));
 
 const PLACEHOLDER = { transactionId: "gid://shopify/OrderTransaction/0", transactionAmount: "0.01" };
@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 
 async function source(dbOrder: any) {
-  const { refundSourceFor } = await import("@/actions/replacementOrder");
+  const { refundSourceFor } = await import("@/lib/server/replacementOrder");
   return refundSourceFor(dbOrder, PLACEHOLDER);
 }
 

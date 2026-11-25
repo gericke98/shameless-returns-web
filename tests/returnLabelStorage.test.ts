@@ -58,7 +58,7 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
-vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 
 vi.mock("axios", () => ({
   default: {
@@ -73,7 +73,7 @@ vi.mock("axios", () => ({
   },
 }));
 
-const load = () => import("@/actions/shipping");
+const load = () => import("@/lib/server/shipping");
 
 beforeEach(() => {
   behaviour.correos = CORREOS_OK;

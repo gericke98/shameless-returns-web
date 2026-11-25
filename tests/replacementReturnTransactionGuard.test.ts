@@ -116,7 +116,7 @@ vi.mock("@/db/queries", () => ({
 
 vi.mock("@/db/fees", () => ({ getFeeTable: async () => [] }));
 vi.mock("@/lib/loadBasket", () => ({ loadBasket: async () => null }));
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: async () => {},
 }));
 vi.mock("@/lib/settlement/holdRelease", () => ({
@@ -127,7 +127,7 @@ vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // The failure this test pins: walking `exchange_of` to the root (or reading
 // the root's transactions) throws instead of resolving.
-vi.mock("@/actions/replacementOrder", () => ({
+vi.mock("@/lib/server/replacementOrder", () => ({
   refundSourceFor: async () => {
     throw new Error("exchange_of cycle at order 13192219000000");
   },

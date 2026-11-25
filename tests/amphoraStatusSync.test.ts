@@ -33,7 +33,7 @@ let postFails = false;
 
 // Mocked so an ops alert cannot be miscounted as a customer email — alertOps
 // posts to the same Postmark endpoint the axios mock below is capturing.
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -67,7 +67,7 @@ vi.mock("axios", () => ({
 }));
 
 async function apply(payload: Record<string, unknown>) {
-  const { applyReturnStatus } = await import("@/actions/amphoraStatusSync");
+  const { applyReturnStatus } = await import("@/lib/server/amphoraStatusSync");
   return applyReturnStatus(order, payload as any);
 }
 
@@ -345,7 +345,7 @@ describe("applyReturnStatus — the poll must not re-notify", () => {
     // re-notifying. `locator` being pre-set (not null, like the fixture above)
     // is exactly what disarms the collectionScheduled guard at
     // lib/amphoraWebhook.ts:74.
-    const { applyReturnStatus } = await import("@/actions/amphoraStatusSync");
+    const { applyReturnStatus } = await import("@/lib/server/amphoraStatusSync");
     const backfilled: any = {
       id: "13161916465478",
       orderNumber: "#310761",

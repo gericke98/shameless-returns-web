@@ -1,3 +1,4 @@
+import "server-only";
 // Server-only: talks to the Shopify Admin API and the database. Imported by
 // server actions and route handlers.
 //

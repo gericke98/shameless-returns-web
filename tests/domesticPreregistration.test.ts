@@ -68,7 +68,7 @@ vi.mock("@/db/drizzle", () => {
   return { default: chain };
 });
 
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   createAmphoraReturn: async (input: any) => {
     if (behaviour.createFails) throw new Error("amphora 500");
@@ -99,7 +99,7 @@ vi.mock("axios", () => ({
 }));
 
 async function registerLabel() {
-  const { createShippingLabel } = await import("@/actions/shipping");
+  const { createShippingLabel } = await import("@/lib/server/shipping");
   return createShippingLabel(ORDER.id);
 }
 

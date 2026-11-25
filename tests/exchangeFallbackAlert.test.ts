@@ -131,7 +131,7 @@ vi.mock("@/lib/stripe", () => ({
   },
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -148,7 +148,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
   it("stays silent for an ordinary, fully-resolved exchange", async () => {
     fees = CHARGED_FEES;
     order.products = [healthyLine()];
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
     await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 
@@ -158,7 +158,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
   it("alerts before charging, and truthfully says a charge is coming, when a replacement was priced on a fallback", async () => {
     fees = CHARGED_FEES;
     order.products = [degradedLine("10.00")];
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
     const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 
@@ -183,7 +183,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     // but the alert must say so, not claim a charge happened.
     fees = ZERO_FEES;
     order.products = [degradedLine("80.00")]; // 80.00 return vs 69.00 exchange
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
     const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 
@@ -205,7 +205,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     // reaching Stripe, on the SECOND early return, not the first.
     fees = ZERO_FEES;
     order.products = [degradedLine("68.80")];
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
     const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
 

@@ -23,7 +23,7 @@ let rows: any[] = [];
 const released: string[] = [];
 const updates: any[] = [];
 
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: async () => {},
 }));
 // The release itself goes through lib/settlement/holdRelease.ts (finding 9).
@@ -33,7 +33,7 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
     return { released: true };
   },
 }));
-vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},

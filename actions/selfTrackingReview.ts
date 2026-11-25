@@ -18,8 +18,8 @@ import { orders } from "@/db/schema";
 import { adminEmail } from "@/lib/requireAdmin";
 import { pinSelfTracking } from "@/lib/pinSelfTracking";
 import { readLocale } from "@/lib/i18n";
-import { sendSelfTrackingRejected } from "./selfReturnEmails";
-import { alertOps } from "./opsAlert";
+import { sendSelfTrackingRejected } from "@/lib/server/selfReturnEmails";
+import { alertOps } from "@/lib/server/opsAlert";
 
 export type ReviewOutcome =
   | { ok: true; pinned?: boolean }

@@ -32,7 +32,7 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/actions/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
+vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
 
 const ledger = () => import("@/lib/settlement/ledger");
 const runner = () => import("@/lib/settlement/run");

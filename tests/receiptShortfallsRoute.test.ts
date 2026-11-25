@@ -6,14 +6,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = { throws: false, calls: 0 };
 const queued: any[] = [];
-vi.mock("@/actions/receiptShortfallSweep", () => ({
+vi.mock("@/lib/server/receiptShortfallSweep", () => ({
   sweepReceiptShortfalls: async () => {
     state.calls += 1;
     if (state.throws) throw new Error('relation "receipt_shortfalls" does not exist');
     return { scanned: 3, short: 1 };
   },
 }));
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlerts: async (list: any[]) => {
     queued.push(...list);
     return { failed: 0 };

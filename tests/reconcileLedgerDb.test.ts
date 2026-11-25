@@ -26,7 +26,7 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/actions/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
+vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
 
 const q = async (sql: string, params: any[] = []) => (await env.pg.query<any>(sql, params)).rows;
 const CUSTOMER = "gid://shopify/Customer/1";

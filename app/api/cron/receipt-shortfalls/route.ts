@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { sweepReceiptShortfalls } from "@/actions/receiptShortfallSweep";
-import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { sweepReceiptShortfalls } from "@/lib/server/receiptShortfallSweep";
+import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 
 /**
  * Detect short receipts and queue their ops alerts.

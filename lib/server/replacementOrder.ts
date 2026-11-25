@@ -1,8 +1,9 @@
+import "server-only";
 // Server-only. Decides, at first portal lookup, whether an order is one of our
 // replacement orders and what its lines are really worth — from the
 // settlement ledger's `replacement_lines` only (db/replacementLines.ts).
 import { getOrderByIdFresh, getOrderTransactions } from "@/db/queries";
-import { alertOps } from "@/actions/opsAlert";
+import { alertOps } from "@/lib/server/opsAlert";
 import { resolveRootOrderId } from "@/lib/replacementOrigin";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
 import { replacementFundingOf, unitPriceOf } from "@/db/replacementLines";

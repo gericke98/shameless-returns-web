@@ -27,7 +27,7 @@ const approved: any[] = [];
 // When set, Amphora refuses the approve with this axios-shaped error.
 let approveError: any = null;
 const alerts: { subject: string; body: string }[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -55,7 +55,7 @@ vi.mock("@/db/queries", () => ({
   getOrderById: async () => order,
 }));
 
-vi.mock("@/actions/amphora", async (importOriginal) => {
+vi.mock("@/lib/server/amphora", async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,

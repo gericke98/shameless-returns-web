@@ -129,7 +129,7 @@ vi.mock("@/lib/loadBasket", () => ({
     basket: { hasItems: true, netAmount: 50, grams: 500 },
   }),
 }));
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: async () => {},
 }));
 vi.mock("@/lib/settlement/holdRelease", () => ({

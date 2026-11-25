@@ -38,7 +38,7 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({ "1": "SKU-1" }),
 }));
 
-vi.mock("@/actions/amphora", async (importOriginal) => {
+vi.mock("@/lib/server/amphora", async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
@@ -53,7 +53,7 @@ vi.mock("@/actions/amphora", async (importOriginal) => {
   };
 });
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -92,7 +92,7 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createSelfBookedReturn } = await import("@/actions/selfBookedReturn");
+  const { createSelfBookedReturn } = await import("@/lib/server/selfBookedReturn");
   return createSelfBookedReturn(ORDER.id);
 }
 
@@ -151,7 +151,7 @@ describe("createSelfBookedReturn", () => {
     // Same rule as every other lane: the return still exists, so we swallow
     // and report 200 — but never silently. #311174 is why.
     created.length = 0;
-    const amphora = await import("@/actions/amphora");
+    const amphora = await import("@/lib/server/amphora");
     vi.spyOn(amphora, "createAmphoraReturn").mockRejectedValueOnce(
       new Error("amphora 503")
     );

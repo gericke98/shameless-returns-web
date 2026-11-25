@@ -14,7 +14,7 @@ vi.mock("@/db/replacementLines", async (importOriginal) => ({
 }));
 const alerts: string[] = [];
 const bodies: string[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => { alerts.push(subject); bodies.push(body); },
 }));
 
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 async function plan(order: any) {
-  const { planReplacementOrder } = await import("@/actions/replacementOrder");
+  const { planReplacementOrder } = await import("@/lib/server/replacementOrder");
   return planReplacementOrder(order);
 }
 

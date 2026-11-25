@@ -7,7 +7,7 @@ import { getOrderByIdFresh } from "@/db/queries";
 import { hasOrderAccess } from "@/lib/orderAccess";
 import { carrierByCode, checkTrackingNumber } from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
-import { alertOps } from "./opsAlert";
+import { alertOps } from "@/lib/server/opsAlert";
 import { verifyWithCarrier } from "@/lib/carrierLookup";
 import { pinSelfTracking } from "@/lib/pinSelfTracking";
 

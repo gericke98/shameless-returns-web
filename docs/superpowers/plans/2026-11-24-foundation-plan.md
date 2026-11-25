@@ -102,6 +102,9 @@ order Amphora imports, e.g. a real Shopify order under a fulfillment hold, be co
 - Tested: 15 of 44 open hold drafts are past `reserveInventoryUntil` yet still make settlement use DECREMENT_IGNORING_POLICY.
 - Unknown (only Amphora can answer): connector behaviour for held/unpaid orders; `reserve_stock` for B2C; pushing on_hand.
 - Our Shopify token lacks fulfillment-order read scopes.
+- 2026-11-26, Santi's OK: rows 783 (#310542) and 836 (#310848) were already shipped by hand (Amphora MNL #310542-D
+  SKU 20251904, #310848-D SKU 20260901, both FULFILLED, read live) → `refunded=true`, holds #D604/#D613 (expired 09-12)
+  deleted and `exchange_reservation_id` cleared, all guarded by id. 7 sold-out lines remain; Santi emails them (D3).
 
 ## F5: One client per external service (HEAVY for Shopify/Stripe)
 - Shopify: the settlement transport becomes the only client (one API version, timeout, answer vs

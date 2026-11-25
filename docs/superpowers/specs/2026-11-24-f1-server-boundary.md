@@ -297,3 +297,10 @@ and the `return_labels` insert (`db/queries.ts:817`). Revert-and-fail: a custome
 `invalid-url`) answer instead of `invalid-input`; `saveShippingFee` input `{country, band: number, returnFee, exchangeFee}`;
 lookup keys `lookup.notYetShipped`, `lookup.outsideWindow`; `saveAddress` may answer `not-editable`;
 `refundOrderPayment` and `pinSelfTracking` unbranded (no DB write, shared with admin).
+**§Enforcement 6, raw reads (Santi, 2026-11-25).** Two reached functions are read-only raw SQL shared with settlement
+admission and admin approvals: `lib/settlement/ledger.ts#submissionOfRow`, `#standingReconciliations`. Branding them
+would change `admit()`; rewriting them would change money-path SQL. Instead, `readQuery(statement)` in `db/drizzle.ts`
+runs a statement through the Neon driver's own `transaction([...], { readOnly: true })` (a Postgres `READ ONLY`
+transaction, so the database refuses any write). Both functions call `readQuery` instead of `db.execute`; SQL text and
+signatures unchanged. Rule 6 counts a call through `readQuery` as a read. Test: a write statement through `readQuery`
+is refused by Postgres (pg16 test DB). Revert-and-fail: switch one back to `db.execute` → rule 6 fails naming it.

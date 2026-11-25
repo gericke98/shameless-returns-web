@@ -271,3 +271,29 @@ dropping `AND p.order_id` from `recordConfirmation` (unit test below); restoring
 `updateOrderProduct` filters by variant **and** order id (its exposure and any-column write are the problem). The payout
 refusal was already a value. The main dashboard page already checks admin; only `shipping-fees` does not. Locale cookie
 reads stay where they are (`return.ts` `persistOrderLocale`, `locale.ts`, `error.tsx`).
+
+## 10. Amendments after implementation (Santi, 2026-11-25) — supersede the sections they name
+**§4 tracking claim (supersedes "Serialization with cancellation").** Measured on Postgres 16: the claim's `SELECT … FOR
+UPDATE` never modifies the submission row, so a cancellation `UPDATE` queued behind the lock re-checks an unchanged row
+(`holder IS NULL`) and also wins — both won in 5 of 20 rounds. Fix: `claimForCancellation` becomes one transaction of two
+statements: (1) `SELECT … FROM return_submissions WHERE id = $sid AND order_id = $oid FOR UPDATE`; (2) the existing claim
+`UPDATE`, plus `AND NOT EXISTS (SELECT 1 FROM orders WHERE id = $oid AND return_method = 'SELF' AND locator IS NOT NULL)`.
+Statement (2) takes a fresh snapshot after the lock, so it sees a committed tracking claim. This is the existing
+eligibility rule (a self-booked return with tracking is `in-transit`, `cancelEligibility`) enforced at the serialization
+point. Settlement admission is unchanged. Verification: the concurrent test asserts **exactly one** of tracking and
+cancellation wins in every round (≥50 rounds), and fails with statement (2)'s new condition removed.
+**§Enforcement 6 (supersedes the module-level rule).** Checked per function, not per module: from each customer handler,
+follow the call graph through the type checker (resolved call expressions, value imports only). Every reached function
+that writes (Drizzle `insert`/`update`/`delete`, `db.execute`, `transact`) must take a `VerifiedOrderId`,
+`VerifiedSubmission` or `OrderScope` parameter, unless every table it writes is on the **non-customer-data list**:
+`ops_alerts`, `lookup_attempts` (named in the test, each with a one-line reason). A function whose written tables cannot be
+resolved (raw SQL) must take a capability. Functions this brands now: `releaseHoldForCancellation`, `releaseHoldForRevert`
+(`lib/settlement/holdRelease.ts`), `submissionForRow` (`lib/settlement/legacy.ts`) and whatever it reaches that writes,
+and the `return_labels` insert (`db/queries.ts:817`). Revert-and-fail: a customer handler calling an unbranded writer of
+`orders` fails the test, naming the call chain.
+**§4 `saveAddress`:** `zip` is optional (as today); required: `name`, `address1`, `city`.
+**Accepted implementation deviations:** `publicFormAction` strips React's `$ACTION_*` fields before the strict parse;
+`callAction` is the hook `useCallAction()`; tracking input caps 1000/4000 so the domain refusals (`too-long`,
+`invalid-url`) answer instead of `invalid-input`; `saveShippingFee` input `{country, band: number, returnFee, exchangeFee}`;
+lookup keys `lookup.notYetShipped`, `lookup.outsideWindow`; `saveAddress` may answer `not-editable`;
+`refundOrderPayment` and `pinSelfTracking` unbranded (no DB write, shared with admin).

@@ -357,3 +357,12 @@ inside the server process; the database is the only real boundary for that.
 - Moved to F2 (Codex #1, #3: mutable prepared queries and namespace-indexed mint calls by hostile code): **Postgres
   roles**: a SELECT-only role behind the read handle, a role limited to `ops_alerts`/`lookup_attempts`, and the writer
   role behind `writeDb`, each with its own connection string. Recorded in the parent plan's F2.
+
+### §11 as built (2026-11-25) — supersedes the `tableWriter` wording above
+`tableWriter` does not exist. The ops tables are written through `opsAlertsWriter` / `lookupAttemptsWriter`
+(`db/drizzle.ts`): `insert`/`update`/`delete` bound to their table, no table argument, no `execute`/transaction; each is
+referenced only from its own module. `adminAction` mints `AdminTarget` and passes `AdminContext { target, order(id) }`;
+handlers never mint (exception by design: the lookup handler is the credential check and calls `verifiedByLookup`).
+`adminTarget(session)` / `adminTarget(id, admin)` callable only from `lib/server/actions.ts`; `systemTarget` only from
+`app/api/cron/**` and `scripts/**`. Commits: 3dfc64e, f0578ff, c4ec155, c96c963, 5a17324. Codex: no money-logic change;
+#2/#4 resolved; limit-0 regression fixed with a bound `sql.placeholder`.

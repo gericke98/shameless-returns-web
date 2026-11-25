@@ -313,3 +313,24 @@ variable anywhere in the app's modules, incl. `m.set(k, f)` / `a.push(f)`). Root
 reference reaching `transact` or the bare db handle. Fails closed when a function is stored where no symbol can find it,
 or an exported handler's implementation cannot be found. Limits: flow-insensitive (over-approximates); no `eval` or
 computed dynamic `import()`; stores in `tests/` and `scripts/` are out of scope (separate processes). Commit `2e309e0`.
+
+## 11. Rule 6 is a type, not an analysis (Santi, 2026-11-25) — supersedes every §Enforcement 6 text above
+Three static-walk versions of rule 6 were each bypassed (Codex: module-level destructuring, `namespace["x"]`, memoised
+stores in 2e309e0). Proving "no customer path reaches an unchecked write" by analysing TypeScript cannot be made sound.
+The foundation removes the ability instead, and `tsc` enforces it for all code:
+- `db/drizzle.ts` no longer exports a writable handle. Its default export is a **read handle** typed without
+  `insert`/`update`/`delete`/`execute`/`transaction` (relational `query.*` and `select` stay); raw reads use `readQuery`.
+  The raw Neon `sql` function is not exported.
+- `writeDb(cap: WriteCapability)` returns the full Drizzle handle plus `transact`. `WriteCapability` =
+  `VerifiedOrderId | VerifiedSubmission | AdminTarget | SystemTarget | LookupTarget` — each minted only where §1 says.
+  Every write site in the app takes its handle from the capability it already holds (customer handlers: the session's;
+  webhooks: the signature's; admin: `adminTarget`; crons and settlement: `systemTarget(job)` minted at the cron entry,
+  passed down). No money logic changes; only where the handle comes from.
+- The two non-customer tables (`ops_alerts`, `lookup_attempts`) are written only by `db/opsAlerts.ts` and
+  `db/lookupAttempts.ts`, which obtain a handle via `tableWriter("ops_alerts" | "lookup_attempts")`. A symbol-reference
+  test asserts `tableWriter` is referenced from exactly those two files (direct symbol references are sound: an alias
+  must reference the symbol first).
+- `tests/actionBoundary.test.ts` rule 6 (the reachability walk) is deleted. Its proofs become type tests:
+  `@ts-expect-error` on `db.insert(...)` / `db.execute(...)` from the read handle, on `writeDb("123")` with a plain string,
+  and a revert-and-fail where `writeDb` accepts `string` → those type tests fail.
+- Rules 1–5, the manifest test, `orderScope`, `submissionScope`, `readQuery` and the race fix are unchanged.

@@ -14,12 +14,17 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
-const target: { db: any; transact: (s: any) => Promise<any> } = { db: null, transact: async () => [] };
+const target: { db: any; transact: (s: any) => Promise<any>; readQuery: (s: any) => Promise<any> } = {
+  db: null,
+  transact: async () => [],
+  readQuery: async () => ({ rows: [] }),
+};
 vi.mock("@/db/drizzle", () => ({
   get default() {
     return target.db;
   },
   transact: (s: any) => target.transact(s),
+  readQuery: (s: any) => target.readQuery(s),
 }));
 
 const scope = () => import("@/lib/server/submissionScope");
@@ -39,6 +44,7 @@ describe("activeSelfSubmission (PGlite)", () => {
     await env.ready;
     target.db = env.db;
     target.transact = (s) => env.transact(s);
+    target.readQuery = (s) => env.readQuery(s);
   });
   beforeEach(() => env.reset());
   const active = async (id = "100") => (await scope()).activeSelfSubmission(vid(id));
@@ -88,6 +94,7 @@ describe.skipIf(!pg16Available)("tracking claim against cancellation (PostgreSQL
     env = await startPg16();
     target.db = env.db;
     target.transact = (s) => env.transact(s);
+    target.readQuery = (s) => env.readQuery(s);
   }, 60_000);
   afterAll(async () => {
     await env?.stop();

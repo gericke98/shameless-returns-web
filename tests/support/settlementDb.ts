@@ -63,6 +63,20 @@ export function settlementDatabase() {
     return result ?? [];
   }
 
+  /** db/drizzle.ts `readQuery`, on PGlite: one READ ONLY transaction. */
+  async function readQuery(statement: SQL): Promise<{ rows: any[] }> {
+    const q = dialect.sqlToQuery(statement);
+    await pg.exec("BEGIN READ ONLY");
+    try {
+      const rows = (await pg.query<any>(q.sql, q.params as any[])).rows;
+      await pg.exec("COMMIT");
+      return { rows };
+    } catch (error) {
+      await pg.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   async function reset() {
     await pg.exec(`
       DELETE FROM line_action_decisions; DELETE FROM settlement_approvals;
@@ -73,5 +87,5 @@ export function settlementDatabase() {
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);
   }
 
-  return { pg, db, transact, reset, ready };
+  return { pg, db, transact, readQuery, reset, ready };
 }

@@ -60,6 +60,23 @@ export async function startPg16() {
     }
   }
 
+  /** db/drizzle.ts `readQuery` on a real connection: BEGIN READ ONLY … COMMIT. */
+  async function readQuery(statement: SQL): Promise<{ rows: any[] }> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY");
+      const q = dialect.sqlToQuery(statement);
+      const rows = (await client.query(q.sql, q.params as any[])).rows;
+      await client.query("COMMIT");
+      return { rows };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async function stop() {
     await pool.end();
     try {
@@ -76,5 +93,5 @@ export async function startPg16() {
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);
   }
 
-  return { pool, db, transact, stop, reset };
+  return { pool, db, transact, readQuery, stop, reset };
 }

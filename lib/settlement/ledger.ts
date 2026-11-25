@@ -7,7 +7,7 @@
 //
 // NOT "use server": nothing here may be callable from a browser.
 import { sql, type SQL } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import db, { readQuery, transact } from "@/db/drizzle";
 import {
   LEASE_MINUTES,
   ROOT_REFUND_REPLAY_HOURS,
@@ -153,8 +153,10 @@ export async function loadSubmission(
  * none and so belongs to nothing.
  */
 export async function submissionOfRow(productsorderId: number): Promise<string | null> {
+  // Read-only by construction (F1 spec §10): shared with admission and admin
+  // approvals, so it takes no order capability; Postgres refuses any write.
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT sl.submission_id
         FROM submission_lines sl
         JOIN return_submissions s ON s.id = sl.submission_id
@@ -206,8 +208,9 @@ export async function standingReconciliations(
   approved: ReadonlyMap<number, ApprovalBasis> = new Map()
 ): Promise<Map<number, { opId: string; state: string; kind: string }>> {
   if (productsorderIds.length === 0) return new Map();
+  // Read-only by construction (F1 spec §10), as `submissionOfRow`.
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT m.po, o.id, o.state, o.kind
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'

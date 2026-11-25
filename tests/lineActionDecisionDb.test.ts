@@ -6,7 +6,7 @@ import { settlementDatabase } from "./support/settlementDb";
 // submission or an operation already covers.
 
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s) }));
+vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
 const q = async (sql: string, params: any[] = []) => (await env.pg.query<any>(sql, params)).rows;
 
 async function seed(id: number, action: string | null = null) {

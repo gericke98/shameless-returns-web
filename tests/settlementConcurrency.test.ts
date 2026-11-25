@@ -24,6 +24,7 @@ vi.mock("@/db/drizzle", () => ({
     return env.db;
   },
   transact: (s: any) => env.transact(s),
+  readQuery: (s: any) => env.readQuery(s),
 }));
 
 const sent: string[] = [];

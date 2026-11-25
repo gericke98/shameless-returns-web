@@ -58,3 +58,24 @@ export async function transact(statements: SQL[]): Promise<any[][]> {
   });
   return results.map((result) => result?.rows ?? []);
 }
+
+/**
+ * Run ONE raw statement inside a Postgres `READ ONLY` transaction (the Neon
+ * driver's own `transaction([...], { readOnly: true })`) and return
+ * `{ rows }`, the shape `db.execute` callers read with `rowsOf`.
+ *
+ * For raw SQL that only reads but is shared with paths that cannot take an
+ * order capability (settlement admission, admin approvals). The database, not
+ * the caller, guarantees it reads: any write inside is refused by Postgres
+ * ("cannot execute … in a read-only transaction"). The boundary test (rule 6,
+ * F1 spec §10) therefore counts a call through `readQuery` as a read.
+ */
+export async function readQuery(statement: SQL): Promise<{ rows: any[] }> {
+  const query = dialect.sqlToQuery(statement);
+  const [result]: any[] = await sql.transaction([sql(query.sql, query.params)], {
+    fullResults: true,
+    isolationLevel: "ReadCommitted",
+    readOnly: true,
+  });
+  return { rows: result?.rows ?? [] };
+}

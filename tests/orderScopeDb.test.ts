@@ -13,7 +13,7 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s) }));
+vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
 
 /** What Shopify says about each variant (db/queries `getVariantsByIds`). */
 const catalogue: Record<string, any> = {};

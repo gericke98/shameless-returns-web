@@ -14,7 +14,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s) }));
+vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
 const answers: Record<string, (variables: any) => any> = {};
 vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/settlement/shopify")>();

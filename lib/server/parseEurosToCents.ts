@@ -13,9 +13,7 @@ import "server-only";
 // still match "at most two digits after one separator", so a thousands
 // grouping fails the regex instead of being misread.
 // Rejects negatives, NaN and >2 decimals.
-// Unlike scripts/parseFeeCents.ts (which seeds initial prices and refuses
-// zero, since seeding zero would make every return free by accident), this
-// helper backs the admin editor and must allow zero: a genuinely free
+// It backs the admin editor and must allow zero: a genuinely free
 // return lane for some country is a legitimate business choice, not a
 // misconfiguration.
 export function parseEurosToCents(raw: string): number | null {

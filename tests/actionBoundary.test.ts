@@ -12,6 +12,8 @@ const rel = (file: string) => relative(ROOT, file).split("\\").join("/");
 
 let program: ts.Program;
 let checker: ts.TypeChecker;
+let compilerOptions: ts.CompilerOptions;
+let rootNames: readonly string[];
 /** Our own source files: no tests, no declarations, no node_modules. */
 let sources: ts.SourceFile[];
 
@@ -19,7 +21,9 @@ beforeAll(() => {
   const configPath = ts.findConfigFile(ROOT, ts.sys.fileExists, "tsconfig.json")!;
   const { config } = ts.readConfigFile(configPath, ts.sys.readFile);
   const parsed = ts.parseJsonConfigFileContent(config, ts.sys, dirname(configPath));
-  program = ts.createProgram(parsed.fileNames, { ...parsed.options, noEmit: true });
+  compilerOptions = { ...parsed.options, noEmit: true };
+  rootNames = parsed.fileNames;
+  program = ts.createProgram(rootNames, compilerOptions);
   checker = program.getTypeChecker();
   sources = program
     .getSourceFiles()
@@ -281,25 +285,31 @@ function carriesCapability(type: ts.Type, at: ts.Node, depth = 0): boolean {
     .some((p) => carriesCapability(checker.getTypeOfSymbolAtLocation(p, at), at, depth + 1));
 }
 
-/** The function a resolved symbol stands for, if it is one of ours. */
-function functionOf(symbol: ts.Symbol | undefined): ts.SignatureDeclaration | undefined {
-  const decl = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
-  if (!decl) return undefined;
-  const file = rel(decl.getSourceFile().fileName);
-  if (file.startsWith("..") || file.includes("node_modules") || decl.getSourceFile().isDeclarationFile) return undefined;
-  if (ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl)) return decl;
-  const init =
-    ts.isVariableDeclaration(decl) || ts.isPropertyAssignment(decl) ? decl.initializer : undefined;
-  if (!init) return undefined;
-  if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) return init;
-  // `cache(async (id) => …)` and similar wrappers: the wrapped function.
-  if (ts.isCallExpression(init)) {
-    return init.arguments.find((a): a is ts.ArrowFunction | ts.FunctionExpression =>
-      ts.isArrowFunction(a) || ts.isFunctionExpression(a)
-    );
-  }
-  return undefined;
+/** A function of OURS with a body (not a declaration file, not node_modules). */
+function ours(decl: ts.Declaration | undefined): ts.SignatureDeclaration | undefined {
+  if (!decl || !ts.isFunctionLike(decl)) return undefined;
+  const file = decl.getSourceFile();
+  if (file.isDeclarationFile || file.fileName.includes("/node_modules/")) return undefined;
+  if (rel(file.fileName).startsWith("..")) return undefined;
+  return (decl as ts.FunctionLikeDeclaration).body ? decl : undefined;
 }
+
+/**
+ * The functions a VALUE may be, by its type: each call signature's
+ * declaration. This follows any alias (`const save = writer`, a property
+ * holding it, a re-export, a `cache(fn)` wrapper that returns `fn`'s type),
+ * because the type checker, not the text, says what the value is.
+ */
+function functionsOfValue(node: ts.Node): ts.SignatureDeclaration[] {
+  return checker
+    .getTypeAtLocation(node)
+    .getCallSignatures()
+    .map((sig) => ours(sig.declaration))
+    .filter((d): d is ts.SignatureDeclaration => !!d);
+}
+
+/** The declaration a call resolves to (overloads and aliases resolved by the checker). */
+const resolvedCall = (call: ts.CallExpression) => checker.getResolvedSignature(call)?.declaration;
 
 const nameOf = (fn: ts.SignatureDeclaration) => {
   const file = rel(fn.getSourceFile().fileName);
@@ -311,24 +321,40 @@ const nameOf = (fn: ts.SignatureDeclaration) => {
   return `${file}#${own}`;
 };
 
-/** The SQL table a schema identifier names, from its `pgTable("name", …)` declaration. */
+/** The SQL table an expression names: follows local aliases to a `pgTable("name", …)` in db/schema.ts. */
 function tableOf(node: ts.Expression): string | undefined {
-  const decl = resolved(node)?.valueDeclaration;
-  if (!decl || !ts.isVariableDeclaration(decl) || rel(decl.getSourceFile().fileName) !== "db/schema.ts") return undefined;
-  const init = decl.initializer;
-  if (init && ts.isCallExpression(init) && init.arguments[0] && ts.isStringLiteral(init.arguments[0])) {
-    return init.arguments[0].text;
+  let decl = resolved(node)?.valueDeclaration;
+  for (let hops = 0; decl && hops < 10; hops += 1) {
+    if (!ts.isVariableDeclaration(decl) || !decl.initializer) return undefined;
+    const init = decl.initializer;
+    if (rel(decl.getSourceFile().fileName) === "db/schema.ts") {
+      return ts.isCallExpression(init) && init.arguments[0] && ts.isStringLiteral(init.arguments[0])
+        ? init.arguments[0].text
+        : undefined;
+    }
+    if (!ts.isIdentifier(init) && !ts.isPropertyAccessExpression(init)) return undefined;
+    decl = resolved(ts.isPropertyAccessExpression(init) ? init.name : init)?.valueDeclaration;
   }
   return undefined;
 }
 
+/** drizzle's own `PgDatabase.insert/update/delete/execute`, whatever value it is called on. */
+function drizzleWrite(decl: ts.Declaration | undefined): string | undefined {
+  if (!decl || !ts.isMethodDeclaration(decl) || !decl.getSourceFile().fileName.includes("/drizzle-orm/")) return undefined;
+  const owner = decl.parent;
+  if (!ts.isClassDeclaration(owner) || owner.name?.text !== "PgDatabase") return undefined;
+  const method = decl.name.getText();
+  return ["insert", "update", "delete", "execute"].includes(method) ? method : undefined;
+}
+
 /**
  * What a function writes, from its own body (nested callbacks included):
- * the tables of `db.insert/update/delete(table)`, and `null` for a raw write
- * (`db.execute`, `transact`) whose tables cannot be resolved. A call through
- * db/drizzle.ts `readQuery` is a READ (spec §10): it runs in a Postgres
- * READ ONLY transaction, so the database refuses any write inside it. Like
- * the others it is recognised by its resolved symbol, never by SQL text.
+ * the tables of drizzle's `insert/update/delete(table)`, and `null` for a raw
+ * write (`execute`, db/drizzle.ts `transact`) whose tables cannot be resolved.
+ * Each call is identified by the declaration the type checker RESOLVES it to,
+ * so an aliased database handle or an aliased `transact` is still a write.
+ * A call through db/drizzle.ts `readQuery` is a READ (spec §10): it runs in a
+ * Postgres READ ONLY transaction, so the database refuses any write in it.
  */
 function writesOf(fn: ts.SignatureDeclaration): Array<string | null> {
   const out: Array<string | null> = [];
@@ -336,18 +362,18 @@ function writesOf(fn: ts.SignatureDeclaration): Array<string | null> {
   if (!body) return out;
   walk(body, (n) => {
     if (!ts.isCallExpression(n)) return;
-    const callee = n.expression;
-    if (ts.isIdentifier(callee)) {
-      const target = resolved(callee);
-      if (declaredIn(target) === "db/drizzle.ts" && target!.name === "transact") out.push(null);
-      return;
-    }
-    if (!ts.isPropertyAccessExpression(callee)) return;
-    const method = callee.name.text;
-    if (!["insert", "update", "delete", "execute"].includes(method)) return;
-    if (declaredIn(resolved(callee.expression)) !== "db/drizzle.ts") return;
+    const decl = resolvedCall(n);
+    const method = drizzleWrite(decl);
     if (method === "execute") out.push(null);
-    else out.push(n.arguments[0] ? tableOf(n.arguments[0]) ?? null : null);
+    else if (method) out.push(n.arguments[0] ? tableOf(n.arguments[0]) ?? null : null);
+    else if (
+      decl &&
+      ts.isFunctionDeclaration(decl) &&
+      decl.name?.text === "transact" &&
+      rel(decl.getSourceFile().fileName) === "db/drizzle.ts"
+    ) {
+      out.push(null);
+    }
   });
   return out;
 }
@@ -364,26 +390,29 @@ function takesCapability(fn: ts.SignatureDeclaration): boolean {
   return false;
 }
 
-/** Every function of ours that `fn` calls, or passes as a value (e.g. a `.map` callback). */
+/**
+ * Every function of ours that `fn` calls (the declaration each call resolves
+ * to) or hands on as a value (an argument whose type is one of our functions,
+ * e.g. a `.map` callback).
+ */
 function calleesOf(fn: ts.SignatureDeclaration): ts.SignatureDeclaration[] {
   const out = new Set<ts.SignatureDeclaration>();
   const body = (fn as ts.FunctionLikeDeclaration).body;
   if (!body) return [];
   walk(body, (n) => {
-    let target: ts.Node | undefined;
-    if (ts.isCallExpression(n)) target = n.expression;
-    else if ((ts.isIdentifier(n) || ts.isPropertyAccessExpression(n)) && n.parent && ts.isCallExpression(n.parent) && n.parent.arguments.includes(n as ts.Expression)) {
-      target = n;
+    if (!ts.isCallExpression(n)) return;
+    const callee = ours(resolvedCall(n));
+    if (callee) out.add(callee);
+    for (const arg of n.arguments) {
+      if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) continue; // inline: part of fn's own body
+      for (const f of functionsOfValue(arg)) out.add(f);
     }
-    if (!target) return;
-    const at = ts.isPropertyAccessExpression(target) ? target.name : target;
-    const callee = functionOf(resolved(at));
-    if (callee && callee !== fn) out.add(callee);
   });
+  out.delete(fn);
   return Array.from(out);
 }
 
-/** Every customer-reachable function that writes customer data without a capability, with its call chain. */
+/** Every reachable function that writes customer data without a capability, with its call chain. */
 function uncapabilitatedWriters(roots: ts.SignatureDeclaration[]): string[] {
   const parent = new Map<ts.SignatureDeclaration, ts.SignatureDeclaration | null>();
   const queue = [...roots];
@@ -408,16 +437,88 @@ function uncapabilitatedWriters(roots: ts.SignatureDeclaration[]): string[] {
   return offenders.sort();
 }
 
-function customerHandlerRoots(): ts.SignatureDeclaration[] {
-  const roots: ts.SignatureDeclaration[] = [];
-  for (const file of sources.filter((f) => rel(f.fileName).startsWith("lib/server/handlers/customer/"))) {
-    for (const sym of checker.getExportsOfModule(checker.getSymbolAtLocation(file)!)) {
-      const fn = functionOf(sym);
-      if (fn) roots.push(fn);
-    }
-  }
-  return roots;
+/** The functions a module exports, by the type of each export (so aliases and wrappers resolve). */
+function exportedFunctions(file: ts.SourceFile): ts.SignatureDeclaration[] {
+  const moduleSymbol = checker.getSymbolAtLocation(file);
+  if (!moduleSymbol) return [];
+  return checker
+    .getExportsOfModule(moduleSymbol)
+    .flatMap((sym) =>
+      checker
+        .getTypeOfSymbolAtLocation(sym, file)
+        .getCallSignatures()
+        .map((sig) => ours(sig.declaration))
+    )
+    .filter((d): d is ts.SignatureDeclaration => !!d);
 }
+
+function customerHandlerRoots(): ts.SignatureDeclaration[] {
+  return sources
+    .filter((f) => rel(f.fileName).startsWith("lib/server/handlers/customer/"))
+    .flatMap(exportedFunctions);
+}
+
+/**
+ * Run `check` against the repo's program plus virtual `overlay` files (path →
+ * source), with the module-level checker swapped for that program's. The
+ * fixtures never touch the source tree.
+ */
+function withOverlay<T>(overlay: Record<string, string>, check: (files: ts.SourceFile[]) => T): T {
+  const virtual = new Map(Object.entries(overlay).map(([p, text]) => [resolve(ROOT, p), text]));
+  const host = ts.createCompilerHost(compilerOptions);
+  const { fileExists, readFile, getSourceFile } = host;
+  host.fileExists = (f) => virtual.has(f) || fileExists.call(host, f);
+  host.readFile = (f) => virtual.get(f) ?? readFile.call(host, f);
+  host.getSourceFile = (f, lang, ...rest) =>
+    virtual.has(f) ? ts.createSourceFile(f, virtual.get(f)!, lang, true) : getSourceFile.call(host, f, lang, ...rest);
+  const fixtureProgram = ts.createProgram([...rootNames, ...Array.from(virtual.keys())], compilerOptions, host, program);
+  const saved = checker;
+  checker = fixtureProgram.getTypeChecker();
+  try {
+    return check(Array.from(virtual.keys()).map((f) => fixtureProgram.getSourceFile(f)!));
+  } finally {
+    checker = saved;
+  }
+}
+
+const WRITER = `
+import { eq } from "drizzle-orm";
+import db, { transact } from "@/db/drizzle";
+import { orders } from "@/db/schema";
+import type { VerifiedOrderId } from "@/lib/server/identity";
+export async function unbrandedWrite(id: string) {
+  await db.update(orders).set({ locale: "es" }).where(eq(orders.id, id));
+}
+const handle = db;
+const table = orders;
+export async function writeThroughAliasedDb(id: string) {
+  await handle.update(table).set({ locale: "es" }).where(eq(orders.id, id));
+}
+const run = transact;
+export async function rawThroughAliasedTransact(id: string) {
+  await run([]);
+  void id;
+}
+export async function brandedWrite(id: VerifiedOrderId) {
+  await db.update(orders).set({ locale: "es" }).where(eq(orders.id, id));
+}
+`;
+const handler = (body: string) => `
+import type { CustomerContext } from "@/lib/server/actions";
+import { unbrandedWrite, writeThroughAliasedDb, rawThroughAliasedTransact, brandedWrite } from "@/lib/server/__rule6Writer";
+void unbrandedWrite; void writeThroughAliasedDb; void rawThroughAliasedTransact; void brandedWrite;
+${body}
+`;
+const fixtureOffenders = (body: string) =>
+  withOverlay(
+    {
+      "lib/server/__rule6Writer.ts": WRITER,
+      "lib/server/handlers/customer/__rule6.ts": handler(body),
+    },
+    ([, h]) => uncapabilitatedWriters(exportedFunctions(h))
+  );
+const H = "lib/server/handlers/customer/__rule6.ts";
+const W = "lib/server/__rule6Writer.ts";
 
 describe("rule 6: customer handlers write customer data only through capabilities", () => {
   it("finds the handlers it starts from, and walks into the order scope", () => {
@@ -436,4 +537,49 @@ describe("rule 6: customer handlers write customer data only through capabilitie
   it("every reached function that writes customer data takes a VerifiedOrderId, VerifiedSubmission or OrderScope", () => {
     expect(uncapabilitatedWriters(customerHandlerRoots())).toEqual([]);
   });
+
+  // Negative fixtures (Codex review, finding 2): virtual files compiled with
+  // the real program, so the walk is exercised on code that must fail.
+  it.each([
+    [
+      "a direct call",
+      `export async function h(ctx: CustomerContext) { await unbrandedWrite(ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through a local alias",
+      `const save = unbrandedWrite;
+       export async function h(ctx: CustomerContext) { await save(ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through an object property",
+      `const ops = { save: unbrandedWrite };
+       export async function h(ctx: CustomerContext) { await ops.save(ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a function handed on as a callback",
+      `export async function h(ctx: CustomerContext) { await Promise.all([ctx.orderId].map(unbrandedWrite)); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "an aliased database handle and table",
+      `export async function h(ctx: CustomerContext) { await writeThroughAliasedDb(ctx.orderId); }`,
+      `${H}#h -> ${W}#writeThroughAliasedDb writes orders without a capability`,
+    ],
+    [
+      "an aliased transact",
+      `export async function h(ctx: CustomerContext) { await rawThroughAliasedTransact(ctx.orderId); }`,
+      `${H}#h -> ${W}#rawThroughAliasedTransact writes <raw SQL> without a capability`,
+    ],
+  ])("fails %s to an unbranded writer, naming the chain", (_label, body, expected) => {
+    expect(fixtureOffenders(body)).toEqual([expected]);
+  }, 60_000);
+
+  it("passes the same handler calling a branded writer (the control)", () => {
+    expect(
+      fixtureOffenders(`export async function h(ctx: CustomerContext) { await brandedWrite(ctx.orderId); }`)
+    ).toEqual([]);
+  }, 60_000);
 });

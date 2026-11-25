@@ -304,3 +304,12 @@ runs a statement through the Neon driver's own `transaction([...], { readOnly: t
 transaction, so the database refuses any write). Both functions call `readQuery` instead of `db.execute`; SQL text and
 signatures unchanged. Rule 6 counts a call through `readQuery` as a read. Test: a write statement through `readQuery`
 is refused by Postgres (pg16 test DB). Revert-and-fail: switch one back to `db.execute` → rule 6 fails naming it.
+**§Enforcement 6, final mechanism (after Codex fix-check, 2026-11-25).** Resolving every call and failing closed on
+unresolved ones is unworkable (26 unresolvable sites on real code, 0 writes: `any` method calls, typed calls through
+data structures). Rule 6 therefore walks **value reachability**, not call resolution: a function is reachable when its
+value is referenced from reachable code (references, initializers, class members, and every store into a referenced
+variable anywhere in the app's modules, incl. `m.set(k, f)` / `a.push(f)`). Roots: every exported function value under
+`handlers/customer/**`, typed or not. A write = a call resolving to drizzle's own insert/update/delete/execute, or any
+reference reaching `transact` or the bare db handle. Fails closed when a function is stored where no symbol can find it,
+or an exported handler's implementation cannot be found. Limits: flow-insensitive (over-approximates); no `eval` or
+computed dynamic `import()`; stores in `tests/` and `scripts/` are out of scope (separate processes). Commit `2e309e0`.

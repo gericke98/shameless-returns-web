@@ -8,11 +8,9 @@
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
-import { PgDialect, getTableConfig, type PgTable } from "drizzle-orm/pg-core";
-import type { SQL } from "drizzle-orm";
+import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
+import { transactionsOver, type RunTransaction } from "@/db/transactions";
 import * as schema from "@/db/schema";
-
-const dialect = new PgDialect();
 
 function createTableFromSchema(table: PgTable): string {
   const config = getTableConfig(table);
@@ -50,32 +48,21 @@ export function settlementDatabase() {
   })();
   const db = drizzle(pg, { schema });
 
-  /** db/drizzle.ts `transact`, on PGlite: one transaction, rows per statement. */
-  async function transact(statements: SQL[]): Promise<any[][]> {
+  /**
+   * The driver-level transaction on PGlite: one transaction in the mode asked
+   * for. Everything above the driver is production's own (db/transactions.ts).
+   */
+  const pgliteTransaction: RunTransaction = async (statements, mode) => {
+    if (mode.isolationLevel !== "ReadCommitted") throw new Error(`unsupported isolation ${mode.isolationLevel}`);
     const result = await pg.transaction(async (tx) => {
+      await tx.exec(`SET TRANSACTION ISOLATION LEVEL READ COMMITTED${mode.readOnly ? " READ ONLY" : ""}`);
       const out: any[][] = [];
-      for (const statement of statements) {
-        const q = dialect.sqlToQuery(statement);
-        out.push((await tx.query<any>(q.sql, q.params as any[])).rows);
-      }
+      for (const s of statements) out.push((await tx.query<any>(s.sql, s.params as any[])).rows);
       return out;
     });
     return result ?? [];
-  }
-
-  /** db/drizzle.ts `readQuery`, on PGlite: one READ ONLY transaction. */
-  async function readQuery(statement: SQL): Promise<{ rows: any[] }> {
-    const q = dialect.sqlToQuery(statement);
-    await pg.exec("BEGIN READ ONLY");
-    try {
-      const rows = (await pg.query<any>(q.sql, q.params as any[])).rows;
-      await pg.exec("COMMIT");
-      return { rows };
-    } catch (error) {
-      await pg.exec("ROLLBACK");
-      throw error;
-    }
-  }
+  };
+  const { transact, readQuery } = transactionsOver(pgliteTransaction);
 
   async function reset() {
     await pg.exec(`

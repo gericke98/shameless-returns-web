@@ -1,7 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
-import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
+import { transactionsOver, type RunTransaction } from "./transactions";
 
 import * as schema from "./schema";
 
@@ -32,7 +32,20 @@ const db = drizzle(sql, { schema });
 
 export default db;
 
-const dialect = new PgDialect();
+/**
+ * Neon's driver-level transaction: its non-interactive `sql.transaction`,
+ * which Neon's HTTP endpoint runs server-side as BEGIN (in `mode`) … COMMIT.
+ * The only piece of `transact` / `readQuery` that tests substitute.
+ */
+const neonTransaction: RunTransaction = async (statements, mode) => {
+  const results: any[] = await sql.transaction(
+    statements.map((s) => sql(s.sql, s.params)),
+    { fullResults: true, isolationLevel: mode.isolationLevel, readOnly: mode.readOnly }
+  );
+  return results.map((result) => result?.rows ?? []);
+};
+
+const transactions = transactionsOver(neonTransaction);
 
 /**
  * Run `statements` as ONE non-interactive Postgres transaction and return each
@@ -48,15 +61,7 @@ const dialect = new PgDialect();
  * 2026-10-30-settlement-S2-ledger-plan.md, L4).
  */
 export async function transact(statements: SQL[]): Promise<any[][]> {
-  const queries = statements.map((statement) => {
-    const query = dialect.sqlToQuery(statement);
-    return sql(query.sql, query.params);
-  });
-  const results: any[] = await sql.transaction(queries, {
-    fullResults: true,
-    isolationLevel: "ReadCommitted",
-  });
-  return results.map((result) => result?.rows ?? []);
+  return transactions.transact(statements);
 }
 
 /**
@@ -69,13 +74,8 @@ export async function transact(statements: SQL[]): Promise<any[][]> {
  * the caller, guarantees it reads: any write inside is refused by Postgres
  * ("cannot execute … in a read-only transaction"). The boundary test (rule 6,
  * F1 spec §10) therefore counts a call through `readQuery` as a read.
+ * Built by db/transactions.ts, the same code the Postgres tests run.
  */
 export async function readQuery(statement: SQL): Promise<{ rows: any[] }> {
-  const query = dialect.sqlToQuery(statement);
-  const [result]: any[] = await sql.transaction([sql(query.sql, query.params)], {
-    fullResults: true,
-    isolationLevel: "ReadCommitted",
-    readOnly: true,
-  });
-  return { rows: result?.rows ?? [] };
+  return transactions.readQuery(statement);
 }

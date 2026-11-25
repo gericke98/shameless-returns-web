@@ -8,8 +8,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getTableConfig, PgDialect, type PgTable } from "drizzle-orm/pg-core";
-import type { SQL } from "drizzle-orm";
+import { getTableConfig, type PgTable } from "drizzle-orm/pg-core";
+import { transactionsOver, type RunTransaction } from "@/db/transactions";
 import * as schema from "@/db/schema";
 import { MIGRATIONS } from "./settlementDb";
 
@@ -38,18 +38,18 @@ export async function startPg16() {
   await pool.query(createTableFromSchema(schema.productsOrder));
   for (const file of MIGRATIONS) await pool.query(readFileSync(file, "utf8"));
   const db = drizzle(pool, { schema });
-  const dialect = new PgDialect();
-
-  /** db/drizzle.ts `transact` on a real connection: BEGIN READ COMMITTED … COMMIT. */
-  async function transact(statements: SQL[]): Promise<any[][]> {
+  /**
+   * The driver-level transaction on a real connection: BEGIN in the mode
+   * asked for … COMMIT, as Neon runs it server-side. Everything above the
+   * driver is production's own (db/transactions.ts).
+   */
+  const pgTransaction: RunTransaction = async (statements, mode) => {
+    if (mode.isolationLevel !== "ReadCommitted") throw new Error(`unsupported isolation ${mode.isolationLevel}`);
     const client = await pool.connect();
     try {
-      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      await client.query(`BEGIN ISOLATION LEVEL READ COMMITTED${mode.readOnly ? " READ ONLY" : ""}`);
       const out: any[][] = [];
-      for (const statement of statements) {
-        const q = dialect.sqlToQuery(statement);
-        out.push((await client.query(q.sql, q.params as any[])).rows);
-      }
+      for (const s of statements) out.push((await client.query(s.sql, s.params as any[])).rows);
       await client.query("COMMIT");
       return out;
     } catch (error) {
@@ -58,24 +58,8 @@ export async function startPg16() {
     } finally {
       client.release();
     }
-  }
-
-  /** db/drizzle.ts `readQuery` on a real connection: BEGIN READ ONLY … COMMIT. */
-  async function readQuery(statement: SQL): Promise<{ rows: any[] }> {
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN ISOLATION LEVEL READ COMMITTED READ ONLY");
-      const q = dialect.sqlToQuery(statement);
-      const rows = (await client.query(q.sql, q.params as any[])).rows;
-      await client.query("COMMIT");
-      return { rows };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
+  };
+  const { transact, readQuery } = transactionsOver(pgTransaction);
 
   async function stop() {
     await pool.end();

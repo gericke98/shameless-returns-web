@@ -24,7 +24,7 @@
 //
 // NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { readQuery } from "@/db/drizzle";
 
 /** One replacement line: its EXACT total in cents and its unit count. */
 export type FundedLine = { totalCents: number; quantity: number };
@@ -80,7 +80,7 @@ export async function replacementFundingOf(order: {
   const sourceIdentifier = order.sourceIdentifier ? String(order.sourceIdentifier) : null;
   if (sourceIdentifier) {
     const [op] = rowsOf(
-      await db.execute(sql`
+      await readQuery(sql`
         SELECT o.id, o.state, s.order_id AS source_order_id
           FROM settlement_operations o
           JOIN return_submissions s ON s.id = o.submission_id
@@ -90,7 +90,7 @@ export async function replacementFundingOf(order: {
     if (op) return fundingFrom(order, [op], sql`rl.exchange_operation_id = ${op.id}`);
   }
   const ops = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT DISTINCT o.id, o.state, s.order_id AS source_order_id
         FROM replacement_lines rl
         JOIN settlement_operations o ON o.id = rl.exchange_operation_id
@@ -102,7 +102,7 @@ export async function replacementFundingOf(order: {
 
   // No funding recorded. Is it a replacement anyway? Identity is explicit data.
   const [known] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT source_order_id FROM legacy_replacement_orders WHERE order_id = ${String(order.id)}
       UNION ALL
       SELECT exchange_of AS source_order_id FROM orders WHERE id = ${String(order.id)} AND exchange_of IS NOT NULL
@@ -111,7 +111,7 @@ export async function replacementFundingOf(order: {
   );
   if (known) {
     const lines = rowsOf(
-      await db.execute(sql`
+      await readQuery(sql`
         SELECT DISTINCT m.po FROM settlement_operations o
           JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'
           CROSS JOIN LATERAL unnest(o.members) AS m(po)
@@ -126,7 +126,7 @@ export async function replacementFundingOf(order: {
       sourceLines: lines.map((r) => Number(r.po)),
     };
   }
-  const [census] = rowsOf(await db.execute(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
+  const [census] = rowsOf(await readQuery(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
   if (!census) return { kind: "unprovable", reason: "replacement-census-missing" };
   return { kind: "not-settlement" };
 }
@@ -140,7 +140,7 @@ async function fundingFrom(order: { id: string }, ops: any[], which: ReturnType<
   const notDone = ops.find((o) => o.state !== "done");
   if (notDone) return { kind: "unfunded", sourceOrderId, reason: `exchange-operation-${notDone.state}` };
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT rl.order_id, rl.line_item_id, rl.quantity, rl.stripe_funded_cents, sl.returned_cents
         FROM replacement_lines rl
         JOIN submission_lines sl

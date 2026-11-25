@@ -20,7 +20,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { VerifiedOrderId } from "@/lib/server/identity";
-import db, { transact } from "@/db/drizzle";
+import db, { transact, readQuery } from "@/db/drizzle";
 import { getFeeTable } from "@/db/fees";
 import { getProducts } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
@@ -230,7 +230,7 @@ type ApprovalRow = {
 };
 
 async function approvalRowsOf(ids: number[]): Promise<ApprovalRow[]> {
-  const result: any = await db.execute(sql`
+  const result: any = await readQuery(sql`
     SELECT productsorder_id, submission_id::text AS submission_id, basis, amount_cents, cap_cents, approved_by
       FROM settlement_approvals WHERE productsorder_id IN ${idListOf(ids)}`);
   return (result?.rows ?? result ?? []).map((r: any) => ({

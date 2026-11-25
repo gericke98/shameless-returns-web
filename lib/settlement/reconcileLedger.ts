@@ -21,7 +21,7 @@
 // NOT "use server".
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import db, { transact, readQuery } from "@/db/drizzle";
 import type { orders } from "@/db/schema";
 import { legacySubmissionCtes, type LegacyTerms } from "./legacyTerms";
 import { finalizeStatements } from "./ledger";
@@ -314,7 +314,7 @@ export async function reconciliationCoverage(): Promise<{
   swapCandidates: Set<number>;
 }> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT m.po, o.id, o.state, o.kind, s.state AS submission_state
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id

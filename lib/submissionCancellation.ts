@@ -11,7 +11,7 @@
 //
 // NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { readQuery } from "@/db/drizzle";
 import { submissionForRow } from "@/lib/settlement/legacy";
 import { SHOPIFY_API_VERSION } from "@/lib/settlement/shopify";
 import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
@@ -71,7 +71,7 @@ async function membersOf(submissions: readonly VerifiedSubmission[]): Promise<
   Array<{ id: string; provenance: string; chargeCents: number; paymentIntent: string | null; returnIds: string[] }>
 > {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT s.id, s.provenance, s.stripe_charge_cents, s.stripe_payment_intent,
              COALESCE(array_agg(DISTINCT p.return_id) FILTER (WHERE p.return_id IS NOT NULL), '{}') AS return_ids
         FROM return_submissions s

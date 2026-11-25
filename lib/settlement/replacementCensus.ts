@@ -13,7 +13,7 @@
 //
 // Shopify is only READ. NOT "use server".
 import { sql } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import db, { transact, readQuery } from "@/db/drizzle";
 import { read } from "./reads";
 import type { Read } from "./reconcile";
 
@@ -70,7 +70,7 @@ export function censusRows(
 
 /** Our orders by the exact tag the pre-S2 code wrote for them. */
 export async function ourOrderTags(): Promise<Map<string, string[]>> {
-  const rows = rowsOf(await db.execute(sql`SELECT id, order_number FROM orders WHERE order_number IS NOT NULL`));
+  const rows = rowsOf(await readQuery(sql`SELECT id, order_number FROM orders WHERE order_number IS NOT NULL`));
   const map = new Map<string, string[]>();
   for (const r of rows) {
     const k = `Order ${r.order_number}`;
@@ -95,6 +95,6 @@ export async function recordCensus(
 
 /** Cutover coverage: has a complete census been recorded? */
 export async function censusComplete(): Promise<boolean> {
-  const [r] = rowsOf(await db.execute(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
+  const [r] = rowsOf(await readQuery(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
   return !!r;
 }

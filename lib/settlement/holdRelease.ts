@@ -21,7 +21,7 @@
 // Never throws: both callers have already done something irreversible.
 // NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { readQuery } from "@/db/drizzle";
 import { releaseHoldDraft, type HoldReleaseAuthority } from "./effects";
 import { graphQLErrors } from "./shopify";
 import { DRAFT_ORDER_QUERY, read } from "./reads";
@@ -36,7 +36,7 @@ export type HoldRelease =
 
 async function heldDraftOf(orderId: VerifiedOrderId): Promise<string | null> {
   const [row] = rowsOf(
-    await db.execute(sql`SELECT exchange_reservation_id FROM orders WHERE id = ${orderId}`)
+    await readQuery(sql`SELECT exchange_reservation_id FROM orders WHERE id = ${orderId}`)
   );
   return row?.exchange_reservation_id ? String(row.exchange_reservation_id) : null;
 }
@@ -44,7 +44,7 @@ async function heldDraftOf(orderId: VerifiedOrderId): Promise<string | null> {
 async function cancellationOwnsHold(orderId: VerifiedOrderId, submissionIds: readonly string[]): Promise<string | null> {
   const ids = JSON.stringify(submissionIds);
   const [row] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT
         (SELECT count(*) FROM return_submissions s
           WHERE s.id IN (SELECT (jsonb_array_elements_text(${ids}::jsonb))::uuid)
@@ -63,7 +63,7 @@ async function cancellationOwnsHold(orderId: VerifiedOrderId, submissionIds: rea
 
 async function revertOwnsHold(orderId: VerifiedOrderId): Promise<string | null> {
   const [row] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT
         (SELECT count(*) FROM productsorder p
           WHERE p.order_id = ${orderId} AND p.confirmed = true

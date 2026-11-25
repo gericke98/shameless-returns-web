@@ -16,7 +16,7 @@ import "server-only";
 // RETURNING`), so it is atomic on neon-http, which has no interactive
 // transactions, and the row's state, not a prior read, decides who wins.
 import { and, eq, sql, type SQL } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import db, { transact, readQuery } from "@/db/drizzle";
 import { orders, returnSubmissions, submissionLines } from "@/db/schema";
 import type { Agreement } from "@/lib/agreement";
 import type { PaidOutcome, PaymentEvidence, SubmissionLineInput } from "@/db/submissions";
@@ -429,7 +429,7 @@ export async function finishCancellation(
  */
 export async function activeSelfSubmission(orderId: VerifiedOrderId): Promise<VerifiedSubmission | null> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT s.id
         FROM return_submissions s
         JOIN orders o ON o.id = s.order_id

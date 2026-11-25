@@ -64,13 +64,13 @@ const replayWindow = sql.raw(`interval '${ROOT_REFUND_REPLAY_HOURS} hours'`);
 // ── reads ──────────────────────────────────────────────────────────────────
 
 export async function getOperation(id: string): Promise<Operation | null> {
-  const rows = rowsOf(await db.execute(sql`SELECT * FROM settlement_operations WHERE id = ${id}`));
+  const rows = rowsOf(await readQuery(sql`SELECT * FROM settlement_operations WHERE id = ${id}`));
   return rows[0] ? toOperation(rows[0]) : null;
 }
 
 export async function operationsOf(submissionId: string): Promise<Operation[]> {
   const rows = rowsOf(
-    await db.execute(
+    await readQuery(
       sql`SELECT * FROM settlement_operations WHERE submission_id = ${submissionId} ORDER BY created_at, scope_key`
     )
   );
@@ -109,11 +109,11 @@ export async function loadSubmission(
   submissionId: string
 ): Promise<{ submission: SubmissionForAdmission; lines: SubmissionLineRow[] } | null> {
   const [s] = rowsOf(
-    await db.execute(sql`SELECT * FROM return_submissions WHERE id = ${submissionId}`)
+    await readQuery(sql`SELECT * FROM return_submissions WHERE id = ${submissionId}`)
   );
   if (!s) return null;
   const lines = rowsOf(
-    await db.execute(
+    await readQuery(
       sql`SELECT * FROM submission_lines WHERE submission_id = ${submissionId} ORDER BY productsorder_id`
     )
   );
@@ -177,7 +177,7 @@ export async function submissionOfRow(productsorderId: number): Promise<string |
 export async function submissionsOfRows(productsorderIds: readonly number[]): Promise<Map<number, string>> {
   if (productsorderIds.length === 0) return new Map();
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT sl.productsorder_id, sl.submission_id
         FROM submission_lines sl
         JOIN return_submissions s ON s.id = sl.submission_id
@@ -234,7 +234,7 @@ export type Approval = { productsorderId: number; basis: ApprovalBasis; amountCe
 /** Santi's approvals (drizzle/0010) recorded with this submission, by line. */
 export async function approvalsOf(submissionId: string): Promise<Map<number, Approval>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT productsorder_id, basis, amount_cents FROM settlement_approvals WHERE submission_id = ${submissionId}
     `)
   );
@@ -653,7 +653,7 @@ export async function finalize(submissionId: string): Promise<number[]> {
  *  to `recoverDispatched` (evidence first), never to `run`. */
 export async function recoverableOperations(limit: number): Promise<Operation[]> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT o.* FROM settlement_operations o
        WHERE ((o.state IN ('pending', 'rejected')
                AND (o.after IS NULL
@@ -682,7 +682,7 @@ export const hasDispatched = (op: Operation): boolean =>
  */
 export async function approvalsAwaitingAdmission(): Promise<Array<{ submissionId: string; lines: number[] }>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT a.submission_id::text AS submission_id, to_jsonb(array_agg(a.productsorder_id ORDER BY a.productsorder_id)) AS lines
         FROM settlement_approvals a
         JOIN return_submissions s ON s.id = a.submission_id
@@ -704,7 +704,7 @@ export async function approvalsAwaitingAdmission(): Promise<Array<{ submissionId
 /** Submissions with a done op and a line still unsettled. */
 export async function submissionsToFinalize(): Promise<string[]> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT DISTINCT sl.submission_id
         FROM submission_lines sl
        WHERE sl.settled_at IS NULL
@@ -718,7 +718,7 @@ export async function submissionsToFinalize(): Promise<string[]> {
 /** Cancellations that took a submission over an hour ago and never finished. */
 export async function stuckCancellations(): Promise<Array<{ id: string; orderId: string }>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT id, order_id FROM return_submissions
        WHERE holder = 'cancellation' AND state <> 'cancelled'
          AND holder_since < now() - interval '1 hour'

@@ -387,5 +387,6 @@ handlers never mint (exception by design: the lookup handler is the credential c
   programada". Pre-run values (Neon point-in-time read at 23:10Z): all NULL, nudge 0. Root fix is F4's "resolve webhook
   events through the persisted Amphora return id → shipment" (prod has no shipment for it → ignored); the same applies to
   F2's per-preview Neon branches.
+  Restored with Santi's OK (2026-11-25): one UPDATE by id guarded on the test locator; prod row now equals the 23:10Z read.
 - Pre-existing on main, not F1: cancel is not offered for ~5 min after booking (`cancelEligibility` → `carrier-unreadable`
   while Correos has not registered the label yet); the cancel panel promises a refund on a return nothing was paid for.

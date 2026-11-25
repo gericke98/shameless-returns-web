@@ -93,13 +93,46 @@ describe.skipIf(!pg16Available)("tracking claim against cancellation (PostgreSQL
     await env?.stop();
   });
 
-  // What the decided mechanism (spec §4, decision 9 = A) guarantees: a
-  // cancellation that took the submission first refuses the claim. NOT
-  // asserted: "exactly one wins" under true concurrency. The claim's
-  // `FOR UPDATE` does not modify the row, so a cancellation UPDATE that queued
-  // behind it proceeds on its own earlier snapshot after the claim commits —
-  // measured 5 of 20 rounds with BOTH winning. Reported to the coordinator as a
-  // spec contradiction; not patched here.
+  // Spec §10: tracking and cancellation serialize on the submission's row
+  // lock, and the cancellation's claim re-checks the order on a snapshot taken
+  // after it. Exactly one wins, in every round, whichever starts first.
+  it.each([
+    ["tracking first", true],
+    ["cancellation first", false],
+  ])("exactly one of tracking and cancellation wins, every round (%s)", async (_label, trackingFirst) => {
+    const { activeSelfSubmission, claimTracking, claimForCancellation } = await scope();
+    const outcomes: Record<string, number> = {};
+    for (let i = 0; i < 50; i += 1) {
+      await env.reset();
+      await seedSelf(env.pool);
+      const sub = (await activeSelfSubmission(vid("100")))!;
+      const track = () => claimTracking(sub, WRITE);
+      const cancel = () => claimForCancellation(sub);
+      const [tracked, cancelled] = trackingFirst
+        ? await Promise.all([track(), cancel()])
+        : await Promise.all([cancel(), track()]).then(([c, t]) => [t, c]);
+      const key = tracked && cancelled ? "both" : tracked ? "tracking" : cancelled ? "cancellation" : "neither";
+      outcomes[key] = (outcomes[key] ?? 0) + 1;
+
+      const { rows } = await env.pool.query(
+        `SELECT o.locator, s.holder FROM orders o JOIN return_submissions s ON s.order_id = o.id WHERE o.id = '100'`
+      );
+      expect(rows[0].locator !== null).toBe(tracked);
+      expect(rows[0].holder === "cancellation").toBe(cancelled);
+    }
+    console.log(`tracking vs cancellation (${_label}):`, outcomes);
+    expect(Object.keys(outcomes).filter((k) => k === "both" || k === "neither")).toEqual([]);
+  }, 120_000);
+
+  it("a committed tracking claim makes a later cancellation refuse", async () => {
+    const { activeSelfSubmission, claimTracking, claimForCancellation } = await scope();
+    await env.reset();
+    await seedSelf(env.pool);
+    const sub = (await activeSelfSubmission(vid("100")))!;
+    expect(await claimTracking(sub, WRITE)).toBe(true);
+    expect(await claimForCancellation(sub)).toBe(false);
+  });
+
   it("a cancellation that holds the submission first makes the claim write nothing", async () => {
     const { activeSelfSubmission, claimTracking, claimForCancellation } = await scope();
     await env.reset();

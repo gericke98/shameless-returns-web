@@ -297,8 +297,17 @@ export async function recordConfirmation(
 
 /** Take the submission for cancellation. False if settlement got there first. */
 export async function claimForCancellation(sub: VerifiedSubmission): Promise<boolean> {
-  const rows = rowsOf(
-    await db.execute(sql`
+  // ONE transaction (F1 spec §10). (1) takes the submission's row lock, the
+  // same lock `claimTracking` takes. (2) runs on a fresh READ COMMITTED
+  // snapshot taken after that lock, so it sees a tracking claim that committed
+  // while (1) waited, and refuses: a self-booked return with tracking is
+  // `in-transit` (cancelEligibility), here enforced where the two serialize.
+  const [, claimed] = await transact([
+    sql`
+      SELECT id FROM return_submissions
+       WHERE id = ${sub.id} AND order_id = ${sub.orderId}
+       FOR UPDATE`,
+    sql`
       UPDATE return_submissions
          SET holder = 'cancellation', holder_since = now()
        WHERE id = ${sub.id}
@@ -306,10 +315,13 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<boo
          AND state = 'accepted'
          AND holder IS NULL
          AND NOT EXISTS (SELECT 1 FROM settlement_operations o WHERE o.submission_id = ${sub.id})
-      RETURNING id
-    `)
-  );
-  return rows.length === 1;
+         AND NOT EXISTS (SELECT 1 FROM orders o
+                          WHERE o.id = ${sub.orderId}
+                            AND o.return_method = 'SELF'
+                            AND o.locator IS NOT NULL)
+      RETURNING id`,
+  ]);
+  return (claimed ?? []).length === 1;
 }
 
 /** Amphora refused, so nothing moved: give the submission back. */

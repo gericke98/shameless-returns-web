@@ -7,7 +7,7 @@
  * the decision (who, why) and the replacement_lines row in one statement
  * (lib/settlement/replacementFunding.ts). Dry-run by default.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/fund-replacement-line.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/fund-replacement-line.ts \
  *     --order <replacement order id> --line <source productsorder id> \
  *     --session <cs_…> --cents <funded cents> --evidence "<why>" [--by <name>] [--write]
  */
@@ -40,7 +40,11 @@ async function main() {
       return e?.statusCode === 404 ? { ok: true as const, session: null } : { ok: false as const, error: String(e?.message ?? e) };
     }
   };
+  // Its write capability, minted here (F1 spec §11, G2): the operator running it.
+  const { systemTarget } = await import("@/lib/server/identity");
+  const job = systemTarget("fund-replacement-line");
   const out = await fundReplacementLine(
+    job,
     {
       orderId: String(values.order ?? ""),
       productsorderId: Number(values.line),

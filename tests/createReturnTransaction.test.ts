@@ -14,7 +14,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 
 const sent: any[] = [];
 let transactions: any[] = [];

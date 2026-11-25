@@ -197,7 +197,7 @@ vi.mock("@/lib/server/amphora", () => ({
 }));
 
 vi.mock("@/lib/server/amphoraStatusSync", () => ({
-  applyReturnStatus: async (order: any, payload: any) => {
+  applyReturnStatus: async (_id: unknown, order: any, payload: any) => {
     applied.push({ order: order.orderNumber, name: payload.name });
     return { changed: true, status: payload.internal_status, emailsSent: [], emailsFailed: [] };
   },

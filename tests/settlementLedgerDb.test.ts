@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { vid, vsub } from "./support/verified";
+import { vid, vsub, sys } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 
 /** Operation name → what Shopify answers. Unlisted = no answer. */
 const answers: Record<string, (variables: any) => any> = {};
@@ -45,7 +45,7 @@ async function admitted(seedOpts: Parameters<typeof seedSubmission>[1] = {}, pla
   const seeded = await seedSubmission(env.pg, seedOpts);
   const plan = planFor(seeded, planOver);
   const { insertAdmission } = await ledger();
-  const result = await insertAdmission({
+  const result = await insertAdmission(sys, {
     submissionId: seeded.id,
     seenSeq: 0,
     ops: plan.ops,
@@ -81,7 +81,7 @@ describe("admission — one statement", () => {
   it("writes nothing on a stale admission_seq — a concurrent admission won", async () => {
     const { seeded, plan } = await admitted();
     const { insertAdmission } = await ledger();
-    const again = await insertAdmission({
+    const again = await insertAdmission(sys, {
       submissionId: seeded.id,
       seenSeq: 0,
       ops: plan.ops.map((o) => ({ ...o, id: randomUUID(), scope_key: `${o.scope_key}:x` })),
@@ -94,7 +94,7 @@ describe("admission — one statement", () => {
   it("never writes an effect twice: the scope key is unique", async () => {
     const { seeded, plan } = await admitted();
     const { insertAdmission } = await ledger();
-    const again = await insertAdmission({
+    const again = await insertAdmission(sys, {
       submissionId: seeded.id,
       seenSeq: 1,
       ops: plan.ops.map((o) => ({ ...o, id: randomUUID() })),
@@ -110,7 +110,7 @@ describe("admission — one statement", () => {
     const { insertAdmission } = await ledger();
     const plan = planFor(seeded);
     expect(
-      await insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] })
+      await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] })
     ).toEqual({ admitted: false, inserted: 0 });
   });
 
@@ -132,32 +132,32 @@ describe("claim → dispatch → record, fenced on (owner, lease_gen)", () => {
   it("a second claimer gets nothing while the lease is alive", async () => {
     const { plan } = await admitted();
     const { claim } = await ledger();
-    expect(await claim(plan.ops[0].id, randomUUID())).not.toBeNull();
-    expect(await claim(plan.ops[0].id, randomUUID())).toBeNull();
+    expect(await claim(sys, plan.ops[0].id, randomUUID())).not.toBeNull();
+    expect(await claim(sys, plan.ops[0].id, randomUUID())).toBeNull();
   });
 
   it("only the claim's owner, at its attempt, can dispatch", async () => {
     const { plan } = await admitted();
     const { claim, dispatch } = await ledger();
     const me = randomUUID();
-    const claimed = (await claim(plan.ops[0].id, me))!;
-    expect(await dispatch(claimed, randomUUID())).toBeNull();
-    expect(await dispatch({ ...claimed, leaseGen: claimed.leaseGen + 1 }, me)).toBeNull();
-    expect(await dispatch(claimed, me)).not.toBeNull();
+    const claimed = (await claim(sys, plan.ops[0].id, me))!;
+    expect(await dispatch(sys, claimed, randomUUID())).toBeNull();
+    expect(await dispatch(sys, { ...claimed, leaseGen: claimed.leaseGen + 1 }, me)).toBeNull();
+    expect(await dispatch(sys, claimed, me)).not.toBeNull();
   });
 
   it("an expired claim is taken over, and the old owner's dispatch and record are refused", async () => {
     const { plan } = await admitted();
     const { claim, dispatch, recordDone } = await ledger();
     const old = randomUUID();
-    const first = (await claim(plan.ops[0].id, old))!;
+    const first = (await claim(sys, plan.ops[0].id, old))!;
     await env.pg.query("UPDATE settlement_operations SET lease_until = now() - interval '1 minute'");
-    const second = (await claim(plan.ops[0].id, randomUUID()))!;
+    const second = (await claim(sys, plan.ops[0].id, randomUUID()))!;
     // It never dispatched: same financial attempt, a new worker generation.
     expect(second.attempt).toBe(first.attempt);
     expect(second.leaseGen).toBe(first.leaseGen + 1);
-    expect(await dispatch(first, old)).toBeNull();
-    const done = await recordDone(first, { state: "dispatched", owner: old, leaseGen: first.leaseGen }, "x", {});
+    expect(await dispatch(sys, first, old)).toBeNull();
+    const done = await recordDone(sys, first, { state: "dispatched", owner: old, leaseGen: first.leaseGen }, "x", {});
     expect(done.done).toBe(false);
   });
 
@@ -169,7 +169,7 @@ describe("claim → dispatch → record, fenced on (owner, lease_gen)", () => {
     );
     const hold = plan.ops.find((o) => o.kind === "release_hold")!;
     const { claim } = await ledger();
-    expect(await claim(hold.id, randomUUID())).toBeNull();
+    expect(await claim(sys, hold.id, randomUUID())).toBeNull();
   });
 });
 
@@ -180,13 +180,13 @@ describe("ownership changes never touch the financial attempt (finding 1)", () =
     const seeded = await seedSubmission(env.pg, { residualCents: 1 });
     const plan = planFor(seeded);
     const { insertAdmission, getOperation, takeOver } = await ledger();
-    await insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] });
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] });
     const op = plan.ops.find((o) => o.scope_key.startsWith("residual:"))! as any;
     expect(op.kind).toBe("root_refund");
-    expect(await (await runner()).run(op.id)).toBe("in-flight");
+    expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
     const firstDispatch = (await opState(op.id)).dispatched_at;
     await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 hour'");
-    const taken = (await takeOver((await getOperation(op.id))!, randomUUID()))!;
+    const taken = (await takeOver(sys, (await getOperation(op.id))!, randomUUID()))!;
     expect(taken.attempt).toBe(1);
     await env.pg.query("UPDATE settlement_operations SET lease_until = now() - interval '1 minute'");
     return { op, firstDispatch };
@@ -195,7 +195,7 @@ describe("ownership changes never touch the financial attempt (finding 1)", () =
 
   it("an expired claim that had dispatched cannot be claimed afresh", async () => {
     const { op } = await takeoverDiedBeforeResend();
-    expect(await (await ledger()).claim(op.id, randomUUID())).toBeNull();
+    expect(await (await ledger()).claim(sys, op.id, randomUUID())).toBeNull();
     const row = await opState(op.id);
     expect(row.attempt).toBe(1);
     expect(row.dispatched_at).not.toBeNull();
@@ -205,7 +205,7 @@ describe("ownership changes never touch the financial attempt (finding 1)", () =
     const { op } = await takeoverDiedBeforeResend();
     answers.SettlementOrderRefunds = () => ({ data: { order: { refunds: [refundObject(op.request.check)] } } });
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    const report = await recoverSettlements({ deadline: Date.now() + 60_000 });
+    const report = await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
     expect(report.ran).toContainEqual({ op: op.id, kind: "root_refund", from: "claimed", result: "done" });
     expect(refundKeys()).toEqual([`${op.id}:1`]);
   });
@@ -214,7 +214,7 @@ describe("ownership changes never touch the financial attempt (finding 1)", () =
     const { op, firstDispatch } = await takeoverDiedBeforeResend();
     answers.SettlementOrderRefunds = () => ({ data: { order: { refunds: [] } } });
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    await recoverSettlements({ deadline: Date.now() + 60_000 });
+    await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
     expect(refundKeys()).toEqual([`${op.id}:1`, `${op.id}:1`]);
     const row = await opState(op.id);
     expect(row.attempt).toBe(1);
@@ -225,11 +225,11 @@ describe("ownership changes never touch the financial attempt (finding 1)", () =
     const seeded = await seedSubmission(env.pg, { residualCents: 1 });
     const plan = planFor(seeded);
     const { insertAdmission, claim } = await ledger();
-    await insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] });
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] });
     const op = plan.ops.find((o) => o.scope_key.startsWith("residual:"))! as any;
     answers.SettlementRefundCreate = () => ({ data: { refundCreate: { refund: null, userErrors: [{ message: "no" }] } } });
-    expect(await (await runner()).run(op.id)).toBe("rejected");
-    const again = (await claim(op.id, randomUUID()))!;
+    expect(await (await runner()).run(sys, op.id)).toBe("rejected");
+    const again = (await claim(sys, op.id, randomUUID()))!;
     expect(again.attempt).toBe(2);
     expect(again.dispatchedAt).toBeNull();
   });
@@ -244,14 +244,14 @@ describe("finalization", () => {
       data: { returnProcess: { return: returnObject(goods.request.check), userErrors: [] } },
     });
     const { run } = await runner();
-    expect(await run(goods.id)).toBe("done");
+    expect(await run(sys, goods.id)).toBe("done");
     expect((await q("SELECT settled_at FROM submission_lines WHERE submission_id=$1", [seeded.id]))[0].settled_at).toBeNull();
     expect((await q("SELECT refunded FROM productsorder WHERE id=1"))[0].refunded).toBeNull();
 
     answers.SettlementGiftCardCreate = () => ({
       data: { giftCardCreate: { giftCard: giftCardObject(card.request.check), userErrors: [] } },
     });
-    expect(await run(card.id)).toBe("done");
+    expect(await run(sys, card.id)).toBe("done");
     expect((await q("SELECT settled_at FROM submission_lines WHERE submission_id=$1", [seeded.id]))[0].settled_at).not.toBeNull();
     expect((await q("SELECT refunded FROM productsorder WHERE id=1"))[0].refunded).toBe(true);
   });
@@ -262,23 +262,23 @@ describe("finalization", () => {
     answers.SettlementReturnProcess = () => ({
       data: { returnProcess: { return: returnObject(op.request.check), userErrors: [] } },
     });
-    await (await runner()).run(op.id);
+    await (await runner()).run(sys, op.id);
     const { finalize } = await ledger();
-    expect(await finalize(seeded.id)).toEqual([]);
+    expect(await finalize(sys, seeded.id)).toEqual([]);
   });
 
   it("a line is not paid, nor the return refunded, while the residual is still owed (finding 7)", async () => {
     const seeded = await seedSubmission(env.pg, { lines: [line(1), line(2)], residualCents: 1 });
     const plan = planFor(seeded);
     const { insertAdmission } = await ledger();
-    await insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] });
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] });
     const residual = plan.ops.find((o) => o.scope_key.startsWith("residual:"))! as any;
     expect(residual.members).toEqual([1, 2]);
     for (const op of plan.ops.filter((o) => o.kind === "process_refund") as any[]) {
       answers.SettlementReturnProcess = () => ({
         data: { returnProcess: { return: returnObject(op.request.check), userErrors: [] } },
       });
-      expect(await (await runner()).run(op.id)).toBe("done");
+      expect(await (await runner()).run(sys, op.id)).toBe("done");
     }
     // Both line effects are done; the one-cent residual is still pending.
     expect(await q("SELECT settled_at FROM submission_lines WHERE settled_at IS NOT NULL")).toEqual([]);
@@ -290,7 +290,7 @@ describe("finalization", () => {
     answers.SettlementRefundCreate = () => ({
       data: { refundCreate: { refund: refundObject(residual.request.check), userErrors: [] } },
     });
-    expect(await (await runner()).run(residual.id)).toBe("done");
+    expect(await (await runner()).run(sys, residual.id)).toBe("done");
     expect((await q("SELECT id FROM productsorder WHERE refunded ORDER BY id")).map((r) => r.id)).toEqual([1, 2]);
   });
 
@@ -298,15 +298,15 @@ describe("finalization", () => {
     const seeded = await seedSubmission(env.pg, { lines: [line(1), line(2)], residualCents: 1 });
     const { insertAdmission } = await ledger();
     const first = planFor(seeded, { admit: [1] });
-    await insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: first.ops, reverseFulfillment: [] });
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: first.ops, reverseFulfillment: [] });
     const second = planFor(seeded, {
       existing: first.ops.map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key, members: o.members })),
     });
-    await insertAdmission({ submissionId: seeded.id, seenSeq: 1, ops: second.ops, reverseFulfillment: [] });
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 1, ops: second.ops, reverseFulfillment: [] });
     const third = planFor(seeded, {
       existing: [...first.ops, ...second.ops].map((o) => ({ id: o.id, kind: o.kind, scopeKey: o.scope_key, members: o.members })),
     });
-    await insertAdmission({ submissionId: seeded.id, seenSeq: 2, ops: third.ops, reverseFulfillment: [] });
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 2, ops: third.ops, reverseFulfillment: [] });
     expect(await q("SELECT amount_cents FROM settlement_operations WHERE scope_key LIKE 'residual:%'")).toEqual([
       { amount_cents: 1 },
     ]);
@@ -321,14 +321,14 @@ describe("an operation only a human can decide", () => {
     answers.SettlementReturnProcess = () => ({
       data: { returnProcess: { return: returnObject(op.request.check, { refunds: [] }), userErrors: [] } },
     });
-    expect(await (await runner()).run(op.id)).toBe("unresolved");
+    expect(await (await runner()).run(sys, op.id)).toBe("unresolved");
     expect((await opState(op.id)).state).toBe("unresolved");
     const alerts = await q("SELECT dedupe_key, body FROM ops_alerts");
     expect(alerts).toHaveLength(1);
     expect(alerts[0].dedupe_key).toBe(`settlement-unresolved:${op.id}`);
     expect(alerts[0].body).toContain("scripts/resolve-operation.ts");
     // Nothing claims it again.
-    expect(await (await ledger()).claim(op.id, randomUUID())).toBeNull();
+    expect(await (await ledger()).claim(sys, op.id, randomUUID())).toBeNull();
   });
 
   it("an operator's decision is fenced on the unresolved state", async () => {
@@ -337,10 +337,10 @@ describe("an operation only a human can decide", () => {
     const { recordDone, getOperation } = await ledger();
     await env.pg.query("UPDATE settlement_operations SET state='unresolved' WHERE id=$1", [op.id]);
     const current = (await getOperation(op.id))!;
-    const r = await recordDone(current, { state: "unresolved" }, "gid://shopify/Refund/1", { by: "ops" }, { resolvedBy: "santi" });
+    const r = await recordDone(sys, current, { state: "unresolved" }, "gid://shopify/Refund/1", { by: "ops" }, { resolvedBy: "santi" });
     expect(r.done).toBe(true);
     expect((await opState(op.id)).resolved_by).toBe("santi");
-    expect((await recordDone(current, { state: "unresolved" }, "x", {})).done).toBe(false);
+    expect((await recordDone(sys, current, { state: "unresolved" }, "x", {})).done).toBe(false);
   });
 });
 
@@ -355,7 +355,7 @@ describe("the exchange order", () => {
     answers.SettlementOrderCreate = () => ({
       data: { orderCreate: { order: orderObject(op.request.check), userErrors: [] } },
     });
-    expect(await (await runner()).run(op.id)).toBe("done");
+    expect(await (await runner()).run(sys, op.id)).toBe("done");
     expect(await q("SELECT order_id, line_item_id, quantity, stripe_funded_cents FROM replacement_lines")).toEqual([
       { order_id: "555", line_item_id: "gid://shopify/LineItem/900", quantity: 2, stripe_funded_cents: 1250 },
     ]);
@@ -378,7 +378,7 @@ describe("the exchange order", () => {
     await env.pg.query("UPDATE settlement_operations SET state='unresolved' WHERE id=$1", [op.id]);
     const { getOperation, recordDone } = await ledger();
     const current = (await getOperation(op.id))!;
-    await expect(recordDone(current, { state: "unresolved" }, "gid://shopify/Order/555", {})).rejects.toThrow(
+    await expect(recordDone(sys, current, { state: "unresolved" }, "gid://shopify/Order/555", {})).rejects.toThrow(
       /replacement lines/
     );
     expect((await opState(op.id)).state).toBe("unresolved");
@@ -394,7 +394,7 @@ describe("the exchange order", () => {
     const { resolveOperation } = await import("@/lib/settlement/operator");
     const decision = { verdict: "done" as const, evidence: "found it", by: "santi" };
 
-    expect(await resolveOperation((await getOperation(op.id))!, decision, { write: true })).toEqual({
+    expect(await resolveOperation(sys, (await getOperation(op.id))!, decision, { write: true })).toEqual({
       ok: false,
       reason: "exchange_order needs --order <gid of the order you found>",
     });
@@ -402,12 +402,12 @@ describe("the exchange order", () => {
     answers.SettlementExchangeOrderById = () => ({
       data: { order: { ...orderObject(op.request.check), sourceIdentifier: "someone-else" } },
     });
-    const wrong = await resolveOperation((await getOperation(op.id))!, { ...decision, orderGid: "gid://shopify/Order/555" }, { write: true });
+    const wrong = await resolveOperation(sys, (await getOperation(op.id))!, { ...decision, orderGid: "gid://shopify/Order/555" }, { write: true });
     expect(wrong.ok).toBe(false);
     expect((await opState(op.id)).state).toBe("unresolved");
 
     answers.SettlementExchangeOrderById = () => ({ data: { order: orderObject(op.request.check) } });
-    const right = await resolveOperation((await getOperation(op.id))!, { ...decision, orderGid: "gid://shopify/Order/555" }, { write: true });
+    const right = await resolveOperation(sys, (await getOperation(op.id))!, { ...decision, orderGid: "gid://shopify/Order/555" }, { write: true });
     expect(right).toMatchObject({ ok: true, written: true });
     expect(await q("SELECT order_id, line_item_id, source_productsorder_id, quantity FROM replacement_lines")).toEqual([
       { order_id: "555", line_item_id: "gid://shopify/LineItem/900", source_productsorder_id: 1, quantity: 2 },
@@ -428,9 +428,9 @@ describe("the exchange order", () => {
     const { resolveOperation } = await import("@/lib/settlement/operator");
     answers.SettlementDraftOrder = () => ({ data: { draftOrder: { id: D } } });
     const decision = { verdict: "done" as const, evidence: "deleted by hand", by: "santi" };
-    expect((await resolveOperation((await getOperation(hold.id))!, decision, { write: true })).ok).toBe(false);
+    expect((await resolveOperation(sys, (await getOperation(hold.id))!, decision, { write: true })).ok).toBe(false);
     answers.SettlementDraftOrder = () => ({ data: { draftOrder: null } });
-    expect(await resolveOperation((await getOperation(hold.id))!, decision, { write: true })).toMatchObject({ ok: true });
+    expect(await resolveOperation(sys, (await getOperation(hold.id))!, decision, { write: true })).toMatchObject({ ok: true });
     expect((await q("SELECT exchange_reservation_id FROM orders WHERE id=$1", [seeded.orderId]))[0].exchange_reservation_id).toBeNull();
   });
 
@@ -466,27 +466,27 @@ describe("the exchange order", () => {
     answers.SettlementOrderCreate = () => ({
       data: { orderCreate: { order: orderObject(op.request.check, { quantityDelta: -1 }), userErrors: [] } },
     });
-    expect(await (await runner()).run(op.id)).toBe("unresolved");
+    expect(await (await runner()).run(sys, op.id)).toBe("unresolved");
     expect(await q("SELECT * FROM replacement_lines")).toEqual([]);
   });
 
   it("can never be taken over for a re-send, however stale", async () => {
     const { plan } = await admitted({ lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
     const op = plan.ops.find((o) => o.kind === "exchange_order")! as any;
-    expect(await (await runner()).run(op.id)).toBe("in-flight");
+    expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
     await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 day'");
     const { getOperation, takeOver } = await ledger();
-    expect(await takeOver((await getOperation(op.id))!, randomUUID())).toBeNull();
+    expect(await takeOver(sys, (await getOperation(op.id))!, randomUUID())).toBeNull();
   });
 
   it("is never re-sent by recovery — an unanswered order is only ever searched for", async () => {
     const { plan } = await admitted({ lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
     const op = plan.ops.find((o) => o.kind === "exchange_order")! as any;
-    expect(await (await runner()).run(op.id)).toBe("in-flight");
+    expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
     await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 hour'");
     answers.SettlementExchangeOrderEvidence = () => ({ data: { orders: { nodes: [] } } });
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    await recoverSettlements({ deadline: Date.now() + 60_000 });
+    await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
     expect(sent.filter((s) => s.name === "SettlementOrderCreate")).toHaveLength(1);
     expect((await opState(op.id)).state).toBe("unresolved");
   });
@@ -497,11 +497,11 @@ describe("recovery", () => {
     process.env.AUTO_APPROVE_ENABLED = "false";
     const { seeded, plan } = await admitted();
     const op = plan.ops[0] as any;
-    expect(await (await runner()).run(op.id)).toBe("in-flight");
+    expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
     await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 hour'");
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(op.request.check) } });
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    const report = await recoverSettlements({ deadline: Date.now() + 60_000 });
+    const report = await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
     expect(report.ran).toEqual([{ op: op.id, kind: "process_refund", from: "dispatched", result: "done" }]);
     expect((await q("SELECT refunded FROM productsorder WHERE id=1"))[0].refunded).toBe(true);
     // Recovery judged from evidence; it did not send the mutation again.
@@ -521,17 +521,17 @@ describe("recovery", () => {
       data: { giftCardCreate: { giftCard: null, userErrors: [{ code: "INVALID", message: "try later" }] } },
     });
     const { run } = await runner();
-    expect(await run(goods.id)).toBe("done"); // the return is now CLOSED in Shopify
-    expect(await run(card.id)).toBe("rejected");
+    expect(await run(sys, goods.id)).toBe("done"); // the return is now CLOSED in Shopify
+    expect(await run(sys, card.id)).toBe("rejected");
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    await recoverSettlements({ deadline: Date.now() + 60_000 }); // refused again
+    await recoverSettlements(sys, { deadline: Date.now() + 60_000 }); // refused again
     expect((await q("SELECT dedupe_key FROM ops_alerts")).map((a) => a.dedupe_key)).toEqual([
       `settlement-rejected:${card.id}`,
     ]);
     answers.SettlementGiftCardCreate = () => ({
       data: { giftCardCreate: { giftCard: giftCardObject(card.request.check), userErrors: [] } },
     });
-    const report = await recoverSettlements({ deadline: Date.now() + 60_000 });
+    const report = await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
     expect(report.ran).toContainEqual({ op: card.id, kind: "gift_card", from: "rejected", result: "done" });
     expect((await q("SELECT settled_at FROM submission_lines WHERE submission_id=$1", [seeded.id]))[0].settled_at).not.toBeNull();
   });
@@ -540,7 +540,7 @@ describe("recovery", () => {
     const { seeded, plan } = await admitted();
     await env.pg.query("UPDATE settlement_operations SET state='done' WHERE id=$1", [plan.ops[0].id]);
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    const report = await recoverSettlements({ deadline: Date.now() + 60_000 });
+    const report = await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
     expect(report.finalized).toEqual([{ submission: seeded.id, lines: [1] }]);
   });
 });

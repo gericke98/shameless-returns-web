@@ -15,6 +15,7 @@ import { rootOrderIdOf } from "@/lib/server/replacementOrder";
 import { readDraftExists, readPayingOrder, readReturnFacts } from "./facts";
 import { approvalsOf, insertAdmission, loadSubmission, operationsOf, standingReconciliations } from "./ledger";
 import { planAdmission, type PayingOrder, type ReturnFacts } from "./plan";
+import type { WriteCapability } from "@/lib/server/identity";
 
 export type AdmitOutcome =
   | { ok: true; admitted: number[] }
@@ -42,7 +43,7 @@ export function expandAdmission(
   return Array.from(set).sort((a, b) => a - b);
 }
 
-export async function admit(submissionId: string, requested: readonly number[]): Promise<AdmitOutcome> {
+export async function admit(cap: WriteCapability, submissionId: string, requested: readonly number[]): Promise<AdmitOutcome> {
   // One retry on a lost admission_seq race; a cancellation is final.
   for (let round = 0; round < 2; round += 1) {
     const loaded = await loadSubmission(submissionId);
@@ -137,7 +138,7 @@ export async function admit(submissionId: string, requested: readonly number[]):
     });
     if (!plan.ok) return { ok: false, held: plan.held };
 
-    const written = await insertAdmission({
+    const written = await insertAdmission(cap, {
       submissionId,
       seenSeq: submission.admissionSeq,
       ops: plan.ops,

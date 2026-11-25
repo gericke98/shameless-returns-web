@@ -21,7 +21,8 @@
 //
 // Stripe and Shopify are only READ. NOT "use server".
 import { sql } from "drizzle-orm";
-import db, { readQuery } from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import { read } from "./reads";
 import { judgeLegacyExchangeOrder } from "./reconcile";
@@ -60,6 +61,7 @@ export type FundingOutcome =
   | { ok: false; reason: string };
 
 export async function fundReplacementLine(
+  cap: WriteCapability,
   d: FundingDecisionInput,
   readSession: (id: string) => Promise<StripeSessionRead>,
   options: { write: boolean }
@@ -126,7 +128,7 @@ export async function fundReplacementLine(
   if (!options.write) return { ok: true, written: false, summary: `would ${summary}` };
 
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH budget AS (
         SELECT COALESCE(sum(funded_cents), 0) AS used FROM replacement_funding_decisions
          WHERE stripe_session_id = ${d.stripeSessionId}

@@ -3,7 +3,10 @@
 //
 // NOT a "use server" module, for the same reason as db/lookupAttempts.ts.
 import { eq, sql } from "drizzle-orm";
-import db from "./drizzle";
+import { tableWriter } from "./drizzle";
+
+/** ops_alerts holds no customer data (F1 spec §11): its own writer. */
+const alerts = tableWriter("ops_alerts");
 import { opsAlerts } from "./schema";
 
 export type PendingOpsAlert = {
@@ -23,7 +26,7 @@ export async function insertOpsAlert(alert: {
   subject: string;
   body: string;
 }): Promise<boolean> {
-  const rows = await db
+  const rows = await alerts
     .insert(opsAlerts)
     .values(alert)
     .onConflictDoNothing({ target: opsAlerts.dedupeKey })
@@ -41,7 +44,7 @@ export async function insertOpsAlert(alert: {
  * keeps failing cannot starve the rest.
  */
 export async function claimPendingOpsAlerts(limit: number): Promise<PendingOpsAlert[]> {
-  const result: any = await db.execute(sql`
+  const result: any = await alerts.execute(sql`
     UPDATE ops_alerts
        SET last_attempt_at = now()
      WHERE id IN (
@@ -65,7 +68,7 @@ export async function claimPendingOpsAlerts(limit: number): Promise<PendingOpsAl
 }
 
 export async function markOpsAlertAccepted(id: string): Promise<void> {
-  await db
+  await alerts
     .update(opsAlerts)
     .set({ acceptedAt: sql`now()`, lastError: null })
     .where(eq(opsAlerts.id, id));
@@ -73,7 +76,7 @@ export async function markOpsAlertAccepted(id: string): Promise<void> {
 
 /** The lease stamp stays: the row is retried once it expires. */
 export async function markOpsAlertFailed(id: string, error: string): Promise<void> {
-  await db
+  await alerts
     .update(opsAlerts)
     .set({ lastError: error.slice(0, 1000) })
     .where(eq(opsAlerts.id, id));

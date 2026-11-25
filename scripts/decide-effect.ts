@@ -12,7 +12,7 @@
  * why; a second decision on the same effect is refused. The next
  * reconciliation run reads it. Dry-run by default.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/decide-effect.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/decide-effect.ts \
  *     --effect <id> (--binds <po> | --excludes) --evidence "<…>" [--by <name>] [--write]
  */
 import "dotenv/config";
@@ -46,7 +46,10 @@ async function main() {
     console.log("DRY: nothing recorded. Pass --write.");
     return;
   }
-  const out = await decideEffect(decision);
+  // Its write capability, minted here (F1 spec §11, G2): the operator running it.
+  const { systemTarget } = await import("@/lib/server/identity");
+  const job = systemTarget("decide-effect");
+  const out = await decideEffect(job, decision);
   if (!out.ok) {
     console.log(`NOT recorded: ${out.reason}`);
     process.exitCode = 1;

@@ -34,7 +34,7 @@ const ORDER = {
 const state = { order: { ...ORDER } };
 const updates: any[] = [];
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: unknown) => {
@@ -45,7 +45,7 @@ vi.mock("@/db/drizzle", () => {
     query: { orders: { findFirst: async () => state.order } },
   };
   return { default: chain };
-});
+})()));
 
 const fetchMock = vi.fn();
 

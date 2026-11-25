@@ -1,6 +1,6 @@
 import "server-only";
 import type { VerifiedOrderId } from "./identity";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import {
   getLatestReturnLabel,
   getOrderById,
@@ -348,7 +348,7 @@ export async function createShippingLabel(id: VerifiedOrderId): Promise<number> 
   // So every failure below is logged for follow-up and swallowed: the return
   // exists, which is what the status code reports.
   try {
-    await db
+    await writeDb(id)
       .update(orders)
       .set({ locator: trackingNumber })
       .where(eq(orders.id, id));

@@ -31,7 +31,7 @@ vi.mock("react", async (importOriginal) => {
 //
 // The function under test — isInternationalOrder — is
 // pure string functions. They touch none of it.
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => null,
   getVariantSkusByIds: async () => [],

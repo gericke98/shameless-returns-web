@@ -19,13 +19,13 @@ const target: { db: any; transact: (s: any) => Promise<any>; readQuery: (s: any)
   transact: async () => [],
   readQuery: async () => ({ rows: [] }),
 };
-vi.mock("@/db/drizzle", () => ({
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({
   get default() {
     return target.db;
   },
   transact: (s: any) => target.transact(s),
   readQuery: (s: any) => target.readQuery(s),
-}));
+}))()));
 
 const scope = () => import("@/lib/server/submissionScope");
 const WRITE = { locator: "JD0123456789", carrier: "DHL", carrierUrl: "", verifiedBy: null };

@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [], readQuery: async () => ({ rows: [] }) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {}, transact: async () => [], readQuery: async () => ({ rows: [] }) }))()));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
 vi.mock("@/lib/i18n/context", () => ({ useT: () => en, useLocale: () => "en" }));
 vi.mock("@/actions/lines", () => ({ setLineSelection: vi.fn(), clearLineSelection: vi.fn() }));

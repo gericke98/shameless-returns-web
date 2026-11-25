@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { sys } from "./support/verified";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -11,7 +12,7 @@ import * as schema from "@/db/schema";
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
-vi.mock("@/db/drizzle", () => ({ default: db }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: db }))()));
 
 const DAY = 86_400_000;
 
@@ -69,7 +70,7 @@ vi.mock("@/lib/server/opsAlert", () => ({
 }));
 
 const sweep = async (now = new Date()) =>
-  (await import("@/lib/server/receiptShortfallSweep")).sweepReceiptShortfalls(now);
+  (await import("@/lib/server/receiptShortfallSweep")).sweepReceiptShortfalls(sys, now);
 const dispatch = async () => (await import("@/lib/server/opsAlertOutbox")).dispatchOpsAlerts();
 /** Let the outbox lease expire so the dispatcher may retry a failed row. */
 const expireLeases = () =>

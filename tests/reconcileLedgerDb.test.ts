@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { settlementDatabase } from "./support/settlementDb";
-import { vid } from "./support/verified";
+import { vid, sys } from "./support/verified";
 
 // S3 R1 `--write`, D1/D2 approval and D3 on PGlite with the real migrations
 // (0004, 0006–0009): paid → done operation + refunded, idempotent; ambiguous →
@@ -14,7 +14,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 const answers: Record<string, (variables: any) => any> = {};
 vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/settlement/shopify")>();
@@ -142,7 +142,7 @@ async function write(lines: Array<{ id: number; c: any; over?: any }>, action?: 
     funding
   );
   const [order] = await q(`SELECT * FROM orders WHERE id='100'`);
-  return recordReconciliation({ ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record);
+  return recordReconciliation(sys, { ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record);
 }
 
 beforeAll(() => env.ready);
@@ -279,9 +279,9 @@ describe("a reconciliation record is never sent", () => {
     await write([{ id: 5, c: ambiguous(5) }]);
     const [op] = await q(`SELECT * FROM settlement_operations`);
     const ledger = await import("@/lib/settlement/ledger");
-    expect(await ledger.recordReconciliationRejected(op.id, "no refund in Shopify", "santi")).toBe(true);
+    expect(await ledger.recordReconciliationRejected(sys, op.id, "no refund in Shopify", "santi")).toBe(true);
     expect((await q(`SELECT state FROM settlement_operations`))[0].state).toBe("rejected");
-    expect(await ledger.claim(op.id, "00000000-0000-0000-0000-000000000001")).toBeNull();
+    expect(await ledger.claim(sys, op.id, "00000000-0000-0000-0000-000000000001")).toBeNull();
     expect(await ledger.recoverableOperations(50)).toEqual([]);
   });
 });
@@ -315,14 +315,14 @@ describe("standing records hold every payer (D1/D2 = A)", () => {
     await seedRow(6);
     await write([{ id: 6, c: ambiguous(6) }]);
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const held = await recordApprovedLegacySubmission([approval(6)]);
+    const held = await recordApprovedLegacySubmission(sys, [approval(6)]);
     expect(held).toMatchObject({ ok: false });
     expect((held as any).held).toMatch(/^reconciliation-unresolved:6/);
 
     const [op] = await q(`SELECT id FROM settlement_operations`);
     const { recordReconciliationRejected } = await import("@/lib/settlement/ledger");
-    await recordReconciliationRejected(op.id, "no refund", "santi");
-    const approved = await recordApprovedLegacySubmission([approval(6)]);
+    await recordReconciliationRejected(sys, op.id, "no refund", "santi");
+    const approved = await recordApprovedLegacySubmission(sys, [approval(6)]);
     expect(approved.ok).toBe(true);
     const subs = await q(`SELECT state, provenance FROM return_submissions ORDER BY state`);
     expect(subs).toEqual([
@@ -335,7 +335,7 @@ describe("standing records hold every payer (D1/D2 = A)", () => {
     facts();
     await seedRow(7, { refunded: true });
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const r = await recordApprovedLegacySubmission([approval(7)]);
+    const r = await recordApprovedLegacySubmission(sys, [approval(7)]);
     expect(r.ok).toBe(true);
   });
 
@@ -351,7 +351,7 @@ describe("standing records hold every payer (D1/D2 = A)", () => {
        VALUES ('11111111-1111-1111-1111-111111111111', 8, '708', 1, 'DEVOLUCIÓN', 5000, 0, 5000, 0, 'gid://shopify/ReturnLineItem/8')`);
     await write([{ id: 8, c: paid(8) }]);
     const { admit } = await import("@/lib/settlement/admission");
-    expect(await admit("11111111-1111-1111-1111-111111111111", [8])).toEqual({ ok: false, held: "reconciliation-done:8" });
+    expect(await admit(sys, "11111111-1111-1111-1111-111111111111", [8])).toEqual({ ok: false, held: "reconciliation-done:8" });
   });
 });
 
@@ -363,7 +363,7 @@ describe("the operator resolves a reconciliation record", () => {
     const { resolveOperation } = await import("@/lib/settlement/operator");
     const [row] = await q(`SELECT id FROM settlement_operations`);
     const op = (await getOperation(row.id))!;
-    const out = await resolveOperation(op, { verdict: "done", evidence: "gid://shopify/Refund/77", by: "santi" }, { write: true });
+    const out = await resolveOperation(sys, op, { verdict: "done", evidence: "gid://shopify/Refund/77", by: "santi" }, { write: true });
     expect(out).toMatchObject({ ok: true, written: true });
     expect((await q(`SELECT state, effect_ref FROM settlement_operations`))[0]).toEqual({ state: "done", effect_ref: "gid://shopify/Refund/77" });
     expect((await q(`SELECT refunded FROM productsorder WHERE id=9`))[0].refunded).toBe(true);
@@ -375,7 +375,7 @@ describe("the operator resolves a reconciliation record", () => {
     const { getOperation } = await import("@/lib/settlement/ledger");
     const { resolveOperation } = await import("@/lib/settlement/operator");
     const [row] = await q(`SELECT id FROM settlement_operations`);
-    await resolveOperation((await getOperation(row.id))!, { verdict: "rejected", evidence: "nothing in Shopify", by: "santi" }, { write: true });
+    await resolveOperation(sys, (await getOperation(row.id))!, { verdict: "rejected", evidence: "nothing in Shopify", by: "santi" }, { write: true });
     const keys = (await q(`SELECT dedupe_key FROM ops_alerts`)).map((r) => r.dedupe_key);
     expect(keys.some((k: string) => k.startsWith("settlement-rejected:"))).toBe(false);
   });
@@ -433,7 +433,7 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
   };
   const approve = async (id: number, over: Parameters<typeof approval>[1] = {}) => {
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    return recordApprovedLegacySubmission([approval(id, over)]);
+    return recordApprovedLegacySubmission(sys, [approval(id, over)]);
   };
 
   it("records the approval with its submission; that line pays exactly the stated amount", async () => {
@@ -504,7 +504,7 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
     const sub = await approve(22, { amountCents: 3100 });
     expect(sub.ok).toBe(true);
     const { admit } = await import("@/lib/settlement/admission");
-    expect(await admit((sub as any).submissionId, [22])).toMatchObject({ ok: true, admitted: [22] });
+    expect(await admit(sys, (sub as any).submissionId, [22])).toMatchObject({ ok: true, admitted: [22] });
     expect(await q(`SELECT kind, amount_cents, state FROM settlement_operations`)).toEqual([
       { kind: "root_refund", amount_cents: 3100, state: "pending" },
     ]);
@@ -516,7 +516,7 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
     const sub = await approve(23, { amountCents: 2000 });
     expect(sub.ok).toBe(true);
     const { admit } = await import("@/lib/settlement/admission");
-    expect(await admit((sub as any).submissionId, [23])).toMatchObject({ ok: true });
+    expect(await admit(sys, (sub as any).submissionId, [23])).toMatchObject({ ok: true });
     const ops = await q(`SELECT kind, amount_cents FROM settlement_operations ORDER BY kind`);
     expect(ops).toEqual([
       { kind: "process_goods", amount_cents: 0 },
@@ -536,7 +536,7 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
        VALUES ('33333333-3333-3333-3333-333333333333', 24, '724', 1, 'DEVOLUCIÓN', 5000, 0, 5000, 0,
                'gid://shopify/FulfillmentLineItem/24', 'gid://shopify/ReturnLineItem/24')`);
     const { admit } = await import("@/lib/settlement/admission");
-    expect(await admit("33333333-3333-3333-3333-333333333333", [24])).toEqual({ ok: false, held: "return-not-open:CLOSED" });
+    expect(await admit(sys, "33333333-3333-3333-3333-333333333333", [24])).toEqual({ ok: false, held: "return-not-open:CLOSED" });
     expect(await q(`SELECT * FROM settlement_operations`)).toEqual([]);
   });
 
@@ -566,7 +566,7 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
     const sub = await approve(25, { basis: "swap", amountCents: 2000, capCents: 2000 });
     expect(sub.ok).toBe(true);
     const { admit } = await import("@/lib/settlement/admission");
-    expect(await admit((sub as any).submissionId, [25])).toMatchObject({ ok: true });
+    expect(await admit(sys, (sub as any).submissionId, [25])).toMatchObject({ ok: true });
     const ops = await q(`SELECT o.kind, o.amount_cents FROM settlement_operations o
        JOIN return_submissions s ON s.id = o.submission_id WHERE s.state = 'accepted'`);
     expect(ops).toEqual([{ kind: "root_refund", amount_cents: 2000 }]);
@@ -589,10 +589,10 @@ describe("a line with no Shopify return: needs-human, and nothing writes it", ()
     expect(record.ops).toEqual([]);
 
     const { recordApprovedLegacySubmission, submissionForRow } = await import("@/lib/settlement/legacy");
-    expect(await recordApprovedLegacySubmission([approval(30)])).toEqual({ ok: false, held: "not-confirmed" });
+    expect(await recordApprovedLegacySubmission(sys, [approval(30)])).toEqual({ ok: false, held: "not-confirmed" });
     expect(await submissionForRow(vid("100"), 30)).toEqual({ ok: false, held: "not-confirmed" });
     const { decideLineAction } = await import("@/lib/settlement/lineAction");
-    expect((await decideLineAction({ productsorderId: 30, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).ok).toBe(false);
+    expect((await decideLineAction(sys, { productsorderId: 30, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).ok).toBe(false);
 
     expect(await q(`SELECT action, refunded FROM productsorder WHERE id = 30`)).toEqual([{ action: null, refunded: true }]);
     expect(await q(`SELECT count(*)::int AS n FROM return_submissions`)).toEqual([{ n: 0 }]);
@@ -633,16 +633,16 @@ describe("approvals are resumable (Codex #6)", () => {
     shopifyClosed(40);
     await seedRow(40);
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const first = await recordApprovedLegacySubmission([approval(40, { amountCents: 3000 })]);
+    const first = await recordApprovedLegacySubmission(sys, [approval(40, { amountCents: 3000 })]);
     expect(first.ok).toBe(true);
     // ...the process stopped here: no admission ran.
-    const again = await recordApprovedLegacySubmission([approval(40, { amountCents: 3000 })]);
+    const again = await recordApprovedLegacySubmission(sys, [approval(40, { amountCents: 3000 })]);
     expect(again).toEqual(first);
     expect(await q(`SELECT count(*)::int AS n FROM settlement_approvals`)).toEqual([{ n: 1 }]);
     expect(await q(`SELECT count(*)::int AS n FROM return_submissions`)).toEqual([{ n: 1 }]);
     const { admit } = await import("@/lib/settlement/admission");
-    expect(await admit((again as any).submissionId, [40])).toMatchObject({ ok: true });
-    expect(await admit((again as any).submissionId, [40])).toMatchObject({ ok: true });
+    expect(await admit(sys, (again as any).submissionId, [40])).toMatchObject({ ok: true });
+    expect(await admit(sys, (again as any).submissionId, [40])).toMatchObject({ ok: true });
     expect(await q(`SELECT kind, amount_cents FROM settlement_operations`)).toEqual([{ kind: "root_refund", amount_cents: 3000 }]);
   });
 
@@ -650,8 +650,8 @@ describe("approvals are resumable (Codex #6)", () => {
     shopifyClosed(41);
     await seedRow(41);
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    expect((await recordApprovedLegacySubmission([approval(41, { amountCents: 3000 })])).ok).toBe(true);
-    expect(await recordApprovedLegacySubmission([approval(41, { amountCents: 3100 })])).toEqual({ ok: false, held: "approval-differs:41" });
+    expect((await recordApprovedLegacySubmission(sys, [approval(41, { amountCents: 3000 })])).ok).toBe(true);
+    expect(await recordApprovedLegacySubmission(sys, [approval(41, { amountCents: 3100 })])).toEqual({ ok: false, held: "approval-differs:41" });
     expect(await q(`SELECT count(*)::int AS n FROM settlement_approvals`)).toEqual([{ n: 1 }]);
   });
 
@@ -659,15 +659,15 @@ describe("approvals are resumable (Codex #6)", () => {
     shopifyClosed(42);
     await seedRow(42);
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const sub = await recordApprovedLegacySubmission([approval(42, { amountCents: 2500 })]);
+    const sub = await recordApprovedLegacySubmission(sys, [approval(42, { amountCents: 2500 })]);
     const { approvalsAwaitingAdmission } = await import("@/lib/settlement/ledger");
     expect(await approvalsAwaitingAdmission()).toEqual([{ submissionId: (sub as any).submissionId, lines: [42] }]);
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
     // limit 0: admit only — running the admitted refund is the ledger's usual path.
-    const report = await recoverSettlements({ deadline: Date.now() + 60_000, limit: 0 });
+    const report = await recoverSettlements(sys, { deadline: Date.now() + 60_000, limit: 0 });
     expect(report.admittedApprovals).toEqual([{ submission: (sub as any).submissionId, lines: [42], outcome: "admitted" }]);
     expect(await approvalsAwaitingAdmission()).toEqual([]);
-    await recoverSettlements({ deadline: Date.now() + 60_000, limit: 0 });
+    await recoverSettlements(sys, { deadline: Date.now() + 60_000, limit: 0 });
     expect(await q(`SELECT kind, amount_cents FROM settlement_operations`)).toEqual([{ kind: "root_refund", amount_cents: 2500 }]);
   });
 
@@ -675,10 +675,10 @@ describe("approvals are resumable (Codex #6)", () => {
     await seedRow(43);
     shopifyClosed(43);
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    const sub = await recordApprovedLegacySubmission([approval(43, { amountCents: 2500 })]);
+    const sub = await recordApprovedLegacySubmission(sys, [approval(43, { amountCents: 2500 })]);
     delete answers.SettlementAdmissionReturn; // Shopify stops answering
     const { recoverSettlements } = await import("@/lib/settlement/recovery");
-    const report = await recoverSettlements({ deadline: Date.now() + 60_000, limit: 0 });
+    const report = await recoverSettlements(sys, { deadline: Date.now() + 60_000, limit: 0 });
     expect(report.admittedApprovals[0]).toMatchObject({ submission: (sub as any).submissionId, outcome: expect.stringMatching(/^held:/) });
     const { approvalsAwaitingAdmission } = await import("@/lib/settlement/ledger");
     expect(await approvalsAwaitingAdmission()).toHaveLength(1);
@@ -708,8 +708,8 @@ describe("line totals round once on the approval path (Codex #7)", () => {
     const basis = approvalBasisOf({ price: "15.505", quantity: 2 }, { productsorderId: 44, lane: "refund", cls: "unpaid", reason: "", returnStatus: "CLOSED" });
     expect(basis).toEqual({ ok: true, basis: "unpaid", capCents: 3101 });
     const { recordApprovedLegacySubmission } = await import("@/lib/settlement/legacy");
-    expect(await recordApprovedLegacySubmission([approval(44, { amountCents: 3102, capCents: 3101 })])).toMatchObject({ ok: false });
-    expect((await recordApprovedLegacySubmission([approval(44, { amountCents: 3101, capCents: 3101 })])).ok).toBe(true);
+    expect(await recordApprovedLegacySubmission(sys, [approval(44, { amountCents: 3102, capCents: 3101 })])).toMatchObject({ ok: false });
+    expect((await recordApprovedLegacySubmission(sys, [approval(44, { amountCents: 3101, capCents: 3101 })])).ok).toBe(true);
     expect(await q(`SELECT returned_cents, pay_cents, replacement_cents FROM submission_lines`)).toEqual([
       { returned_cents: 3101, pay_cents: 3101, replacement_cents: 0 },
     ]);
@@ -720,13 +720,13 @@ describe("effect decisions (Codex #1/#5)", () => {
   it("one decision per effect, with who and why; binds needs a confirmed line", async () => {
     await seedRow(45);
     const { decideEffect, effectDecisions } = await import("@/lib/settlement/effectDecisions");
-    expect(await decideEffect({ effectId: "gid://shopify/Refund/9", verdict: "binds", productsorderId: 999, by: "santi", evidence: "x" }))
+    expect(await decideEffect(sys, { effectId: "gid://shopify/Refund/9", verdict: "binds", productsorderId: 999, by: "santi", evidence: "x" }))
       .toMatchObject({ ok: false });
-    expect(await decideEffect({ effectId: "gid://shopify/Refund/9", verdict: "binds", productsorderId: 45, by: "santi", evidence: "admin refund for line 45" }))
+    expect(await decideEffect(sys, { effectId: "gid://shopify/Refund/9", verdict: "binds", productsorderId: 45, by: "santi", evidence: "admin refund for line 45" }))
       .toEqual({ ok: true });
-    expect(await decideEffect({ effectId: "gid://shopify/Refund/9", verdict: "excludes", productsorderId: null, by: "santi", evidence: "changed my mind" }))
+    expect(await decideEffect(sys, { effectId: "gid://shopify/Refund/9", verdict: "excludes", productsorderId: null, by: "santi", evidence: "changed my mind" }))
       .toMatchObject({ ok: false });
-    expect(await decideEffect({ effectId: "cs_1", verdict: "excludes", productsorderId: null, by: "", evidence: "x" })).toMatchObject({ ok: false });
+    expect(await decideEffect(sys, { effectId: "cs_1", verdict: "excludes", productsorderId: null, by: "", evidence: "x" })).toMatchObject({ ok: false });
     expect(await effectDecisions()).toEqual(new Map([["gid://shopify/Refund/9", { verdict: "binds", productsorderId: 45 }]]));
   });
 
@@ -756,7 +756,7 @@ describe("the census: every pre-S2 exchange order, by id (Codex #3)", () => {
     ]);
     const { replacementFundingOf } = await import("@/db/replacementLines");
     expect((await replacementFundingOf({ id: "777", sourceIdentifier: null })).kind).toBe("unprovable");
-    await census.recordCensus(rows, "santi");
+    await census.recordCensus(sys, rows, "santi");
     expect(await census.censusComplete()).toBe(true);
     expect(await replacementFundingOf({ id: "501", sourceIdentifier: null })).toEqual({
       kind: "unfunded",
@@ -798,7 +798,7 @@ describe("the census: every pre-S2 exchange order, by id (Codex #3)", () => {
     const [row] = await q(`SELECT id FROM settlement_operations`);
     const { getOperation } = await import("@/lib/settlement/ledger");
     const { resolveOperation } = await import("@/lib/settlement/operator");
-    const out = await resolveOperation((await getOperation(row.id))!, { verdict: "done", evidence: "found it", by: "santi", orderGid: "gid://shopify/Order/510" }, { write: true });
+    const out = await resolveOperation(sys, (await getOperation(row.id))!, { verdict: "done", evidence: "found it", by: "santi", orderGid: "gid://shopify/Order/510" }, { write: true });
     expect(out).toMatchObject({ ok: true, written: true });
     expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
     expect(await q(`SELECT order_id, source_order_id, found_by FROM legacy_replacement_orders`)).toEqual([
@@ -956,7 +956,7 @@ describe("an operator funds one legacy exchange line from its pre-S1 session (Sa
   it("--write records who and why with the line in one statement; the order is valued from then on", async () => {
     await unfundedExchanges();
     const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
-    const out = await fundReplacementLine(input(), session(), { write: true });
+    const out = await fundReplacementLine(sys, input(), session(), { write: true });
     expect(out).toMatchObject({ ok: true, written: true });
     expect(await q(`SELECT order_id, source_productsorder_id, stripe_session_id, session_amount_cents, funded_cents, decided_by, evidence FROM replacement_funding_decisions`)).toEqual([
       { order_id: "500", source_productsorder_id: 4, stripe_session_id: "cs_old", session_amount_cents: 1000, funded_cents: 600, decided_by: "santi", evidence: "email 12 Jul" },
@@ -969,13 +969,13 @@ describe("an operator funds one legacy exchange line from its pre-S1 session (Sa
     expect(funding).toMatchObject({ kind: "funded", funding: { sourceOrderId: "100" } });
     expect((funding as any).funding.lineByLineItem.get("gid://shopify/LineItem/5009")).toEqual({ totalCents: 5600, quantity: 1 });
     // A second time: already funded.
-    expect(await fundReplacementLine(input({ fundedCents: 1 }), session(), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("already funded") });
+    expect(await fundReplacementLine(sys, input({ fundedCents: 1 }), session(), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("already funded") });
   });
 
   it("dry-run writes nothing", async () => {
     await unfundedExchanges();
     const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
-    expect(await fundReplacementLine(input(), session(), { write: false })).toMatchObject({ ok: true, written: false });
+    expect(await fundReplacementLine(sys, input(), session(), { write: false })).toMatchObject({ ok: true, written: false });
     expect(await q(`SELECT * FROM replacement_funding_decisions`)).toEqual([]);
     expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
   });
@@ -983,12 +983,12 @@ describe("an operator funds one legacy exchange line from its pre-S1 session (Sa
   it("a session's amount is spent once across lines", async () => {
     await unfundedExchanges();
     const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
-    expect(await fundReplacementLine(input(), session(), { write: true })).toMatchObject({ ok: true, written: true });
-    expect(await fundReplacementLine(input({ orderId: "501", productsorderId: 5, fundedCents: 401 }), session(), { write: true })).toMatchObject({
+    expect(await fundReplacementLine(sys, input(), session(), { write: true })).toMatchObject({ ok: true, written: true });
+    expect(await fundReplacementLine(sys, input({ orderId: "501", productsorderId: 5, fundedCents: 401 }), session(), { write: true })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("has left: 400 of 1000"),
     });
-    expect(await fundReplacementLine(input({ orderId: "501", productsorderId: 5, fundedCents: 400 }), session(), { write: true })).toMatchObject({ ok: true, written: true });
+    expect(await fundReplacementLine(sys, input({ orderId: "501", productsorderId: 5, fundedCents: 400 }), session(), { write: true })).toMatchObject({ ok: true, written: true });
     expect((await q(`SELECT count(*)::int AS n FROM replacement_lines`))[0].n).toBe(2);
   });
 
@@ -1004,7 +1004,7 @@ describe("an operator funds one legacy exchange line from its pre-S1 session (Sa
       );
       return shopifyOrder(v.id);
     };
-    const out = await fundReplacementLine(input(), session(), { write: true });
+    const out = await fundReplacementLine(sys, input(), session(), { write: true });
     expect(out).toMatchObject({ ok: false, reason: expect.stringContaining("meanwhile") });
     expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);
     expect((await q(`SELECT count(*)::int AS n FROM replacement_funding_decisions`))[0].n).toBe(1);
@@ -1014,7 +1014,7 @@ describe("an operator funds one legacy exchange line from its pre-S1 session (Sa
     await unfundedExchanges();
     const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
     const refused = async (d: any, s: any, text: string) =>
-      expect(await fundReplacementLine(input(d), s, { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining(text) });
+      expect(await fundReplacementLine(sys, input(d), s, { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining(text) });
     await refused({}, session({ payment_status: "unpaid" }), "is not paid");
     await refused({}, session({ metadata: { id: "101" } }), "names order 101, not the source order 100");
     await refused({}, session({ metadata: { id: "100", submission_id: "7" } }), "not a pre-S1 payment");
@@ -1094,7 +1094,7 @@ describe("voiding a reconciled record built on another order's return", () => {
       "santi"
     );
     const [order] = await q(`SELECT * FROM orders WHERE id = '11625720185158'`);
-    const done = await recordReconciliation({ ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record);
+    const done = await recordReconciliation(sys, { ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record);
     expect(done.recorded).toBe(true);
     const [sub] = await q(`SELECT id::text AS id FROM return_submissions`);
     const [op] = await q(`SELECT id::text AS id, kind, state FROM settlement_operations`);
@@ -1109,7 +1109,7 @@ describe("voiding a reconciled record built on another order's return", () => {
     expect((await reconciliationCoverage()).covered.has(181)).toBe(true);
 
     const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
-    const out = await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "R1 grouped #34911-R1 across orders" }, evidence(OWNER), { write: true });
+    const out = await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: "R1 grouped #34911-R1 across orders" }, evidence(OWNER), { write: true });
     expect(out).toMatchObject({ ok: true, written: true });
 
     expect(await q(`SELECT state FROM return_submissions`)).toEqual([{ state: "voided" }]);
@@ -1127,14 +1127,14 @@ describe("voiding a reconciled record built on another order's return", () => {
 
     // And the void operation matches no fence: never claimed, done or rejected.
     const { claim, getOperation, recordReconciliationRejected } = await import("@/lib/settlement/ledger");
-    expect(await claim(opId, "00000000-0000-0000-0000-000000000001")).toBeNull();
-    expect(await recordReconciliationRejected(opId, "x", "santi")).toBe(false);
+    expect(await claim(sys, opId, "00000000-0000-0000-0000-000000000001")).toBeNull();
+    expect(await recordReconciliationRejected(sys, opId, "x", "santi")).toBe(false);
     const { resolveOperation } = await import("@/lib/settlement/operator");
-    expect(await resolveOperation((await getOperation(opId))!, { verdict: "done", evidence: "x", by: "santi" } as any, { write: true })).toMatchObject({ ok: false });
+    expect(await resolveOperation(sys, (await getOperation(opId))!, { verdict: "done", evidence: "x", by: "santi" } as any, { write: true })).toMatchObject({ ok: false });
     expect(await q(`SELECT state FROM settlement_operations`)).toEqual([{ state: "void" }]);
 
     // Voided once: a second run finds no reconciled record.
-    expect(await voidForeignReconciliation({ submissionId }, { by: "santi", evidence: "again" }, evidence(OWNER), { write: true })).toMatchObject({
+    expect(await voidForeignReconciliation(sys, { submissionId }, { by: "santi", evidence: "again" }, evidence(OWNER), { write: true })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("0 reconciled records"),
     });
@@ -1143,19 +1143,19 @@ describe("voiding a reconciled record built on another order's return", () => {
   it("a voided record no longer blocks a new record on its row", async () => {
     await wrongRecord();
     const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
-    await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "foreign" }, evidence(OWNER), { write: true });
+    await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: "foreign" }, evidence(OWNER), { write: true });
     const { reconciliationRecord, recordReconciliation } = await import("@/lib/settlement/reconcileLedger");
     const t = terms([181], "CAMBIO");
     const facts = lineFacts(181, { orderId: "11625720185158", returnId: RET, action: "CAMBIO", newVariantId: "42" });
     const record = reconciliationRecord(t, [{ line: facts, classification: { ...ambiguous(181), lane: "exchange" } as any, customerGid: CUSTOMER }], "test");
     const [order] = await q(`SELECT * FROM orders WHERE id = '11625720185158'`);
-    expect((await recordReconciliation({ ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record)).recorded).toBe(true);
+    expect((await recordReconciliation(sys, { ...order, orderNumber: order.order_number, returnMethod: null } as any, t, record)).recorded).toBe(true);
   });
 
   it("a voided record never sends, and holds no D3 decision on its row", async () => {
     const { opId } = await wrongRecord();
     const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
-    await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "foreign" }, evidence(OWNER), { write: true });
+    await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: "foreign" }, evidence(OWNER), { write: true });
     // Its operations are still records of a reconciliation: even forced back to
     // a sendable state, recovery never lists them.
     await q(`UPDATE settlement_operations SET state = 'pending'`);
@@ -1165,21 +1165,21 @@ describe("voiding a reconciled record built on another order's return", () => {
     // A void operation does not hold the row from an action decision (D3).
     await q(`UPDATE productsorder SET action = NULL, new_variant_id = NULL, refunded = false WHERE id = 181`);
     const { decideLineAction } = await import("@/lib/settlement/lineAction");
-    expect(await decideLineAction({ productsorderId: 181, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).toEqual({ ok: true });
+    expect(await decideLineAction(sys, { productsorderId: 181, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).toEqual({ ok: true });
   });
 
   it("dry-run writes nothing; refuses a return that IS the record's order's, missing evidence, or a done record", async () => {
     const { submissionId } = await wrongRecord();
     const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
-    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "x" }, evidence(OWNER), { write: false })).toMatchObject({ ok: true, written: false });
-    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "x" }, evidence("gid://shopify/Order/11625720185158"), { write: true })).toMatchObject({
+    expect(await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: "x" }, evidence(OWNER), { write: false })).toMatchObject({ ok: true, written: false });
+    expect(await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: "x" }, evidence("gid://shopify/Order/11625720185158"), { write: true })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("not foreign"),
     });
-    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: " " }, evidence(OWNER), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("--evidence") });
-    expect(await voidForeignReconciliation({ productsorderId: 181 }, { by: "santi", evidence: "x" }, async () => ({ ok: false as const, error: "timeout" }), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("unreadable") });
+    expect(await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: " " }, evidence(OWNER), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("--evidence") });
+    expect(await voidForeignReconciliation(sys, { productsorderId: 181 }, { by: "santi", evidence: "x" }, async () => ({ ok: false as const, error: "timeout" }), { write: true })).toMatchObject({ ok: false, reason: expect.stringContaining("unreadable") });
     await q(`UPDATE settlement_operations SET state = 'done'`);
-    expect(await voidForeignReconciliation({ submissionId }, { by: "santi", evidence: "x" }, evidence(OWNER), { write: true })).toMatchObject({
+    expect(await voidForeignReconciliation(sys, { submissionId }, { by: "santi", evidence: "x" }, evidence(OWNER), { write: true })).toMatchObject({
       ok: false,
       reason: expect.stringContaining("done operation"),
     });

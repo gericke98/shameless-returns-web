@@ -43,7 +43,7 @@ vi.mock("next/cache", () => ({
   unstable_cache: (fn: unknown) => fn,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -56,7 +56,7 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 async function revert() {
   const { revertFinalOrder } = await import("@/lib/submissionConfirmation");

@@ -11,7 +11,7 @@
  *
  * Dry-run by default (prints the line); `--write` changes it.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/set-line-action.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/set-line-action.ts \
  *     --line <productsorder id> --action DEVOLUCIÓN|CAMBIO [--new-variant <id>] \
  *     --evidence "<email / Shopify facts>" [--by <name>] [--write]
  */
@@ -41,9 +41,9 @@ async function main() {
   const invalid = validateDecision(decision);
   if (invalid) throw new Error(`${invalid}\nusage: --line <id> --action DEVOLUCIÓN|CAMBIO [--new-variant <id>] --evidence "<…>" [--by <name>] [--write]`);
 
-  const { default: db } = await import("@/db/drizzle");
+  const { readQuery } = await import("@/db/drizzle");
   const { sql } = await import("drizzle-orm");
-  const result: any = await db.execute(sql`
+  const result: any = await readQuery(sql`
     SELECT p.id, p.order_id, o.order_number, p.title, p.variant_title, p.action, p.confirmed, p.refunded,
            p.credit, p.return_id, p.new_variant_id
       FROM productsorder p JOIN orders o ON o.id = p.order_id WHERE p.id = ${decision.productsorderId}`);
@@ -56,7 +56,10 @@ async function main() {
     console.log("\nDRY: nothing changed. Pass --write.");
     return;
   }
-  const out = await decideLineAction(decision);
+  // Its write capability, minted here (F1 spec §11, G2): the operator running it.
+  const { systemTarget } = await import("@/lib/server/identity");
+  const job = systemTarget("set-line-action");
+  const out = await decideLineAction(job, decision);
   if (!out.ok) {
     console.log(`\nNOT changed: ${out.reason}`);
     process.exitCode = 1;

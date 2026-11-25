@@ -16,14 +16,14 @@ vi.mock("react", async (importOriginal) => {
 // pass vacuously by never reaching the send. The chain records what was
 // written so the tests can assert the state actually persisted.
 let pendingSet: any = null;
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: any) => { pendingSet = values; return chain; },
     where: () => { persisted.push({ ...pendingSet }); events.push("persist"); return Promise.resolve(); },
   };
   return { default: chain };
-});
+})()));
 
 const state = {
   orders: [] as any[],

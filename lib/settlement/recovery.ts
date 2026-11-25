@@ -17,6 +17,7 @@ import {
   submissionsToFinalize,
 } from "./ledger";
 import { recoverDispatched, run, type RunResult } from "./run";
+import type { WriteCapability } from "@/lib/server/identity";
 
 export type RecoveryReport = {
   ran: Array<{ op: string; kind: string; from: string; result: RunResult }>;
@@ -27,7 +28,7 @@ export type RecoveryReport = {
   budgetExhausted: boolean;
 };
 
-export async function recoverSettlements(options: { deadline: number; limit?: number }): Promise<RecoveryReport> {
+export async function recoverSettlements(cap: WriteCapability, options: { deadline: number; limit?: number }): Promise<RecoveryReport> {
   const me = randomUUID();
   const report: RecoveryReport = {
     ran: [],
@@ -47,7 +48,7 @@ export async function recoverSettlements(options: { deadline: number; limit?: nu
       report.budgetExhausted = true;
       break;
     }
-    const outcome = await admit(awaiting.submissionId, awaiting.lines);
+    const outcome = await admit(cap, awaiting.submissionId, awaiting.lines);
     report.admittedApprovals.push({
       submission: awaiting.submissionId,
       lines: awaiting.lines,
@@ -72,12 +73,12 @@ export async function recoverSettlements(options: { deadline: number; limit?: nu
       break;
     }
     const result =
-      hasDispatched(op) ? await recoverDispatched(op, me) : await run(op.id, me);
+      hasDispatched(op) ? await recoverDispatched(cap, op, me) : await run(cap, op.id, me);
     report.ran.push({ op: op.id, kind: op.kind, from: op.state, result });
   }
 
   for (const submission of await submissionsToFinalize()) {
-    const lines = await finalize(submission);
+    const lines = await finalize(cap, submission);
     if (lines.length) report.finalized.push({ submission, lines });
   }
 

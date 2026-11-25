@@ -140,7 +140,7 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 const dbLine = { value: null as null | Record<string, unknown> };
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
@@ -155,7 +155,7 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 async function settleLine(product: Record<string, any>) {
   // The admin settle (F1 `settleRow`), called with the context `adminAction` builds.

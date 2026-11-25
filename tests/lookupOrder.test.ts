@@ -9,7 +9,7 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [] }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {}, transact: async () => [] }))()));
 vi.mock("next/headers", () => ({ headers: () => new Headers({ "x-real-ip": "203.0.113.9" }) }));
 vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlert: async () => true }));
 vi.mock("@/lib/server/orderScope", () => ({ orderScope: () => ({}) }));

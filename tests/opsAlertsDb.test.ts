@@ -15,7 +15,7 @@ import * as schema from "@/db/schema";
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
-vi.mock("@/db/drizzle", () => ({ default: db }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: db }))()));
 
 const repo = () => import("@/db/opsAlerts");
 const alert = (key: string) => ({ dedupeKey: key, subject: `s ${key}`, body: "b" });

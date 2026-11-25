@@ -51,7 +51,7 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({ "54623384371526": "20250502" }),
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: unknown) => {
@@ -61,7 +61,7 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,

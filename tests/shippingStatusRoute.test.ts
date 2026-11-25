@@ -12,7 +12,7 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 vi.mock("@/db/queries", () => ({ getOrderById: async () => null }));
 const admin = { value: true };
 vi.mock("@/lib/requireAdmin", () => ({ isAdmin: async () => admin.value }));

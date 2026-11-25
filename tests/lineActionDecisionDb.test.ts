@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { sys } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 
 // S3 D3 = A: a NULL action is set only by an explicit, recorded decision —
@@ -6,7 +7,7 @@ import { settlementDatabase } from "./support/settlementDb";
 // submission or an operation already covers.
 
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 const q = async (sql: string, params: any[] = []) => (await env.pg.query<any>(sql, params)).rows;
 
 async function seed(id: number, action: string | null = null) {
@@ -20,7 +21,7 @@ async function seed(id: number, action: string | null = null) {
 }
 const decide = async (over: any = {}) => {
   const { decideLineAction } = await import("@/lib/settlement/lineAction");
-  return decideLineAction({ productsorderId: 1, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "email 2026-09-01", ...over });
+  return decideLineAction(sys, { productsorderId: 1, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "email 2026-09-01", ...over });
 };
 
 beforeAll(() => env.ready);

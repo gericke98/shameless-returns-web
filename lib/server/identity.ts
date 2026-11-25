@@ -26,6 +26,15 @@ export type VerifiedSubmission = {
 
 const mint = (id: string) => String(id) as VerifiedOrderId;
 
+/** An admin session acting (F1 spec §11): carries who, for writes keyed by no single order. */
+export type AdminTarget = { readonly admin: string; readonly [verified]: "admin" };
+
+/** A scheduled job acting on rows it selected itself (F1 spec §11), minted at the cron entry. */
+export type SystemTarget = { readonly job: string; readonly [verified]: "system" };
+
+/** The capabilities that may obtain a write handle (db/drizzle.ts `writeDb`). */
+export type WriteCapability = VerifiedOrderId | VerifiedSubmission | AdminTarget | SystemTarget;
+
 /**
  * The portal session's order. Only `customerAction` (lib/server/actions.ts)
  * calls this, after reading the signed session cookie and checking it against
@@ -53,19 +62,44 @@ export function verifiedByStripeSignature(metadata: { id: string }): VerifiedOrd
   return mint(metadata.id);
 }
 
-/** An order an admin acted on. Only admin handlers call this, with their ctx. */
-export function adminTarget(id: string, ctx: { admin: string }): VerifiedOrderId {
-  void ctx;
-  return mint(id);
+/**
+ * An admin acting, from the admin session (`adminAction` ctx). Only admin
+ * handlers call this. With an order id: that order (a `VerifiedOrderId`).
+ * Without one: the session itself (`AdminTarget`), for an admin write keyed
+ * by no single order (F1 spec §11, G3).
+ */
+export function adminTarget(ctx: { admin: string }): AdminTarget;
+export function adminTarget(id: string, ctx: { admin: string }): VerifiedOrderId;
+export function adminTarget(a: string | { admin: string }, ctx?: { admin: string }): VerifiedOrderId | AdminTarget {
+  if (typeof a === "string") {
+    void ctx;
+    return mint(a);
+  }
+  return { admin: a.admin } as AdminTarget;
 }
 
 /**
- * An order a scheduled job (or an operator's system tool) selected from our
- * own database. Only cron routes and system handlers call this.
+ * A scheduled job, or an operator's system tool. Only cron routes, system
+ * handlers and scripts/ call this. With an id: an order the job selected from
+ * our own database (a `VerifiedOrderId`). Without one: the job itself
+ * (`SystemTarget`), minted at its entry and passed down to what it writes
+ * (F1 spec §11, G2/G3).
  */
-export function systemTarget(id: string, job: string): VerifiedOrderId {
-  void job;
-  return mint(id);
+export function systemTarget(job: string): SystemTarget;
+export function systemTarget(id: string, job: string): VerifiedOrderId;
+export function systemTarget(a: string, job?: string): VerifiedOrderId | SystemTarget {
+  if (job === undefined) return { job: a } as SystemTarget;
+  return mint(a);
+}
+
+/**
+ * The order an Amphora webhook names, once its shared `X-Secret` matched.
+ * Only app/api/webhooks/amphora/route.ts calls this, after that check (F1
+ * spec §11, G1). Which order the payload names is still F4's to make an
+ * explicit identity.
+ */
+export function verifiedByAmphoraSecret(order: { id: string | number }): VerifiedOrderId {
+  return mint(String(order.id));
 }
 
 /**

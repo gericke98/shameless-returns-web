@@ -19,6 +19,7 @@ import { DRAFT_ORDER_QUERY, ORDER_BY_ID_QUERY, read } from "./reads";
 import { judgeLegacyExchangeOrder } from "./reconcile";
 import { RECONCILE_ORDER_QUERY } from "./reconcileReads";
 import { reconciliationRequestOf, type Operation } from "./types";
+import type { WriteCapability } from "@/lib/server/identity";
 
 export type OperatorDecision = {
   verdict: "done" | "rejected";
@@ -107,6 +108,7 @@ async function doneRecords(
 }
 
 export async function resolveOperation(
+  cap: WriteCapability,
   op: Operation,
   decision: OperatorDecision,
   options: { write: boolean }
@@ -117,13 +119,13 @@ export async function resolveOperation(
     // happened before the ledger, so the line reads as unpaid to the next
     // reconciliation run and is paid only once approved (D2 = A).
     if (!options.write) return { ok: true, written: false, summary: "would mark rejected (no legacy payment)" };
-    return (await recordReconciliationRejected(op.id, decision.evidence, decision.by))
+    return (await recordReconciliationRejected(cap, op.id, decision.evidence, decision.by))
       ? { ok: true, written: true, summary: "marked rejected (no legacy payment); the line is now unpaid" }
       : { ok: false, reason: "the operation is no longer an unresolved reconciliation record" };
   }
   if (decision.verdict === "rejected") {
     if (!options.write) return { ok: true, written: false, summary: "would mark rejected" };
-    const changed = await recordRejected(op, UNRESOLVED, decision.evidence, decision.by);
+    const changed = await recordRejected(cap, op, UNRESOLVED, decision.evidence, decision.by);
     return changed
       ? { ok: true, written: true, summary: "marked rejected" }
       : { ok: false, reason: "the operation is no longer unresolved" };
@@ -135,6 +137,7 @@ export async function resolveOperation(
   }${records.extras.clearReservation ? ", reservation pointer cleared" : ""}`;
   if (!options.write) return { ok: true, written: false, summary: `would mark ${summary}` };
   const { done } = await recordDone(
+    cap,
     op,
     UNRESOLVED,
     records.effectRef,

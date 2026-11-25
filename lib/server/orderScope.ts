@@ -8,7 +8,7 @@ import "server-only";
 // another order matches nothing — `not-editable`, a value, never a silent
 // success.
 import { and, eq, sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { getVariantsByIds } from "@/db/queries";
 import type { ReasonKey } from "@/placeholder";
@@ -88,7 +88,7 @@ export function orderScope(id: VerifiedOrderId) {
         replacement = { new_variant_id: gid, new_variant_title: variant.variantTitle };
       }
 
-      const written = await db
+      const written = await writeDb(id)
         .update(productsOrder)
         .set({
           changed: selection.action === "CAMBIO",
@@ -104,7 +104,7 @@ export function orderScope(id: VerifiedOrderId) {
 
     /** Clear the choice on one line. */
     async clearLineSelection(rowId: number): Promise<HandlerResult<{}, "not-editable">> {
-      const written = await db
+      const written = await writeDb(id)
         .update(productsOrder)
         .set({
           changed: false,
@@ -137,7 +137,7 @@ export function orderScope(id: VerifiedOrderId) {
               deliveryProvince: fields.delivery?.province ?? null,
               deliveryCountry: fields.delivery?.country ?? null,
             };
-      const written = await db
+      const written = await writeDb(id)
         .update(orders)
         .set({
           shippingName: fields.name,

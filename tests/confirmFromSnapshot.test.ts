@@ -50,7 +50,7 @@ const SUBMISSION = {
   ],
 };
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
@@ -58,7 +58,7 @@ vi.mock("@/db/drizzle", () => {
     query: { productsOrder: { findMany: async () => state.rows } },
   };
   return { default: chain };
-});
+})()));
 
 const createReturn = vi.fn(async (_input: any) => ({
   success: true as const,

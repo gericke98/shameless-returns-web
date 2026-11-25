@@ -40,7 +40,7 @@ export async function settleRowHandler(
     console.error(`settleRow: row ${input.rowId} not settled — held:${found.held}`);
     return refuse("not-settleable");
   }
-  const report = await settleSubmission(found.submissionId, [input.rowId], {
+  const report = await settleSubmission(adminTarget(ctx), found.submissionId, [input.rowId], {
     deadline: Date.now() + BUDGET_MS,
   });
   console.log(

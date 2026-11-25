@@ -6,7 +6,7 @@
  * operation. Writes the void, with who and why, in one statement
  * (lib/settlement/voidReconciliation.ts, drizzle/0012). Dry-run by default.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/void-reconciliation.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/void-reconciliation.ts \
  *     (--line <productsorder id> | --submission <uuid>) --evidence "<why>" [--by <name>] [--write]
  */
 import "dotenv/config";
@@ -26,7 +26,11 @@ async function main() {
   if (!!values.line === !!values.submission) throw new Error("name the record by exactly one of --line or --submission");
   const { voidForeignReconciliation } = await import("@/lib/settlement/voidReconciliation");
   const { readReturnEvidence } = await import("@/lib/settlement/reconcileReads");
+  // Its write capability, minted here (F1 spec §11, G2): the operator running it.
+  const { systemTarget } = await import("@/lib/server/identity");
+  const job = systemTarget("void-reconciliation");
   const out = await voidForeignReconciliation(
+    job,
     values.submission ? { submissionId: values.submission } : { productsorderId: Number(values.line) },
     { by: values.by ?? userInfo().username, evidence: values.evidence ?? "" },
     readReturnEvidence,

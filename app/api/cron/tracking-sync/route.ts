@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
 import { eq } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
+import { systemTarget } from "@/lib/server/identity";
 import { orders as ordersTable } from "@/db/schema";
 import { getParcelsAwaitingTracking } from "@/db/queries";
 import { obtainLastStatus } from "@/lib/server/shipping";
@@ -203,7 +204,7 @@ export async function GET(req: Request) {
         // Persist, never notify. The cap does not apply: a partial seed is
         // worse than none, because the parcels it missed would still be told
         // stale news on the first live run.
-        await db
+        await writeDb(systemTarget(String(order.id), "tracking-sync"))
           .update(ordersTable)
           .set(decision.persist)
           .where(eq(ordersTable.id, order.id));
@@ -222,7 +223,7 @@ export async function GET(req: Request) {
       // Persist BEFORE emailing. The next daily run then finds the key
       // unchanged and does nothing, so nobody can be told twice. The cost is
       // that a failed send is not retried — hence the loud log below.
-      await db
+      await writeDb(systemTarget(String(order.id), "tracking-sync"))
         .update(ordersTable)
         .set(decision.persist)
         .where(eq(ordersTable.id, order.id));

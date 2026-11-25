@@ -1,6 +1,6 @@
 import "server-only";
 // NOT "use server": every export of such a module is a public endpoint.
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { OrderData, OrderLineItem } from "@/types";
 import { eq } from "drizzle-orm";
@@ -34,7 +34,7 @@ export async function saveOrderDetails(
   order: OrderData,
   exchangeOf: string | null = null
 ): Promise<void> {
-  await db.insert(orders).values({
+  await writeDb(id).insert(orders).values({
     id,
     orderNumber: order.name,
     subtotal: Math.round(Number(order.subtotal_price) * 100) || 0,
@@ -67,7 +67,7 @@ export async function saveOrderItem(
   wasChanged: boolean,
   priceWithDiscount: number
 ): Promise<void> {
-  await db.insert(productsOrder).values({
+  await writeDb(orderId).insert(productsOrder).values({
     lineItemId: formatOrderId(item.id),
     orderId,
     productId: formatOrderId(item.product_id),

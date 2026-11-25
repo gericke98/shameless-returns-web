@@ -11,7 +11,7 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 
 const RECEIVED_LONG_AGO = "2026-08-17T12:56:05";
 
@@ -50,6 +50,7 @@ vi.mock("@/db/queries", () => ({
 const rowVariant: Record<number, string> = {};
 const rowOrder: Record<number, string> = {};
 const settleCalls: Array<[string, number[]]> = [];
+const settleCaps: unknown[] = [];
 const lookups: number[] = [];
 vi.mock("@/lib/settlement/legacy", () => ({
   submissionForRow: async (orderId: string, id: number) => {
@@ -63,8 +64,9 @@ vi.mock("@/lib/settlement/ledger", () => ({
   submissionOfRow: async (id: number) => `sub-${rowOrder[id]}`,
 }));
 vi.mock("@/lib/settlement/settle", () => ({
-  settleSubmission: async (submissionId: string, ids: number[]) => {
+  settleSubmission: async (cap: unknown, submissionId: string, ids: number[]) => {
     clock.t += state.msPerSettle;
+    settleCaps.push(cap);
     settleCalls.push([submissionId, ids]);
     const variants = ids.map((id) => rowVariant[id]);
     if (state.settleThrowsOn && variants.includes(state.settleThrowsOn)) throw new Error("shopify down");
@@ -139,6 +141,7 @@ beforeEach(() => {
   state.siblingsOf = {};
   state.statusOf = {};
   settleCalls.length = 0;
+  settleCaps.length = 0;
   lookups.length = 0;
   state.msPerSettle = 0;
   clock.t = 0;
@@ -344,6 +347,8 @@ describe("auto-approve cron — honest reporting", () => {
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
     expect(settleCalls).toEqual([["sub-1001", [10011, 10012]]]);
+    // Under the cron's own capability, minted at its entry (F1 spec §11).
+    expect(settleCaps).toEqual([{ job: "auto-approve" }]);
     expect(body.settled).toBe(2); // both lines are counted
     expect(body.held).toEqual([]);
   });

@@ -13,6 +13,7 @@ import {
   getReturnStatusesByIds,
   getVariantSkusByIds,
 } from "@/db/queries";
+import type { SystemTarget } from "@/lib/server/identity";
 import {
   advanceShortfallStages,
   listOpenShortfalls,
@@ -49,6 +50,7 @@ type SweepOrder = {
  *  (Amphora list, Shopify SKUs/statuses, the open-case list); per-order
  *  failures are counted and the rest go ahead. */
 export async function sweepReceiptShortfalls(
+  job: SystemTarget,
   now: Date = new Date()
 ): Promise<ShortfallSweepReport> {
   const report: ShortfallSweepReport = {
@@ -106,17 +108,17 @@ export async function sweepReceiptShortfalls(
       switch (observation.kind) {
         case "settled":
         case "closed-in-shopify":
-          report.resolved += await resolveShortfallsForOrder(String(order.id));
+          report.resolved += await resolveShortfallsForOrder(job, String(order.id));
           break;
         case "ok":
-          report.resolved += await resolveShortfallsForReturn(match!.amphoraReturnId, []);
+          report.resolved += await resolveShortfallsForReturn(job, match!.amphoraReturnId, []);
           break;
         case "short": {
           const shopifyReturnIds = Array.from(
             new Set(lines.filter((l) => !l.refunded && l.return_id).map((l) => l.return_id!))
           );
           for (const s of observation.skus) {
-            await recordShortfall({
+            await recordShortfall(job, {
               amphoraReturnId: match!.amphoraReturnId,
               orderId: String(order.id),
               sku: s.sku,
@@ -127,6 +129,7 @@ export async function sweepReceiptShortfalls(
           }
           report.short += observation.skus.length;
           report.resolved += await resolveShortfallsForReturn(
+            job,
             match!.amphoraReturnId,
             observation.skus.map((s) => s.sku)
           );
@@ -147,7 +150,7 @@ export async function sweepReceiptShortfalls(
 
   // Stages advance only on what Postmark accepted (read from the outbox), then
   // whatever is due is queued. Re-queuing an already-queued key is a no-op.
-  await advanceShortfallStages();
+  await advanceShortfallStages(job);
   const orderById = new Map(orders.map((o) => [String(o.id), o]));
   const due = (await listOpenShortfalls()).flatMap((row) => {
     const stage = dueStage(row, now);

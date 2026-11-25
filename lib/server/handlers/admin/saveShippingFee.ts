@@ -2,7 +2,8 @@ import "server-only";
 // The shipping-fee table editor (F1 spec §4 `saveShippingFee`).
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
-import db from "@/db/drizzle";
+import { writeDb } from "@/db/drizzle";
+import { adminTarget } from "@/lib/server/identity";
 import { SHIPPING_FEES_TAG } from "@/db/fees";
 import { shippingFees } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
@@ -23,7 +24,7 @@ export const saveShippingFeeInput = z
   .strict();
 
 export async function saveShippingFeeHandler(
-  _ctx: AdminContext,
+  ctx: AdminContext,
   input: z.infer<typeof saveShippingFeeInput>
 ): Promise<HandlerResult<{}, "unsupported-destination" | "invalid-band" | "invalid-amount">> {
   // Sub-zones (ES-CN and friends) are not countries and would not survive
@@ -46,7 +47,7 @@ export async function saveShippingFeeHandler(
 
   // A failed upsert throws to the factory: logged, alerted, answered `failed`,
   // never with raw DB text. revalidateTag runs only after a write that landed.
-  await db
+  await writeDb(adminTarget(ctx))
     .insert(shippingFees)
     .values({ countryCode, maxGrams, returnFeeCents, exchangeFeeCents, updatedAt: new Date() })
     .onConflictDoUpdate({

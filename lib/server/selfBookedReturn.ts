@@ -1,7 +1,7 @@
 import "server-only";
 import type { VerifiedOrderId } from "./identity";
 import { and, eq, isNull } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { getOrderByIdFresh, getVariantSkusByIds } from "@/db/queries";
 import { amphoraOrderIdFromShopifyId, createAmphoraReturn } from "./amphora";
@@ -55,7 +55,7 @@ export async function createSelfBookedReturn(id: VerifiedOrderId): Promise<numbe
   // `isNull(orders.returnSubmittedAt)` in the WHERE means only a row that is
   // STILL unsubmitted gets written, and `.returning()` says whether ours was
   // the write that landed.
-  const claimed = await db
+  const claimed = await writeDb(id)
     .update(orders)
     .set({ returnMethod: "SELF", returnSubmittedAt: new Date() })
     .where(and(eq(orders.id, id), isNull(orders.returnSubmittedAt)))

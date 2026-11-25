@@ -6,7 +6,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("@/db/queries", () => ({}));
-vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [] }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {}, transact: async () => [] }))()));
 let FUNDING: any = { kind: "not-settlement" };
 vi.mock("@/db/replacementLines", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/replacementLines")>()),

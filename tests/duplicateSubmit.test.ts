@@ -77,7 +77,7 @@ vi.mock("@/db/queries", () => ({
 }));
 
 // Persist what the code writes, so the second submit sees the first one's work.
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -87,7 +87,7 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {

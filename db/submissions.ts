@@ -7,7 +7,8 @@
 // NOT a "use server" module, for the same reason as db/opsAlerts.ts: nothing
 // here may be callable from a browser.
 import { sql } from "drizzle-orm";
-import db from "./drizzle";
+import db, { writeDb } from "./drizzle";
+import type { SystemTarget } from "@/lib/server/identity";
 
 export type SubmissionLineInput = {
   productsorderId: number;
@@ -37,8 +38,8 @@ export type PaidOutcome =
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 
 /** Expire submissions whose Stripe session can no longer be paid (24 h, plus margin). */
-export async function abandonExpiredSubmissions(): Promise<string[]> {
-  const result = await db.execute(sql`
+export async function abandonExpiredSubmissions(job: SystemTarget): Promise<string[]> {
+  const result = await writeDb(job).execute(sql`
     UPDATE return_submissions SET state = 'abandoned'
      WHERE state = 'awaiting_payment' AND created_at < now() - interval '25 hours'
     RETURNING id

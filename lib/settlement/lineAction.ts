@@ -11,7 +11,8 @@
 //
 // NOT "use server". Moves no money.
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import { writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import { variantGid } from "@/lib/shopifyIds";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -35,12 +36,12 @@ export function validateDecision(d: LineActionDecision): string | null {
   return null;
 }
 
-export async function decideLineAction(d: LineActionDecision): Promise<{ ok: true } | { ok: false; reason: string }> {
+export async function decideLineAction(cap: WriteCapability, d: LineActionDecision): Promise<{ ok: true } | { ok: false; reason: string }> {
   const invalid = validateDecision(d);
   if (invalid) return { ok: false, reason: invalid };
   const newVariant = d.action === "CAMBIO" ? variantGid(d.newVariantId) : null;
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH d AS (
         UPDATE productsorder p
            SET action = ${d.action},

@@ -20,7 +20,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import type { VerifiedOrderId } from "@/lib/server/identity";
-import db, { transact, readQuery } from "@/db/drizzle";
+import db, { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import { getFeeTable } from "@/db/fees";
 import { getProducts } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
@@ -54,7 +55,7 @@ const appDeps: LegacyDeps = { feeTable: getFeeTable, catalogue: getProducts as (
 async function insertAccepted(orderId: VerifiedOrderId, order: Order, terms: LegacyTerms): Promise<void> {
   if (order.id !== orderId) throw new Error(`legacy submission for order ${order.id} recorded under ${orderId}`);
   const ids = terms.lines.map((l) => l.productsorder_id);
-  await transact([
+  await writeDb(orderId).transact([
     sql`SELECT id FROM productsorder WHERE id IN ${idListOf(ids)} FOR UPDATE`,
     sql`WITH ${legacySubmissionCtes(
       order,
@@ -147,7 +148,7 @@ export function approvalProblem(a: ApprovalInput): string | null {
  * record excepted). `refunded` is deliberately NOT a refusal here: it is what
  * the reconciliation proved wrong.
  */
-export async function recordApprovedLegacySubmission(approvals: ApprovalInput[]): Promise<SubmissionLookup> {
+export async function recordApprovedLegacySubmission(cap: WriteCapability, approvals: ApprovalInput[]): Promise<SubmissionLookup> {
   const ids = approvals.map((a) => a.productsorderId).sort((a, b) => a - b);
   if (ids.length === 0) return { ok: false, held: "nothing-approved" };
   if (new Set(ids).size !== ids.length) return { ok: false, held: "duplicate-approval" };
@@ -198,7 +199,7 @@ export async function recordApprovedLegacySubmission(approvals: ApprovalInput[])
                ON a.productsorder_id = ANY (o.members)
             WHERE o.state <> 'rejected'
               AND NOT (a.basis = 'swap' AND o.state = 'done' AND o.kind = 'exchange_order'))`;
-  await transact([
+  await writeDb(cap).transact([
     sql`SELECT id FROM productsorder WHERE id IN ${idListOf(ids)} FOR UPDATE`,
     sql`WITH ${legacySubmissionCtes(
       order,

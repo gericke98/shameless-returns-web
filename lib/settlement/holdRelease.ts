@@ -21,7 +21,7 @@
 // Never throws: both callers have already done something irreversible.
 // NOT "use server".
 import { sql } from "drizzle-orm";
-import db, { readQuery } from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
 import { releaseHoldDraft, type HoldReleaseAuthority } from "./effects";
 import { graphQLErrors } from "./shopify";
 import { DRAFT_ORDER_QUERY, read } from "./reads";
@@ -97,7 +97,7 @@ async function release(orderId: VerifiedOrderId, by: HoldReleaseAuthority["by"],
       if (!now.ok) return { released: false, reason: `draft ${draftOrderId} unreadable: ${now.error}` };
       if (now.value) return { released: false, reason: `draft ${draftOrderId} still exists` };
     }
-    await db.execute(sql`
+    await writeDb(orderId).execute(sql`
       UPDATE orders SET exchange_reservation_id = NULL
        WHERE id = ${orderId} AND exchange_reservation_id = ${draftOrderId}
     `);

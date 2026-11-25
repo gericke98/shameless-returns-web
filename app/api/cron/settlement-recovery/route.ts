@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { recoverSettlements } from "@/lib/settlement/recovery";
 import { verifyCronRequest } from "@/lib/server/cron";
+import { systemTarget } from "@/lib/server/identity";
 
 /**
  * Move every settlement operation nobody is moving (S2 plan L5): pending ones
@@ -23,7 +24,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    return NextResponse.json(await recoverSettlements({ deadline: Date.now() + BUDGET_MS }));
+    return NextResponse.json(await recoverSettlements(systemTarget("settlement-recovery"), { deadline: Date.now() + BUDGET_MS }));
   } catch (error: any) {
     console.error("[settlement-recovery] failed:", error?.message || error);
     return NextResponse.json({ error: "recovery failed" }, { status: 500 });

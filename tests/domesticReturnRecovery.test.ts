@@ -35,14 +35,14 @@ const behaviour = { correos: CORREOS_OK, emailFails: false };
 
 vi.mock("@/db/queries", () => ({ getOrderById: async () => ORDER }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {

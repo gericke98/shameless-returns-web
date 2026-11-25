@@ -66,7 +66,7 @@ const state: { rows: Row[]; writes: Array<Record<string, unknown>> } = {
   writes: [],
 };
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, unknown>) => {
@@ -79,7 +79,7 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 const createReturn = vi.fn(async () => ({
   success: true as const,

@@ -1,6 +1,7 @@
 import "server-only";
 import { and, eq, isNull } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
+import type { SystemTarget } from "@/lib/server/identity";
 import { orders } from "@/db/schema";
 import { getSelfReturnsAwaitingTracking } from "@/db/queries";
 import { nudgeDue, ALERT_AFTER_DAYS } from "@/lib/selfReturnNudges";
@@ -16,6 +17,7 @@ import { alertOps } from "./opsAlert";
  * nothing new to misconfigure.
  */
 export async function sweepSelfReturns(
+  job: SystemTarget,
   now: Date = new Date()
 ): Promise<{ reminded: number; alerted: number }> {
   const rows = await getSelfReturnsAwaitingTracking();
@@ -36,7 +38,7 @@ export async function sweepSelfReturns(
       // still have no tracking and still be at the stage we read. A customer
       // submitting, or ops rejecting a number (which sets stage 2), between
       // the read and this write makes it match nothing, and nothing is sent.
-      const claimed = await db
+      const claimed = await writeDb(job)
         .update(orders)
         .set({ trackingNudgeStage: decision.nextStage })
         .where(

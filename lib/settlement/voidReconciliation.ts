@@ -17,7 +17,8 @@
 //
 // Shopify is only READ. NOT "use server".
 import { sql } from "drizzle-orm";
-import db, { readQuery } from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import type { Read, ReturnEvidence } from "./reconcile";
 import { returnOwnerProblem } from "./returnOwnership";
 import { reconciliationRequestOf } from "./types";
@@ -29,6 +30,7 @@ export type VoidDecision = { by: string; evidence: string };
 export type VoidOutcome = { ok: true; written: boolean; summary: string } | { ok: false; reason: string };
 
 export async function voidForeignReconciliation(
+  cap: WriteCapability,
   target: VoidTarget,
   d: VoidDecision,
   readReturn: (returnGid: string) => Promise<Read<ReturnEvidence | null>>,
@@ -82,7 +84,7 @@ export async function voidForeignReconciliation(
   if (!options.write) return { ok: true, written: false, summary: `would ${summary}` };
 
   const [row] = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH v AS (
         UPDATE return_submissions s SET state = 'voided'
          WHERE s.id = ${sub.id}::uuid AND s.state = 'reconciled'

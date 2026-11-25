@@ -13,6 +13,7 @@ import { alertOps } from "@/lib/server/opsAlert";
 import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 import { abandonExpiredSubmissions } from "@/db/submissions";
 import { verifyCronRequest } from "@/lib/server/cron";
+import { systemTarget } from "@/lib/server/identity";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -82,6 +83,8 @@ export async function GET(req: Request) {
   if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // The job's capability, minted at its entry after the cron secret (F1 spec §11).
+  const job = systemTarget("amphora-sync");
 
   // Bookkeeping, before the Amphora call so an Amphora outage does not skip
   // it: a submission whose Stripe session has expired (24 h) can no longer be
@@ -89,7 +92,7 @@ export async function GET(req: Request) {
   // it either way — so a failure is logged, not alerted.
   let abandonedSubmissions = 0;
   try {
-    abandonedSubmissions = (await abandonExpiredSubmissions()).length;
+    abandonedSubmissions = (await abandonExpiredSubmissions(job)).length;
   } catch (error: any) {
     console.error("[amphora-sync] could not expire submissions:", error?.message || error);
   }
@@ -203,7 +206,7 @@ export async function GET(req: Request) {
       scanned += 1;
       acted.push({ ...match, returnMethod: (order as any).returnMethod });
 
-      const outcome = await applyReturnStatus(order as any, {
+      const outcome = await applyReturnStatus(systemTarget(String(order.id), "amphora-sync"), order as any, {
         id: ret.id,
         name: ret.name,
         internal_status: ret.internal_status,
@@ -298,7 +301,7 @@ export async function GET(req: Request) {
 
   let selfReturns = { reminded: 0, alerted: 0 };
   try {
-    selfReturns = await sweepSelfReturns();
+    selfReturns = await sweepSelfReturns(job);
   } catch (error: any) {
     // The Amphora poll above already did its work; a sweep failure must not
     // discard those results.

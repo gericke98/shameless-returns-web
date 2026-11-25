@@ -15,7 +15,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 vi.mock("@/lib/settlement/shopify", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlement/shopify")>()),
   shopifyGraphQL: async () => ({ kind: "no-answer", error: "timeout" }),

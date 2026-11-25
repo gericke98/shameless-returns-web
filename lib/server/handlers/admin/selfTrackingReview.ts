@@ -12,7 +12,7 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { z } from "zod";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { pinSelfTracking } from "@/lib/pinSelfTracking";
 import { readLocale } from "@/lib/i18n";
@@ -45,7 +45,7 @@ export async function confirmSelfTrackingHandler(
   const id = adminTarget(input.orderId, ctx);
   const { submissionId } = input;
 
-  const [claimed] = await db
+  const [claimed] = await writeDb(id)
     .update(orders)
     .set({ trackingVerifiedAt: new Date(), trackingVerifiedBy: admin })
     .where(pendingSubmission(id, submissionId))
@@ -92,7 +92,7 @@ export async function rejectSelfTrackingHandler(
   });
   if (!current?.locator) return refuse("not-pending");
 
-  const cleared = await db
+  const cleared = await writeDb(id)
     .update(orders)
     .set({
       locator: null,

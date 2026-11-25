@@ -106,7 +106,7 @@ vi.mock("@/lib/loadBasket", () => ({
   }),
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -124,7 +124,7 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 async function submit(method?: unknown) {
   // The handler behind `submitReturn` (F1), called with the context

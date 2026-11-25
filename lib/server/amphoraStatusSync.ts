@@ -13,7 +13,8 @@ import "server-only";
 // yet, so whichever path arrives second does nothing.
 import axios from "axios";
 import { eq } from "drizzle-orm";
-import db from "@/db/drizzle";
+import { writeDb } from "@/db/drizzle";
+import type { VerifiedOrderId } from "@/lib/server/identity";
 import { orders } from "@/db/schema";
 import {
   buildCollectionScheduledEmail,
@@ -85,15 +86,18 @@ async function sendEmail(payload: Record<string, unknown>): Promise<number> {
  * twice. The cost is that a failed email is not retried — hence the loud log.
  */
 export async function applyReturnStatus(
+  id: VerifiedOrderId,
   order: SyncableOrder,
   payload: AmphoraWebhookReturn
 ): Promise<SyncOutcome> {
+  // The capability names the row written: never another order's.
+  if (String(order.id) !== id) throw new Error(`applyReturnStatus: ${id} is not order ${order.id}`);
   const actions = decideWebhookActions(order, payload);
   if (actions.noop || !actions.persist) {
     return { changed: false, emailsSent: [], emailsFailed: [] };
   }
 
-  await db.update(orders).set(actions.persist).where(eq(orders.id, order.id));
+  await writeDb(id).update(orders).set(actions.persist).where(eq(orders.id, id));
 
   const locale = readLocale(order.locale);
   const exchange = exchangeFromProducts((order as any).products);

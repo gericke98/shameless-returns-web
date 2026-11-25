@@ -6,7 +6,7 @@ import * as schema from "@/db/schema";
 import { buildAgreement } from "@/lib/agreement";
 import type { ValuedLine } from "@/lib/basket";
 import type { VerifiedSubmission } from "@/lib/server/identity";
-import { vid, vsub } from "./support/verified";
+import { vid, vsub, sys } from "./support/verified";
 
 // The submission guarantees live in SQL: one awaiting submission per order,
 // conditional transitions, the confirm write by row id. These run the REAL
@@ -15,7 +15,7 @@ import { vid, vsub } from "./support/verified";
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
-vi.mock("@/db/drizzle", () => ({ default: db }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: db }))()));
 
 const repo = async () => ({ ...(await import("@/lib/server/submissionScope")), ...(await import("@/db/submissions")) });
 
@@ -163,7 +163,7 @@ describe("db/submissions against Postgres", () => {
     const stale = await propose("o2");
     await pg.query("UPDATE return_submissions SET created_at = now() - interval '26 hours' WHERE id = $1", [stale.id]);
 
-    expect(await abandonExpiredSubmissions()).toEqual([stale.id]);
+    expect(await abandonExpiredSubmissions(sys)).toEqual([stale.id]);
     expect(await stateOf(fresh)).toBe("awaiting_payment");
   });
 

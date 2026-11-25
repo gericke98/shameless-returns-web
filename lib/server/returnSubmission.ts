@@ -4,7 +4,7 @@ import "server-only";
 // session) and the Stripe webhook (signature) are their only callers.
 import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { LOCALE_COOKIE, readLocale } from "@/lib/i18n";
 import type { ReturnMethod } from "@/lib/returnMethods";
@@ -54,7 +54,7 @@ export async function createReturnShipment(id: VerifiedOrderId, method: ReturnMe
 export async function persistOrderLocale(id: VerifiedOrderId) {
   try {
     const locale = readLocale(cookies().get(LOCALE_COOKIE)?.value);
-    await db.update(orders).set({ locale }).where(eq(orders.id, id));
+    await writeDb(id).update(orders).set({ locale }).where(eq(orders.id, id));
   } catch (error) {
     console.error(`Failed to persist locale for order ${id}:`, error);
   }
@@ -84,7 +84,7 @@ export async function persistOrderLocale(id: VerifiedOrderId) {
  */
 export async function persistReturnMethod(id: VerifiedOrderId, method: ReturnMethod): Promise<boolean> {
   try {
-    await db.update(orders).set({ returnMethod: method }).where(eq(orders.id, id));
+    await writeDb(id).update(orders).set({ returnMethod: method }).where(eq(orders.id, id));
     return true;
   } catch (error) {
     await alertOps(

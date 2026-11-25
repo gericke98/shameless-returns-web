@@ -61,7 +61,7 @@ let interleave: (() => void) | null = null;
 
 // The fake applies the action's WHERE as the predicate above: the real
 // conditions are SQL, so what this pins is the flow around them.
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     query: {
       orders: { findFirst: async () => (pending() ? { ...row } : undefined) },
@@ -83,7 +83,7 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 const load = () => import("@/actions/selfTrackingReview");
 

@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
-vi.mock("@/db/drizzle", () => ({ default: db }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: db }))()));
 
 const order = {
   id: "13221047697734",

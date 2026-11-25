@@ -54,10 +54,10 @@ vi.mock("@/lib/server/payments", () => ({
 }));
 vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 vi.mock("@/db/queries", () => ({ getOrderById: async () => ({ shippingCountry: "Spain" }) }));
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = { update: () => chain, set: () => chain, where: () => Promise.resolve() };
   return { default: chain };
-});
+})()));
 
 import { parseClientErrorReport } from "@/lib/clientErrorReport";
 

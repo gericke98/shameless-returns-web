@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
 import { applyReturnStatus } from "@/lib/server/amphoraStatusSync";
+import { verifiedByAmphoraSecret } from "@/lib/server/identity";
 import {
   orderIdFromWebhook,
   type AmphoraWebhookReturn,
@@ -76,6 +77,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ message: "ignored" });
   }
 
-  const outcome = await applyReturnStatus(order as any, payload);
+  // Authorized above by the shared X-Secret (F1 spec §11, G1).
+  const outcome = await applyReturnStatus(verifiedByAmphoraSecret(order), order as any, payload);
   return NextResponse.json({ message: outcome.changed ? "ok" : "no-op" });
 }

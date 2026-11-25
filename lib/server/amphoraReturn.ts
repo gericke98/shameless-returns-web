@@ -3,7 +3,7 @@ import type { VerifiedOrderId } from "./identity";
 // Server-only module (reads secret env, hits the Amphora API + DB). Imported
 // only by server actions / route handlers — NOT a "use server" action module,
 // because it also exports the sync helper `isInternationalOrder`.
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { getOrderById, getVariantSkusByIds } from "@/db/queries";
 import { orders } from "@/db/schema";
 import axios from "axios";
@@ -221,7 +221,7 @@ export async function createInternationalReturn(id: VerifiedOrderId): Promise<nu
       })
     );
 
-    await db
+    await writeDb(id)
       .update(orders)
       .set({
         locator: ret?.carrier_number ?? null,

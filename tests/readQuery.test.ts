@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { pg16Available, startPg16 } from "./support/pg16";
+import { sys } from "./support/verified";
 
 // db/drizzle.ts `readQuery` (F1 spec §10): raw read-only SQL runs in a
 // Postgres READ ONLY transaction, so the DATABASE refuses a write in it.
@@ -62,11 +63,11 @@ describe("readQuery asks the Neon driver for a READ ONLY transaction", () => {
   });
 
   it("transact asks for a writable READ COMMITTED transaction", async () => {
-    const { transact } = await import("@/db/drizzle");
+    const { writeDb } = await import("@/db/drizzle");
     const saved = env;
     env = undefined;
     try {
-      await transact([sql`SELECT 1`]);
+      await writeDb(sys).transact([sql`SELECT 1`]);
     } finally {
       env = saved;
     }
@@ -104,8 +105,8 @@ describe.skipIf(!pg16Available)("production readQuery on PostgreSQL 16", () => {
   });
 
   it("production transact, the same way, does write (the control)", async () => {
-    const { transact } = await import("@/db/drizzle");
-    await transact([sql`UPDATE orders SET locator = 'X' WHERE id = '100'`]);
+    const { writeDb } = await import("@/db/drizzle");
+    await writeDb(sys).transact([sql`UPDATE orders SET locator = 'X' WHERE id = '100'`]);
     expect((await env!.pool.query(`SELECT locator FROM orders WHERE id = '100'`)).rows).toEqual([{ locator: "X" }]);
   });
 });

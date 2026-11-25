@@ -7,7 +7,7 @@ import { enqueueOpsAlert } from "@/lib/server/opsAlertOutbox";
 import type { PaidOutcome } from "@/db/submissions";
 import { verifiedByStripeSignature } from "@/lib/server/identity";
 import { acceptPaidSubmission, loadSubmission, submissionOf } from "@/lib/server/submissionScope";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
@@ -286,7 +286,7 @@ export async function POST(req: Request) {
         // intent without a human searching Stripe by hand.
         if (paymentIntentId) {
           try {
-            await db
+            await writeDb(id)
               .update(orders)
               .set({ stripePaymentIntent: paymentIntentId })
               .where(eq(orders.id, id));

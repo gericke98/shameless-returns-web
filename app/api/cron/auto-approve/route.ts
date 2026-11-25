@@ -203,7 +203,7 @@ export async function GET(req: Request) {
           break;
         }
         enteredSettle = true;
-        const report = await settleSubmission(submissionId, ids, {
+        const report = await settleSubmission(systemTarget("auto-approve"), submissionId, ids, {
           deadline: startedAt + BUDGET_MS,
         });
         for (const line of report.lines) {

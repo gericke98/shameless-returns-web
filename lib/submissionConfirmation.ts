@@ -6,7 +6,7 @@
 // release its stock hold. They take a verified identity (F1), so they are
 // reached only through the customer's submit handler (portal session) and the
 // signature-verified Stripe webhook.
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { createReturn, getOrderById, getOrderTotal } from "@/db/queries";
 import { productsOrder } from "@/db/schema";
 import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
@@ -70,7 +70,7 @@ export async function revertFinalOrder(id: VerifiedOrderId) {
         if (product.confirmed) {
           // By row id: two rows can share a variant, and only this one is
           // being reverted.
-          await db
+          await writeDb(id)
             .update(productsOrder)
             .set({ confirmed: false, return_id: null })
             .where(eq(productsOrder.id, product.id));

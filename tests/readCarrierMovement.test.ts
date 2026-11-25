@@ -25,14 +25,14 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({}),
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 const requested: string[] = [];
 const response = {

@@ -64,7 +64,7 @@ vi.mock("@/lib/server/opsAlert", () => ({
 // read and our write — the race the atomic guard exists to stop.
 let raceLoser = false;
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -78,7 +78,7 @@ vi.mock("@/db/drizzle", () => {
     returning: async () => (raceLoser ? [] : [{ id: ORDER.id }]),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {

@@ -14,7 +14,7 @@ vi.mock("next/cache", () => ({ revalidatePath: () => {}, revalidateTag: () => {}
 vi.mock("@/lib/server/orderScope", () => ({ orderScope: () => ({}) }));
 // The handler reads which order the clicked row belongs to (F1 §10).
 const ROW_ORDER: Record<number, string> = { 7: "1" };
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   let wanted: number | undefined;
   const chain: any = {
     select: () => chain,
@@ -26,10 +26,10 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlert: async () => true }));
 
-const calls = { lookup: [] as number[], orders: [] as string[], settle: [] as Array<[string, number[]]> };
+const calls = { lookup: [] as number[], orders: [] as string[], settle: [] as Array<[unknown, string, number[]]> };
 const lookup = { value: { ok: true, submissionId: "sub-1" } as any };
 
 vi.mock("@/lib/settlement/legacy", () => ({
@@ -40,8 +40,8 @@ vi.mock("@/lib/settlement/legacy", () => ({
   },
 }));
 vi.mock("@/lib/settlement/settle", () => ({
-  settleSubmission: async (submissionId: string, ids: number[]) => {
-    calls.settle.push([submissionId, ids]);
+  settleSubmission: async (cap: unknown, submissionId: string, ids: number[]) => {
+    calls.settle.push([cap, submissionId, ids]);
     return { submissionId, lines: ids.map((id) => ({ productsorderId: id, status: "paid" })) };
   },
 }));
@@ -80,7 +80,8 @@ describe("validateReturn authorization", () => {
   it("proceeds for an admin session", async () => {
     session.value = { user: { role: "admin" } };
     await click();
-    expect(calls.settle).toEqual([["sub-1", [7]]]);
+    // Settled under the admin session's capability (F1 spec §11).
+    expect(calls.settle).toEqual([[{ admin: "admin" }, "sub-1", [7]]]);
   });
 });
 

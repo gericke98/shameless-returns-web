@@ -16,7 +16,7 @@ import type { VerifiedOrderId } from "./identity";
 // reason to fail — or worse, revert — a return that exists in the real world.
 // That is the lesson of order #310972.
 
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
 import { orders } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
@@ -112,7 +112,7 @@ export async function reserveExchangeStock(
       return;
     }
 
-    await db
+    await writeDb(orderId)
       .update(orders)
       .set({ exchangeReservationId: draft.id })
       .where(eq(orders.id, orderId));

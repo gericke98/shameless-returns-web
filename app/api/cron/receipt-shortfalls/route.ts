@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sweepReceiptShortfalls } from "@/lib/server/receiptShortfallSweep";
 import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 import { verifyCronRequest } from "@/lib/server/cron";
+import { systemTarget } from "@/lib/server/identity";
 
 /**
  * Detect short receipts and queue their ops alerts.
@@ -19,7 +20,7 @@ export async function GET(req: Request) {
   }
 
   try {
-    return NextResponse.json(await sweepReceiptShortfalls());
+    return NextResponse.json(await sweepReceiptShortfalls(systemTarget("receipt-shortfalls")));
   } catch (error: any) {
     // An upstream read failed (Amphora, Shopify, the database): nothing was
     // decided, nothing opened or resolved. The next run starts over.

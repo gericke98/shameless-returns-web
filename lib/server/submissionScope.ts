@@ -16,7 +16,7 @@ import "server-only";
 // RETURNING`), so it is atomic on neon-http, which has no interactive
 // transactions, and the row's state, not a prior read, decides who wins.
 import { and, eq, sql, type SQL } from "drizzle-orm";
-import db, { transact, readQuery } from "@/db/drizzle";
+import db, { readQuery, writeDb } from "@/db/drizzle";
 import { orders, returnSubmissions, submissionLines } from "@/db/schema";
 import type { Agreement } from "@/lib/agreement";
 import type { PaidOutcome, PaymentEvidence, SubmissionLineInput } from "@/db/submissions";
@@ -58,7 +58,7 @@ export async function proposeSubmission(
   const lines = lineRecords(input.agreement, input.lines);
 
   try {
-    const result = await db.execute(sql`
+    const result = await writeDb(orderId).execute(sql`
       WITH sup AS (
         UPDATE return_submissions SET state = 'superseded'
          WHERE order_id = ${orderId} AND state = 'awaiting_payment'
@@ -167,7 +167,7 @@ export async function loadSubmission(sub: VerifiedSubmission) {
 
 /** Bind the Stripe session to the submission. False if it is no longer awaiting. */
 export async function attachStripeSession(sub: VerifiedSubmission, sessionId: string): Promise<boolean> {
-  const result = await db.execute(sql`
+  const result = await writeDb(sub).execute(sql`
     UPDATE return_submissions SET stripe_session_id = ${sessionId}
      WHERE id = ${sub.id} AND order_id = ${sub.orderId}
        AND state = 'awaiting_payment' AND stripe_session_id IS NULL
@@ -178,7 +178,7 @@ export async function attachStripeSession(sub: VerifiedSubmission, sessionId: st
 
 /** Accept a submission that owes Stripe nothing. False if it was not awaiting. */
 export async function acceptFreeSubmission(sub: VerifiedSubmission): Promise<boolean> {
-  const result = await db.execute(sql`
+  const result = await writeDb(sub).execute(sql`
     UPDATE return_submissions SET state = 'accepted', accepted_at = now()
      WHERE id = ${sub.id} AND order_id = ${sub.orderId}
        AND state = 'awaiting_payment' AND stripe_charge_cents = 0
@@ -197,7 +197,7 @@ export async function acceptPaidSubmission(
   sub: VerifiedSubmission,
   evidence: PaymentEvidence
 ): Promise<PaidOutcome> {
-  const result = await db.execute(sql`
+  const result = await writeDb(sub).execute(sql`
     UPDATE return_submissions
        SET state = 'accepted', accepted_at = now(),
            stripe_payment_intent = ${evidence.paymentIntent}
@@ -262,7 +262,7 @@ export async function recordConfirmation(
     fulfillment_line_item_id: l.fulfillmentLineItemId,
     return_line_item_id: l.returnLineItemId,
   }));
-  const result = await db.execute(sql`
+  const result = await writeDb(sub).execute(sql`
     WITH v AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(values)}::jsonb) AS v(
         productsorder_id integer, fulfillment_line_item_id text, return_line_item_id text)
@@ -316,7 +316,7 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<Can
   // `in-transit` (cancelEligibility), here enforced where the two serialize.
   // (3) reads, still under the lock, why (2) did or did not take it, so the
   // answer is the state the decision was made on, not a later read.
-  const [, claimed, why] = await transact([
+  const [, claimed, why] = await writeDb(sub).transact([
     sql`
       SELECT id FROM return_submissions
        WHERE id = ${sub.id} AND order_id = ${sub.orderId}
@@ -352,7 +352,7 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<Can
 
 /** Amphora refused, so nothing moved: give the submission back. */
 export async function releaseCancellation(sub: VerifiedSubmission): Promise<void> {
-  await db.execute(sql`
+  await writeDb(sub).execute(sql`
     UPDATE return_submissions SET holder = NULL, holder_since = NULL
      WHERE id = ${sub.id} AND order_id = ${sub.orderId}
        AND holder = 'cancellation' AND state = 'accepted'
@@ -409,7 +409,7 @@ export async function finishCancellation(
 ): Promise<void> {
   const foreign = subs.find((s) => s.orderId !== orderId);
   if (foreign) throw new Error(`finishCancellation: submission ${foreign.id} is not order ${orderId}'s`);
-  await transact([
+  await writeDb(orderId).transact([
     sql`
       UPDATE return_submissions SET state = 'cancelled'
        WHERE id IN (SELECT (jsonb_array_elements_text(${JSON.stringify(subs.map((s) => s.id))}::jsonb))::uuid)
@@ -476,7 +476,7 @@ export async function claimTracking(sub: VerifiedSubmission, write: TrackingWrit
     SELECT 1 FROM return_submissions s
      WHERE s.id = ${sub.id} AND s.order_id = ${sub.orderId}
        AND s.state = 'accepted' AND s.holder IS NULL)`;
-  const [, written] = await transact([
+  const [, written] = await writeDb(sub).transact([
     sql`
       SELECT id FROM return_submissions
        WHERE id = ${sub.id} AND order_id = ${sub.orderId}

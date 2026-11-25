@@ -3,7 +3,7 @@
 // reads (customer emails, orders, tracking). Only server code imports them.
 import "@shopify/shopify-api/adapters/node";
 import { cache } from "react";
-import db from "./drizzle";
+import db, { writeDb } from "./drizzle";
 import { and, desc, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem, type Product } from "@/types";
@@ -783,7 +783,7 @@ export async function saveReturnLabel(
   pdfBase64: string
 ): Promise<void> {
   try {
-    await db.insert(returnLabels).values({ orderId, trackingNumber, pdfBase64 });
+    await writeDb(orderId).insert(returnLabels).values({ orderId, trackingNumber, pdfBase64 });
   } catch (error: any) {
     console.error(
       `Could not store the label PDF for order ${orderId} (${trackingNumber}) — a re-send will need a new registration:`,

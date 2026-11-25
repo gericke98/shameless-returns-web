@@ -13,7 +13,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: env.transact, readQuery: env.readQuery }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: env.transact, readQuery: env.readQuery }))()));
 
 let shopifyBody = "";
 const shopifyResponse = { value: { data: { returnCancel: { return: { id: "gid://x" }, userErrors: [] } } } };

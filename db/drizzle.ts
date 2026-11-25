@@ -2,6 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import type { SQL } from "drizzle-orm";
 import { transactionsOver, type RunTransaction } from "./transactions";
+import type { WriteCapability } from "@/lib/server/identity";
 
 import * as schema from "./schema";
 
@@ -28,7 +29,28 @@ import * as schema from "./schema";
 const sql = neon(process.env.DATABASE_URL!, {
   fetchOptions: { cache: "no-store" },
 });
-const db = drizzle(sql, { schema });
+const full = drizzle(sql, { schema });
+
+/**
+ * What a handle may do without a capability: read. An ALLOW-list of the
+ * drizzle members that cannot write (F1 spec §11). Not `with(...)` (its
+ * builder has update/insert/delete), not `execute`, `transaction`, `batch`,
+ * `$client` or `_` (the session): each can run arbitrary SQL.
+ */
+export type ReadDb = Pick<typeof full, "select" | "selectDistinct" | "selectDistinctOn" | "query" | "$with">;
+
+/**
+ * The default export: a read handle, at runtime as well as in its type (only
+ * the allowed members exist on it, so a cast cannot reach a writer). Raw reads
+ * go through `readQuery`. Writes go through `writeDb(capability)`.
+ */
+const db: ReadDb = {
+  select: full.select.bind(full),
+  selectDistinct: full.selectDistinct.bind(full),
+  selectDistinctOn: full.selectDistinctOn.bind(full),
+  $with: full.$with.bind(full),
+  query: full.query,
+} as ReadDb;
 
 export default db;
 
@@ -48,8 +70,9 @@ const neonTransaction: RunTransaction = async (statements, mode) => {
 const transactions = transactionsOver(neonTransaction);
 
 /**
- * Run `statements` as ONE non-interactive Postgres transaction and return each
- * statement's rows.
+ * A handle that can write: the full drizzle handle, plus `transact`, which
+ * runs `statements` as ONE non-interactive Postgres transaction and returns
+ * each statement's rows.
  *
  * neon-http cannot hold a transaction open across round trips, so there is no
  * interactive `db.transaction(async tx => …)` here, ever. What it can do is
@@ -60,8 +83,33 @@ const transactions = transactionsOver(neonTransaction);
  * the previous lock holder committed (docs/superpowers/specs/
  * 2026-10-30-settlement-S2-ledger-plan.md, L4).
  */
-export async function transact(statements: SQL[]): Promise<any[][]> {
-  return transactions.transact(statements);
+export type WriteDb = typeof full & { transact(statements: SQL[]): Promise<any[][]> };
+
+const writable: WriteDb = Object.assign(full, {
+  transact: (statements: SQL[]) => transactions.transact(statements),
+});
+
+/**
+ * The write handle, for the holder of a capability (F1 spec §11): a verified
+ * order or submission, an admin session, a system job, or a lookup. Without
+ * one there is no way to name a writer: that is a type error, not a review
+ * finding.
+ */
+export function writeDb(capability: WriteCapability): WriteDb {
+  void capability;
+  return writable;
+}
+
+/** The two tables that hold no customer data (F1 spec §11). */
+export type NonCustomerTable = "ops_alerts" | "lookup_attempts";
+
+/**
+ * The write handle for one non-customer table. Referenced only from
+ * db/opsAlerts.ts and db/lookupAttempts.ts (tests/actionBoundary.test.ts).
+ */
+export function tableWriter(table: NonCustomerTable): WriteDb {
+  void table;
+  return writable;
 }
 
 /**

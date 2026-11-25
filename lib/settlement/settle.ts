@@ -14,6 +14,7 @@ import { admit } from "./admission";
 import { loadSubmission, operationsOf } from "./ledger";
 import { run } from "./run";
 import type { LineStatus, Operation } from "./types";
+import type { WriteCapability } from "@/lib/server/identity";
 
 export type SettleReport = {
   submissionId: string;
@@ -54,12 +55,13 @@ export function lineStatus(
 }
 
 export async function settleSubmission(
+  cap: WriteCapability,
   submissionId: string,
   productsorderIds: readonly number[],
   options: { deadline?: number; me?: string } = {}
 ): Promise<SettleReport> {
   const me = options.me ?? randomUUID();
-  const admitted = await admit(submissionId, productsorderIds);
+  const admitted = await admit(cap, submissionId, productsorderIds);
   if (!admitted.ok) {
     return {
       submissionId,
@@ -77,7 +79,7 @@ export async function settleSubmission(
     for (const op of next) {
       if (options.deadline && Date.now() >= options.deadline) break;
       tried.add(op.id);
-      await run(op.id, me);
+      await run(cap, op.id, me);
     }
   }
 

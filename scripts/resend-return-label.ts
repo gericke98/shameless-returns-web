@@ -79,8 +79,11 @@ async function main() {
       continue;
     }
 
-    const { resendReturnLabelForOrder } = await import("../lib/server/handlers/system/resendReturnLabel");
-    const status = await resendReturnLabelForOrder(String(order.id));
+    // The operator selected this order from our own database by its number:
+    // that selection is the credential, minted here (F1 spec §11, G2).
+    const { systemTarget } = await import("../lib/server/identity");
+    const { resendReturnLabel } = await import("../lib/server/shipping");
+    const status = await resendReturnLabel(systemTarget(String(order.id), "resend-return-label"));
     console.log(status === 200 ? "  ✅ sent\n" : `  ❌ failed (${status})\n`);
   }
 }

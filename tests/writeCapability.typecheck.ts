@@ -3,10 +3,12 @@
 // unused, and so does tests/actionBoundary.test.ts (rule 6), which reads this
 // file's diagnostics. Never imported or run; only type-checked.
 import { sql } from "drizzle-orm";
-import db, { tableWriter, writeDb } from "@/db/drizzle";
+import db, { lookupAttemptsWriter, opsAlertsWriter, writeDb } from "@/db/drizzle";
 // @ts-expect-error `transact` is no longer exported: it comes with a capability.
 import { transact as noTransact } from "@/db/drizzle";
 import { orders } from "@/db/schema";
+import type { AdminContext } from "@/lib/server/actions";
+import { saveShippingFeeHandler } from "@/lib/server/handlers/admin/saveShippingFee";
 import type { AdminTarget, SystemTarget, VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
 
 declare const order: VerifiedOrderId;
@@ -42,8 +44,6 @@ export function writeHandleNeedsACapability() {
   writeDb({ job: "forged" });
   // @ts-expect-error nothing at all
   writeDb();
-  // @ts-expect-error tableWriter serves only the two non-customer tables
-  tableWriter("orders");
 }
 
 export function capabilitiesDoWrite() {
@@ -51,7 +51,45 @@ export function capabilitiesDoWrite() {
   writeDb(submission).transact([]);
   writeDb(admin).insert(orders);
   writeDb(job).execute(sql`SELECT 1`);
-  tableWriter("ops_alerts");
-  tableWriter("lookup_attempts");
+  opsAlertsWriter.insert();
+  opsAlertsWriter.update().set({ lastError: null });
+  lookupAttemptsWriter.insert();
+  lookupAttemptsWriter.delete();
   db.select().from(orders);
+}
+
+// Codex #2: each table-bound writer reaches its own table and nothing else.
+export function tableBoundWritersCannotReachOrders() {
+  // @ts-expect-error ops_alerts' writer cannot insert into orders
+  opsAlertsWriter.insert(orders);
+  // @ts-expect-error ops_alerts' writer cannot update orders
+  opsAlertsWriter.update(orders);
+  // @ts-expect-error ops_alerts' writer cannot delete from orders
+  opsAlertsWriter.delete(orders);
+  // @ts-expect-error not an orders column
+  opsAlertsWriter.update().set({ locator: "X" });
+  // @ts-expect-error no raw execute
+  opsAlertsWriter.execute(sql`DELETE FROM orders`);
+  // @ts-expect-error no transaction or session
+  opsAlertsWriter.transaction(async () => undefined);
+  // @ts-expect-error lookup_attempts' writer cannot insert into orders
+  lookupAttemptsWriter.insert(orders);
+  // @ts-expect-error lookup_attempts' writer cannot update orders
+  lookupAttemptsWriter.update(orders);
+  // @ts-expect-error lookup_attempts' writer cannot delete from orders
+  lookupAttemptsWriter.delete(orders);
+  // @ts-expect-error no raw execute
+  lookupAttemptsWriter.execute(sql`DELETE FROM orders`);
+}
+
+// Codex #4: an admin handler holds the capability adminAction minted; a
+// context a caller builds itself is not one.
+declare const adminCtx: AdminContext;
+const feeInput = { country: "ES", band: 1000, returnFee: "0", exchangeFee: "0" };
+export function adminHandlersNeedTheFactorysCapability() {
+  // @ts-expect-error a fabricated { admin } object is not an admin context
+  saveShippingFeeHandler({ admin: "x" }, feeInput);
+  // @ts-expect-error nor is one shaped like the capability (the brand is nominal)
+  saveShippingFeeHandler({ target: { admin: "x" }, order: (id: string) => adminCtx.order(id) }, feeInput);
+  saveShippingFeeHandler(adminCtx, feeInput);
 }

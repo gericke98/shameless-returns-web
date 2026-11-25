@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { vid, vsub } from "./support/verified";
+import { vid, vsub, adminCtx } from "./support/verified";
 import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // The return fee is collected in TWO places, and self-booking has to be
@@ -160,7 +160,7 @@ vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).driz
 async function settleLine(product: Record<string, any>) {
   // The admin settle (F1 `settleRow`), called with the context `adminAction` builds.
   const { settleRowHandler } = await import("@/lib/server/handlers/admin/settleRow");
-  await settleRowHandler({ admin: "ops@example.com" }, { rowId: Number(product.id) });
+  await settleRowHandler(adminCtx("ops@example.com"), { rowId: Number(product.id) });
 }
 
 async function createTheShopifyReturn() {

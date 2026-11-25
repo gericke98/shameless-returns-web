@@ -1,12 +1,20 @@
 // The shape of @/db/drizzle for a test's vi.mock (F1 spec §11): the test's own
 // handle as the read handle, and the SAME handle, with the test's `transact`,
-// behind `writeDb(capability)` and `tableWriter(table)`. A test therefore
+// behind `writeDb(capability)` and the two table-bound writers. A test therefore
 // exercises exactly the handle it built: a real PGlite / PostgreSQL 16 one
 // (whose transact and readQuery are production's transactionsOver over that
 // driver), or a fake chain.
 //
 // `module` is read lazily, so a mock whose `default` is a getter over a
 // database started in beforeAll keeps working.
+import { lookupAttempts, opsAlerts } from "@/db/schema";
+
+const boundTo = (handle: () => any, table: unknown) => ({
+  insert: () => handle().insert(table),
+  update: () => handle().update(table),
+  delete: () => handle().delete(table),
+});
+
 export function drizzleModule(module: { default: any; transact?: (s: any[]) => Promise<any[][]>; readQuery?: (s: any) => Promise<{ rows: any[] }> }) {
   const writable = () => {
     const handle = module.default;
@@ -22,6 +30,7 @@ export function drizzleModule(module: { default: any; transact?: (s: any[]) => P
     },
     readQuery: (s: any) => (module.readQuery ? module.readQuery(s) : Promise.resolve({ rows: [] })),
     writeDb: (_capability: unknown) => writable(),
-    tableWriter: (_table: unknown) => writable(),
+    opsAlertsWriter: boundTo(writable, opsAlerts),
+    lookupAttemptsWriter: boundTo(writable, lookupAttempts),
   };
 }

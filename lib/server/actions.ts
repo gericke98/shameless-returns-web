@@ -23,12 +23,21 @@ import { currentOrderId } from "@/lib/orderAccess";
 import { adminEmail } from "@/lib/requireAdmin";
 import type { MessageKey } from "@/lib/i18n";
 import type { ActionResult, HandlerResult } from "@/lib/actionResult";
-import { fromSession, type VerifiedOrderId } from "./identity";
+import { adminTarget, fromSession, type AdminTarget, type VerifiedOrderId } from "./identity";
 import { orderScope, type OrderScope } from "./orderScope";
 import { enqueueOpsAlert } from "./opsAlertOutbox";
 
 export type CustomerContext = { orderId: VerifiedOrderId; order: OrderScope };
-export type AdminContext = { admin: string };
+/**
+ * What an admin handler holds (F1 spec §11 threat model, Codex #4): the
+ * capability `adminAction` minted from the authenticated session, never an
+ * object a handler could build. `target.admin` is who is acting; `order(id)`
+ * is an order that admin acts on.
+ */
+export type AdminContext = {
+  readonly target: AdminTarget;
+  readonly order: (id: string) => VerifiedOrderId;
+};
 export type PublicContext = Record<string, never>;
 
 type CustomerSchema = z.ZodType<{ expectedOrderId: string } & Record<string, unknown>, z.ZodTypeDef, unknown>;
@@ -116,7 +125,9 @@ export function adminAction<S extends z.AnyZodObject, V, R extends string>(
     if (!parsed.success) return { ok: false, reason: "invalid-input" };
 
     try {
-      return await handler({ admin }, parsed.data);
+      // Minted here, from the session just read; handlers only receive it.
+      const target = adminTarget({ admin });
+      return await handler({ target, order: (id) => adminTarget(id, target) }, parsed.data);
     } catch (error) {
       rethrowControlFlow(error);
       await reportActionError(name, null, error);

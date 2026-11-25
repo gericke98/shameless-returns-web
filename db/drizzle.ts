@@ -100,17 +100,26 @@ export function writeDb(capability: WriteCapability): WriteDb {
   return writable;
 }
 
-/** The two tables that hold no customer data (F1 spec §11). */
-export type NonCustomerTable = "ops_alerts" | "lookup_attempts";
-
 /**
- * The write handle for one non-customer table. Referenced only from
- * db/opsAlerts.ts and db/lookupAttempts.ts (tests/actionBoundary.test.ts).
+ * Writes bound to ONE table, for the two tables that hold no customer data
+ * (F1 spec §11 threat model, Codex #2). Each operation takes no table: it is
+ * fixed here, so `update().set(...)` only accepts that table's columns, and
+ * there is no execute, transaction or session to reach anything else.
+ * (Deliberately hostile code in the process is F2's: Postgres roles.)
  */
-export function tableWriter(table: NonCustomerTable): WriteDb {
-  void table;
-  return writable;
+function boundTo<T extends typeof schema.opsAlerts | typeof schema.lookupAttempts>(table: T) {
+  return Object.freeze({
+    insert: () => full.insert(table),
+    update: () => full.update(table),
+    delete: () => full.delete(table),
+  });
 }
+
+/** ops_alerts' writer. Referenced only from db/opsAlerts.ts (tests/actionBoundary.test.ts). */
+export const opsAlertsWriter = boundTo(schema.opsAlerts);
+
+/** lookup_attempts' writer. Referenced only from db/lookupAttempts.ts (tests/actionBoundary.test.ts). */
+export const lookupAttemptsWriter = boundTo(schema.lookupAttempts);
 
 /**
  * Run ONE raw statement inside a Postgres `READ ONLY` transaction (the Neon

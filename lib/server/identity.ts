@@ -63,24 +63,26 @@ export function verifiedByStripeSignature(metadata: { id: string }): VerifiedOrd
 }
 
 /**
- * An admin acting, from the admin session (`adminAction` ctx). Only admin
- * handlers call this. With an order id: that order (a `VerifiedOrderId`).
- * Without one: the session itself (`AdminTarget`), for an admin write keyed
- * by no single order (F1 spec §11, G3).
+ * An admin acting. Only `adminAction` (lib/server/actions.ts) calls this,
+ * after reading the admin next-auth session: handlers never mint, they
+ * receive the result in their context (F1 spec §11 threat model, Codex #4).
+ * With the session: the session itself (`AdminTarget`), for an admin write
+ * keyed by no single order. With an order id: that order (a
+ * `VerifiedOrderId`), and only for the holder of an `AdminTarget` (G3).
  */
-export function adminTarget(ctx: { admin: string }): AdminTarget;
-export function adminTarget(id: string, ctx: { admin: string }): VerifiedOrderId;
-export function adminTarget(a: string | { admin: string }, ctx?: { admin: string }): VerifiedOrderId | AdminTarget {
+export function adminTarget(session: { admin: string }): AdminTarget;
+export function adminTarget(id: string, admin: AdminTarget): VerifiedOrderId;
+export function adminTarget(a: string | { admin: string }, admin?: AdminTarget): VerifiedOrderId | AdminTarget {
   if (typeof a === "string") {
-    void ctx;
+    void admin;
     return mint(a);
   }
   return { admin: a.admin } as AdminTarget;
 }
 
 /**
- * A scheduled job, or an operator's system tool. Only cron routes, system
- * handlers and scripts/ call this. With an id: an order the job selected from
+ * A scheduled job, or an operator's tool. Only cron routes (after
+ * `verifyCronRequest`) and scripts/ call this. With an id: an order the job selected from
  * our own database (a `VerifiedOrderId`). Without one: the job itself
  * (`SystemTarget`), minted at its entry and passed down to what it writes
  * (F1 spec §11, G2/G3).

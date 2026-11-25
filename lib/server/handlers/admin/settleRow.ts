@@ -10,7 +10,6 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import db from "@/db/drizzle";
 import { productsOrder } from "@/db/schema";
-import { adminTarget } from "@/lib/server/identity";
 import { submissionForRow } from "@/lib/settlement/legacy";
 import { settleSubmission } from "@/lib/settlement/settle";
 import { ok, refuse, type HandlerResult } from "@/lib/actionResult";
@@ -35,12 +34,12 @@ export async function settleRowHandler(
     console.error(`settleRow: row ${input.rowId} not settled — no such line`);
     return refuse("not-settleable");
   }
-  const found = await submissionForRow(adminTarget(String(row.orderId), ctx), input.rowId);
+  const found = await submissionForRow(ctx.order(String(row.orderId)), input.rowId);
   if (!found.ok) {
     console.error(`settleRow: row ${input.rowId} not settled — held:${found.held}`);
     return refuse("not-settleable");
   }
-  const report = await settleSubmission(adminTarget(ctx), found.submissionId, [input.rowId], {
+  const report = await settleSubmission(ctx.target, found.submissionId, [input.rowId], {
     deadline: Date.now() + BUDGET_MS,
   });
   console.log(

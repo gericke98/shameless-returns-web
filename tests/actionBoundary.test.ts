@@ -165,8 +165,9 @@ const MINT_CALLERS: Record<string, string[]> = {
   fromSession: ["lib/server/actions.ts"],
   verifiedByLookup: ["lib/server/handlers/lookup.ts"],
   verifiedByStripeSignature: ["app/api/webhooks/stripe/route.ts"],
-  adminTarget: ["lib/server/handlers/admin/"],
-  systemTarget: ["app/api/cron/", "lib/server/handlers/system/", "scripts/"],
+  // Handlers never mint (spec §11 threat model): the admin factory mints from the session.
+  adminTarget: ["lib/server/actions.ts"],
+  systemTarget: ["app/api/cron/", "scripts/"],
   verifiedByAmphoraSecret: ["app/api/webhooks/amphora/route.ts"],
   // The submission capability: minted only for a row the scope just read or inserted.
   boundSubmission: ["lib/server/submissionScope.ts"],
@@ -256,7 +257,7 @@ function line(file: ts.SourceFile, node: ts.Node) {
 // ── Rule 6 (spec §11): writing is a capability, enforced by the TYPE of the
 // database handle. db/drizzle.ts exports a read handle; the write handle comes
 // only from writeDb(capability) or, for the two non-customer tables,
-// tableWriter(table). There is nothing left to analyse: tsc refuses a write
+// their table-bound writers. There is nothing left to analyse: tsc refuses a write
 // without a capability anywhere in the program. ────────────────────────────
 
 describe("rule 6: a write handle needs a capability", () => {
@@ -269,18 +270,21 @@ describe("rule 6: a write handle needs a capability", () => {
     expect(diagnostics).toEqual([]);
   });
 
-  it("tableWriter is referenced only from db/opsAlerts.ts and db/lookupAttempts.ts", () => {
-    const from = new Set<string>();
+  it("each table-bound writer is referenced only from its own table's module", () => {
+    const from: Record<string, Set<string>> = { opsAlertsWriter: new Set(), lookupAttemptsWriter: new Set() };
     for (const file of sources) {
       const name = rel(file.fileName);
       if (name === "db/drizzle.ts") continue;
       walk(file, (n) => {
         if (!ts.isIdentifier(n)) return;
         const target = resolved(n);
-        if (target?.name === "tableWriter" && declaredIn(target) === "db/drizzle.ts") from.add(`${name}`);
+        if (target && target.name in from && declaredIn(target) === "db/drizzle.ts") from[target.name].add(name);
       });
     }
-    expect(Array.from(from).sort()).toEqual(["db/lookupAttempts.ts", "db/opsAlerts.ts"]);
+    expect({
+      opsAlertsWriter: Array.from(from.opsAlertsWriter),
+      lookupAttemptsWriter: Array.from(from.lookupAttemptsWriter),
+    }).toEqual({ opsAlertsWriter: ["db/opsAlerts.ts"], lookupAttemptsWriter: ["db/lookupAttempts.ts"] });
   });
 
   it("nothing outside scripts/ and tests/ imports from scripts/ (scripts may mint systemTarget)", () => {

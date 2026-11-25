@@ -3,7 +3,6 @@ import "server-only";
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { writeDb } from "@/db/drizzle";
-import { adminTarget } from "@/lib/server/identity";
 import { SHIPPING_FEES_TAG } from "@/db/fees";
 import { shippingFees } from "@/db/schema";
 import { normalizeCountry } from "@/lib/countries";
@@ -47,7 +46,7 @@ export async function saveShippingFeeHandler(
 
   // A failed upsert throws to the factory: logged, alerted, answered `failed`,
   // never with raw DB text. revalidateTag runs only after a write that landed.
-  await writeDb(adminTarget(ctx))
+  await writeDb(ctx.target)
     .insert(shippingFees)
     .values({ countryCode, maxGrams, returnFeeCents, exchangeFeeCents, updatedAt: new Date() })
     .onConflictDoUpdate({

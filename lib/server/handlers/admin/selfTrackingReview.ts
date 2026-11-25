@@ -18,7 +18,7 @@ import { pinSelfTracking } from "@/lib/pinSelfTracking";
 import { readLocale } from "@/lib/i18n";
 import { ok, refuse, type HandlerResult } from "@/lib/actionResult";
 import type { AdminContext } from "@/lib/server/actions";
-import { adminTarget, type VerifiedOrderId } from "@/lib/server/identity";
+import type { VerifiedOrderId } from "@/lib/server/identity";
 import { sendSelfTrackingRejected } from "@/lib/server/selfReturnEmails";
 import { alertOps } from "@/lib/server/opsAlert";
 
@@ -41,8 +41,8 @@ export async function confirmSelfTrackingHandler(
   ctx: AdminContext,
   input: ReviewInput
 ): Promise<HandlerResult<{ pinned: boolean }, "not-pending">> {
-  const { admin } = ctx;
-  const id = adminTarget(input.orderId, ctx);
+  const { admin } = ctx.target;
+  const id = ctx.order(input.orderId);
   const { submissionId } = input;
 
   const [claimed] = await writeDb(id)
@@ -80,8 +80,8 @@ export async function rejectSelfTrackingHandler(
   ctx: AdminContext,
   input: ReviewInput
 ): Promise<HandlerResult<{}, "not-pending">> {
-  const { admin } = ctx;
-  const id = adminTarget(input.orderId, ctx);
+  const { admin } = ctx.target;
+  const id = ctx.order(input.orderId);
   const { submissionId } = input;
 
   // Read first, only so the email can quote the number. The UPDATE decides:

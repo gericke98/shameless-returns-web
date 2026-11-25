@@ -5,10 +5,7 @@
 // every export there to be an async action. These are plain helpers called from
 // a server action.
 import { and, eq, gte, lt, sql } from "drizzle-orm";
-import db, { tableWriter } from "./drizzle";
-
-/** lookup_attempts holds no customer data (F1 spec §11): its own writer. */
-const attempts = tableWriter("lookup_attempts");
+import db, { lookupAttemptsWriter } from "./drizzle";
 import { lookupAttempts } from "./schema";
 import { LOOKUP_WINDOW_MS, windowStart } from "@/lib/rateLimit";
 
@@ -43,12 +40,13 @@ export async function countRecentFailures(ip: string, now: number): Promise<numb
  */
 export async function recordFailedAttempt(ip: string, now: number): Promise<void> {
   try {
-    await attempts.insert(lookupAttempts).values({ ip });
+    // lookup_attempts holds no customer data: its own table-bound writer (F1 spec §11).
+    await lookupAttemptsWriter.insert().values({ ip });
 
     // Prune anything older than two windows — one window of slack so a row is
     // never removed while it could still count toward a live limit.
-    await attempts
-      .delete(lookupAttempts)
+    await lookupAttemptsWriter
+      .delete()
       .where(lt(lookupAttempts.attemptedAt, new Date(now - LOOKUP_WINDOW_MS * 2)));
   } catch (error) {
     console.error("recordFailedAttempt: could not record", error);

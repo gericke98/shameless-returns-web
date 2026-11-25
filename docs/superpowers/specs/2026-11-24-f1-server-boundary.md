@@ -334,3 +334,13 @@ The foundation removes the ability instead, and `tsc` enforces it for all code:
   `@ts-expect-error` on `db.insert(...)` / `db.execute(...)` from the read handle, on `writeDb("123")` with a plain string,
   and a revert-and-fail where `writeDb` accepts `string` → those type tests fail.
 - Rules 1–5, the manifest test, `orderScope`, `submissionScope`, `readQuery` and the race fix are unchanged.
+
+### §11 decisions (Santi, 2026-11-25: G1–G4 all A)
+- **G1** `verifiedByAmphoraSecret(order)`: a new order mint, only caller `app/api/webhooks/amphora/route.ts`, after its
+  existing `X-Secret` check. (Ownership by `payload.name` is still F4's to replace.)
+- **G2** Delete the finished one-offs `scripts/backfill-refund-transactions.ts`, `scripts/seed-shipping-fees.ts`,
+  `scripts/seed-shipping-fees-by-country.ts`. `systemTarget` may also be called from `scripts/**`, with a test that no
+  module outside `scripts/` and `tests/` imports from `scripts/`. Scripts run with `--conditions=react-server`.
+- **G3** Overloads on the existing symbols: `systemTarget(job): SystemTarget` / `systemTarget(id, job): VerifiedOrderId`;
+  `adminTarget(ctx): AdminTarget` / `adminTarget(id, ctx): VerifiedOrderId`. Caller rules unchanged.
+- **G4** No `LookupTarget`: `WriteCapability = VerifiedOrderId | VerifiedSubmission | AdminTarget | SystemTarget`.

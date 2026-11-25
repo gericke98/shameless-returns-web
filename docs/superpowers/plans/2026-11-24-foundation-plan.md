@@ -90,6 +90,18 @@ after a receipt time appears.
 is the truth both when an exchange is accepted and at settlement; a replacement that is gone becomes an explicit
 customer choice (other size/garment or refund), never a silent stockless order. First question for the plan: can an
 order Amphora imports, e.g. a real Shopify order under a fulfillment hold, be counted in Amphora's `reserved_quantity`?
+**Research answer (2026-11-26, Amphora Company API spec v1.15.0 + live GETs, Shopify docs via shopify-dev):**
+- Tested: Amphora `committed` = units of its orders in PROCESSING/PROCESSING_WAIT/EXCEPTION_CURRIER (184/184 match);
+  `reserved` = an order in stock EXCEPTION. A `NEW` imported order and a draft count nowhere. So no Shopify-side object
+  (draft hold, held order) reserves at Amphora; it allocates only at preparation.
+- Tested: Amphora pushes its `available` into Shopify's Amphora location, overwriting the hold; Shopify `on_hand` then
+  invents the held unit. Portal sizes read `ProductVariant.inventoryQuantity` (client-side disable only); the server never
+  re-checks stock at submit, payment or settlement.
+- Documented, untested: the only Amphora reservation is a B2B `POST /orders` with `flags:["reserve_stock"]`
+  (PROCESSING_RESERVED_STOCK). Unknown whether usable for a consumer exchange.
+- Tested: 15 of 44 open hold drafts are past `reserveInventoryUntil` yet still make settlement use DECREMENT_IGNORING_POLICY.
+- Unknown (only Amphora can answer): connector behaviour for held/unpaid orders; `reserve_stock` for B2C; pushing on_hand.
+- Our Shopify token lacks fulfillment-order read scopes.
 
 ## F5: One client per external service (HEAVY for Shopify/Stripe)
 - Shopify: the settlement transport becomes the only client (one API version, timeout, answer vs

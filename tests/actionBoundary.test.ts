@@ -25,6 +25,7 @@ beforeAll(() => {
   rootNames = parsed.fileNames;
   program = ts.createProgram(rootNames, compilerOptions);
   checker = program.getTypeChecker();
+  indexStores();
   sources = program
     .getSourceFiles()
     .filter(
@@ -285,41 +286,45 @@ function carriesCapability(type: ts.Type, at: ts.Node, depth = 0): boolean {
     .some((p) => carriesCapability(checker.getTypeOfSymbolAtLocation(p, at), at, depth + 1));
 }
 
-/** A function of OURS with a body (not a declaration file, not node_modules). */
-function ours(decl: ts.Declaration | undefined): ts.SignatureDeclaration | undefined {
-  if (!decl || !ts.isFunctionLike(decl)) return undefined;
+/** Declared outside our source (a library, the DOM, Node, a .d.ts): not ours to walk. */
+function isExternal(decl: ts.Declaration): boolean {
   const file = decl.getSourceFile();
-  if (file.isDeclarationFile || file.fileName.includes("/node_modules/")) return undefined;
-  if (rel(file.fileName).startsWith("..")) return undefined;
+  return file.isDeclarationFile || file.fileName.includes("/node_modules/") || rel(file.fileName).startsWith("..");
+}
+
+/** A function of OURS with a body. */
+function ours(decl: ts.Node | undefined): ts.SignatureDeclaration | undefined {
+  if (!decl || !ts.isFunctionLike(decl) || isExternal(decl as ts.Declaration)) return undefined;
   return (decl as ts.FunctionLikeDeclaration).body ? decl : undefined;
 }
 
-/**
- * The functions a VALUE may be, by its type: each call signature's
- * declaration. This follows any alias (`const save = writer`, a property
- * holding it, a re-export, a `cache(fn)` wrapper that returns `fn`'s type),
- * because the type checker, not the text, says what the value is.
- */
-function functionsOfValue(node: ts.Node): ts.SignatureDeclaration[] {
-  return checker
-    .getTypeAtLocation(node)
-    .getCallSignatures()
-    .map((sig) => ours(sig.declaration))
-    .filter((d): d is ts.SignatureDeclaration => !!d);
+const where = (node: ts.Node) => {
+  const file = node.getSourceFile();
+  return `${rel(file.fileName)}:${file.getLineAndCharacterOfPosition(node.getStart()).line + 1}`;
+};
+
+/** The value symbol a name finally stands for, through import/export aliases. */
+function valueSymbol(node: ts.Node): ts.Symbol | undefined {
+  let symbol = checker.getSymbolAtLocation(node);
+  while (symbol && symbol.flags & ts.SymbolFlags.Alias) symbol = checker.getAliasedSymbol(symbol);
+  return symbol && symbol.flags & ts.SymbolFlags.Value ? symbol : undefined;
 }
 
-/** The declaration a call resolves to (overloads and aliases resolved by the checker). */
-const resolvedCall = (call: ts.CallExpression) => checker.getResolvedSignature(call)?.declaration;
+const inDrizzle = (symbol: ts.Symbol, name: string) =>
+  symbol.name === name && !!symbol.declarations?.some((d) => rel(d.getSourceFile().fileName) === "db/drizzle.ts");
+/** db/drizzle.ts `transact`: raw SQL, tables unknown. */
+const isTransact = (symbol: ts.Symbol) => inDrizzle(symbol, "transact");
+/** db/drizzle.ts's database handle. */
+const isDbHandle = (symbol: ts.Symbol) => inDrizzle(symbol, "db");
 
-const nameOf = (fn: ts.SignatureDeclaration) => {
-  const file = rel(fn.getSourceFile().fileName);
-  const own = fn.name?.getText() ?? (ts.isVariableDeclaration(fn.parent) || ts.isPropertyAssignment(fn.parent)
-    ? fn.parent.name.getText()
-    : fn.parent && ts.isCallExpression(fn.parent) && ts.isVariableDeclaration(fn.parent.parent)
-      ? fn.parent.parent.name.getText()
-      : "<anonymous>");
-  return `${file}#${own}`;
-};
+/** drizzle's own `PgDatabase.insert/update/delete/execute`, whatever handle it is called on. */
+function drizzleWrite(decl: ts.Declaration | undefined): string | undefined {
+  if (!decl || !ts.isMethodDeclaration(decl) || !decl.getSourceFile().fileName.includes("/drizzle-orm/")) return undefined;
+  const owner = decl.parent;
+  if (!ts.isClassDeclaration(owner) || owner.name?.text !== "PgDatabase") return undefined;
+  const method = decl.name.getText();
+  return ["insert", "update", "delete", "execute"].includes(method) ? method : undefined;
+}
 
 /** The SQL table an expression names: follows local aliases to a `pgTable("name", …)` in db/schema.ts. */
 function tableOf(node: ts.Expression): string | undefined {
@@ -338,21 +343,193 @@ function tableOf(node: ts.Expression): string | undefined {
   return undefined;
 }
 
-/** drizzle's own `PgDatabase.insert/update/delete/execute`, whatever value it is called on. */
-function drizzleWrite(decl: ts.Declaration | undefined): string | undefined {
-  if (!decl || !ts.isMethodDeclaration(decl) || !decl.getSourceFile().fileName.includes("/drizzle-orm/")) return undefined;
-  const owner = decl.parent;
-  if (!ts.isClassDeclaration(owner) || owner.name?.text !== "PgDatabase") return undefined;
-  const method = decl.name.getText();
-  return ["insert", "update", "delete", "execute"].includes(method) ? method : undefined;
+/** Is `node` a name being declared (not a reference to a value)? */
+function isDeclarationName(node: ts.Node): boolean {
+  const p = node.parent;
+  return !!p && (p as any).name === node && (ts.isDeclarationStatement(p) || ts.isVariableDeclaration(p) ||
+    ts.isParameter(p) || ts.isPropertyDeclaration(p) || ts.isPropertyAssignment(p) || ts.isPropertySignature(p) ||
+    ts.isMethodDeclaration(p) || ts.isBindingElement(p) || ts.isFunctionExpression(p) || ts.isClassExpression(p) ||
+    ts.isEnumMember(p));
+  // A shorthand `{ save }` is NOT a declaration name here: it references the value `save`.
 }
 
 /**
- * What a function writes, from its own body (nested callbacks included):
- * the tables of drizzle's `insert/update/delete(table)`, and `null` for a raw
- * write (`execute`, db/drizzle.ts `transact`) whose tables cannot be resolved.
- * Each call is identified by the declaration the type checker RESOLVES it to,
- * so an aliased database handle or an aliased `transact` is still a write.
+ * What one reference hands the code that holds it. Reachability is by
+ * REFERENCE, not by resolving calls: a function can only run if its value
+ * was reached from running code, whatever the static type says (an
+ * annotation, an interface, `any`). So a reference to:
+ * - one of our functions makes it reachable;
+ * - a class of ours makes every method and member function reachable;
+ * - a variable or property of ours hands over everything its initializer and
+ *   every assignment to it anywhere in the program hold (`stores`);
+ * - db/drizzle.ts `transact`, or the database handle used other than as the
+ *   receiver of a drizzle method, is a raw write by the holder.
+ * Parameters hand over nothing new: their values are references in the
+ * caller, which is itself reachable.
+ */
+type Holdings = { fns: Set<ts.SignatureDeclaration>; raw: boolean };
+
+let stores: Map<ts.Symbol, ts.Expression[]>;
+let escapes: string[];
+const holdingsMemo = new Map<ts.Symbol, Holdings>();
+
+/** Program-wide: everything written into each symbol, and every write of ours into a place with no symbol. */
+function indexStores() {
+  stores = new Map();
+  escapes = [];
+  holdingsMemo.clear();
+  const add = (sym: ts.Symbol | undefined, value: ts.Expression, at: ts.Node) => {
+    if (sym) stores.set(sym, [...(stores.get(sym) ?? []), value]);
+    else {
+      if (holdsValue(value)) escapes.push(`${where(at)} stores \`${value.getText().slice(0, 50)}\` where no symbol can find it`);
+    }
+  };
+  // The app's own modules: not tests, not scripts/ (separate processes, never
+  // loaded by the server).
+  for (const file of program.getSourceFiles()) {
+    const path = rel(file.fileName);
+    if (file.isDeclarationFile || file.fileName.includes("/node_modules/") || path.startsWith("..")) continue;
+    if (path.startsWith("tests/") || path.startsWith("scripts/")) continue;
+    walk(file, (n) => {
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && n.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
+        const lhs = n.left;
+        const target = ts.isIdentifier(lhs)
+          ? valueSymbol(lhs)
+          : ts.isPropertyAccessExpression(lhs)
+            ? valueSymbol(lhs.name)
+            : ts.isElementAccessExpression(lhs)
+              ? valueSymbol(ts.isPropertyAccessExpression(lhs.expression) ? lhs.expression.name : lhs.expression)
+              : undefined;
+        add(target, n.right, n);
+      } else if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression)) {
+        // A method call can store its arguments in its receiver (`m.set(k, f)`, `a.push(f)`):
+        // whatever is handed to it, the receiver may hold.
+        const receiver = n.expression.expression;
+        const sym = valueSymbol(ts.isPropertyAccessExpression(receiver) ? receiver.name : receiver);
+        for (const arg of n.arguments) {
+          if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) continue;
+          if (!holdsValue(arg)) continue;
+          if (sym) stores.set(sym, [...(stores.get(sym) ?? []), arg]);
+          else if (checker.getTypeAtLocation(receiver).flags & ts.TypeFlags.Any) {
+            escapes.push(`${where(n)} hands \`${arg.getText().slice(0, 50)}\` to an untyped receiver`);
+          }
+        }
+      }
+    });
+  }
+}
+
+const isCallee = (n: ts.Node) => {
+  const p = n.parent;
+  if (ts.isCallExpression(p) && p.expression === n) return true;
+  return ts.isPropertyAccessExpression(p) && p.name === n && ts.isCallExpression(p.parent) && p.parent.expression === p;
+};
+
+/**
+ * Does the VALUE of `expr` carry one of our functions or raw SQL? An inline
+ * function, or a reference outside callee position that holds one (a call's
+ * callee hands over its result, which the callee's own body accounts for).
+ */
+function holdsValue(expr: ts.Node): boolean {
+  let found = false;
+  const visit = (n: ts.Node) => {
+    if (found) return;
+    if (ours(n)) {
+      found = true;
+      return;
+    }
+    if (!isCallee(n)) {
+      const h = holdingsOfReference(n, new Set());
+      if (h.fns.size || h.raw) {
+        found = true;
+        return;
+      }
+    }
+    n.forEachChild(visit);
+  };
+  visit(expr);
+  return found;
+}
+
+/** What a symbol, once referenced, hands its holder. */
+function holdingsOfSymbol(symbol: ts.Symbol, seen: Set<ts.Symbol>): Holdings {
+  const memo = holdingsMemo.get(symbol);
+  if (memo) return memo;
+  const out: Holdings = { fns: new Set(), raw: false };
+  if (seen.has(symbol)) return out;
+  seen.add(symbol);
+  const decls = symbol.declarations ?? [];
+  if (isTransact(symbol)) out.raw = true;
+  else if (decls.every((d) => isExternal(d))) {
+    // a library's value: nothing of ours in it
+  } else {
+    for (const d of decls) {
+      const fn = ours(d);
+      if (fn) out.fns.add(fn);
+      else if (ts.isClassDeclaration(d) || ts.isClassExpression(d)) {
+        for (const m of d.members) merge(out, holdingsOfNode(m, seen));
+      } else if (
+        (ts.isVariableDeclaration(d) || ts.isPropertyAssignment(d) || ts.isPropertyDeclaration(d)) &&
+        d.initializer
+      ) {
+        merge(out, holdingsOfNode(d.initializer, seen));
+      } else if (ts.isShorthandPropertyAssignment(d)) {
+        const v = checker.getShorthandAssignmentValueSymbol(d);
+        if (v) merge(out, holdingsOfSymbol(v, seen));
+      } else if (ts.isExportAssignment(d)) {
+        merge(out, holdingsOfNode(d.expression, seen));
+      }
+    }
+    for (const v of stores.get(symbol) ?? []) merge(out, holdingsOfNode(v, seen));
+  }
+  seen.delete(symbol);
+  if (seen.size === 0) holdingsMemo.set(symbol, out);
+  return out;
+}
+
+function merge(into: Holdings, from: Holdings) {
+  from.fns.forEach((f) => into.fns.add(f));
+  into.raw ||= from.raw;
+}
+
+/** What evaluating an expression (or a class member) can hand over: inline functions, and every reference in it. */
+function holdingsOfNode(node: ts.Node, seen: Set<ts.Symbol>): Holdings {
+  const out: Holdings = { fns: new Set(), raw: false };
+  const visit = (n: ts.Node) => {
+    const fn = ours(n);
+    if (fn) {
+      out.fns.add(fn); // its body is walked when it is reached, not here
+      return;
+    }
+    merge(out, holdingsOfReference(n, seen));
+    n.forEachChild(visit);
+  };
+  visit(node);
+  return out;
+}
+
+/** What one node hands over if it is a reference to a value. */
+function holdingsOfReference(n: ts.Node, seen: Set<ts.Symbol>): Holdings {
+  const none: Holdings = { fns: new Set(), raw: false };
+  if (!ts.isIdentifier(n) && !ts.isPrivateIdentifier(n)) return none;
+  if (isDeclarationName(n)) return none;
+  const symbol = valueSymbol(n);
+  if (!symbol) return none;
+  if (isDbHandle(symbol)) {
+    // The handle as the receiver of a drizzle method is judged by that
+    // method (writesOf); anywhere else it escapes, and may write anything.
+    const p = n.parent;
+    const receiver = ts.isPropertyAccessExpression(p) && p.expression === n;
+    return { fns: new Set(), raw: !receiver };
+  }
+  return holdingsOfSymbol(symbol, seen);
+}
+
+/**
+ * What a function writes, from its own body (nested callbacks included): the
+ * tables of drizzle's `insert/update/delete(table)` on any handle (by the
+ * method the checker resolves), `null` for raw SQL (`execute`, and any
+ * reference that hands over db/drizzle.ts `transact` or the bare handle).
  * A call through db/drizzle.ts `readQuery` is a READ (spec §10): it runs in a
  * Postgres READ ONLY transaction, so the database refuses any write in it.
  */
@@ -361,19 +538,12 @@ function writesOf(fn: ts.SignatureDeclaration): Array<string | null> {
   const body = (fn as ts.FunctionLikeDeclaration).body;
   if (!body) return out;
   walk(body, (n) => {
-    if (!ts.isCallExpression(n)) return;
-    const decl = resolvedCall(n);
-    const method = drizzleWrite(decl);
-    if (method === "execute") out.push(null);
-    else if (method) out.push(n.arguments[0] ? tableOf(n.arguments[0]) ?? null : null);
-    else if (
-      decl &&
-      ts.isFunctionDeclaration(decl) &&
-      decl.name?.text === "transact" &&
-      rel(decl.getSourceFile().fileName) === "db/drizzle.ts"
-    ) {
-      out.push(null);
+    if (ts.isCallExpression(n)) {
+      const method = drizzleWrite(checker.getResolvedSignature(n)?.declaration);
+      if (method === "execute") out.push(null);
+      else if (method) out.push(n.arguments[0] ? tableOf(n.arguments[0]) ?? null : null);
     }
+    if (holdingsOfReference(n, new Set()).raw) out.push(null);
   });
   return out;
 }
@@ -390,34 +560,41 @@ function takesCapability(fn: ts.SignatureDeclaration): boolean {
   return false;
 }
 
-/**
- * Every function of ours that `fn` calls (the declaration each call resolves
- * to) or hands on as a value (an argument whose type is one of our functions,
- * e.g. a `.map` callback).
- */
+/** Every function of ours that `fn`'s body hands to running code, by reference. */
 function calleesOf(fn: ts.SignatureDeclaration): ts.SignatureDeclaration[] {
   const out = new Set<ts.SignatureDeclaration>();
   const body = (fn as ts.FunctionLikeDeclaration).body;
   if (!body) return [];
-  walk(body, (n) => {
-    if (!ts.isCallExpression(n)) return;
-    const callee = ours(resolvedCall(n));
-    if (callee) out.add(callee);
-    for (const arg of n.arguments) {
-      if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) continue; // inline: part of fn's own body
-      for (const f of functionsOfValue(arg)) out.add(f);
-    }
-  });
+  // Nested functions are part of fn's body (walked here); references in them count.
+  walk(body, (n) => holdingsOfReference(n, new Set()).fns.forEach((f) => out.add(f)));
   out.delete(fn);
-  return Array.from(out);
+  // A nested function of fn is fn itself.
+  return Array.from(out).filter((f) => !isWithin(f, fn));
 }
+const isWithin = (inner: ts.Node, outer: ts.Node) => {
+  for (let n: ts.Node | undefined = inner.parent; n; n = n.parent) if (n === outer) return true;
+  return false;
+};
 
-/** Every reachable function that writes customer data without a capability, with its call chain. */
-function uncapabilitatedWriters(roots: ts.SignatureDeclaration[]): string[] {
+/** A root: a function to start from, or an export whose implementation cannot be found. */
+type Root = ts.SignatureDeclaration | { unresolved: string };
+
+/**
+ * Every reachable function that writes customer data without a capability,
+ * with its chain; and every place in the program that stores one of our
+ * functions (or raw SQL) where no symbol can find it (the walk fails closed).
+ */
+function uncapabilitatedWriters(roots: Root[]): string[] {
   const parent = new Map<ts.SignatureDeclaration, ts.SignatureDeclaration | null>();
-  const queue = [...roots];
-  for (const r of roots) parent.set(r, null);
-  const offenders: string[] = [];
+  const offenders: string[] = [...escapes];
+  const queue: ts.SignatureDeclaration[] = [];
+  for (const r of roots) {
+    if ("unresolved" in r) offenders.push(`${r.unresolved} is exported, but its implementation cannot be found`);
+    else if (!parent.has(r)) {
+      parent.set(r, null);
+      queue.push(r);
+    }
+  }
   while (queue.length) {
     const fn = queue.shift()!;
     const writes = writesOf(fn);
@@ -437,26 +614,39 @@ function uncapabilitatedWriters(roots: ts.SignatureDeclaration[]): string[] {
   return offenders.sort();
 }
 
-/** The functions a module exports, by the type of each export (so aliases and wrappers resolve). */
-function exportedFunctions(file: ts.SourceFile): ts.SignatureDeclaration[] {
+/** Every exported VALUE of a module that holds a function, typed or not, by what it holds. */
+function exportedFunctions(file: ts.SourceFile): Root[] {
   const moduleSymbol = checker.getSymbolAtLocation(file);
   if (!moduleSymbol) return [];
-  return checker
-    .getExportsOfModule(moduleSymbol)
-    .flatMap((sym) =>
-      checker
-        .getTypeOfSymbolAtLocation(sym, file)
-        .getCallSignatures()
-        .map((sig) => ours(sig.declaration))
-    )
-    .filter((d): d is ts.SignatureDeclaration => !!d);
+  const roots: Root[] = [];
+  for (const sym of checker.getExportsOfModule(moduleSymbol)) {
+    let value = sym;
+    while (value.flags & ts.SymbolFlags.Alias) value = checker.getAliasedSymbol(value);
+    if (!(value.flags & ts.SymbolFlags.Value)) continue; // a type
+    const held = holdingsOfSymbol(value, new Set());
+    held.fns.forEach((f) => roots.push(f));
+    if (!held.fns.size && checker.getTypeOfSymbolAtLocation(value, file).getCallSignatures().length) {
+      roots.push({ unresolved: `${rel(file.fileName)}#${sym.name}` });
+    }
+  }
+  return roots;
 }
 
-function customerHandlerRoots(): ts.SignatureDeclaration[] {
+function customerHandlerRoots(): Root[] {
   return sources
     .filter((f) => rel(f.fileName).startsWith("lib/server/handlers/customer/"))
     .flatMap(exportedFunctions);
 }
+
+const nameOf = (fn: ts.SignatureDeclaration) => {
+  const file = rel(fn.getSourceFile().fileName);
+  const own = fn.name?.getText() ?? (ts.isVariableDeclaration(fn.parent) || ts.isPropertyAssignment(fn.parent)
+    ? fn.parent.name.getText()
+    : fn.parent && ts.isCallExpression(fn.parent) && ts.isVariableDeclaration(fn.parent.parent)
+      ? fn.parent.parent.name.getText()
+      : "<anonymous>");
+  return `${file}#${own}`;
+};
 
 /**
  * Run `check` against the repo's program plus virtual `overlay` files (path →
@@ -472,12 +662,15 @@ function withOverlay<T>(overlay: Record<string, string>, check: (files: ts.Sourc
   host.getSourceFile = (f, lang, ...rest) =>
     virtual.has(f) ? ts.createSourceFile(f, virtual.get(f)!, lang, true) : getSourceFile.call(host, f, lang, ...rest);
   const fixtureProgram = ts.createProgram([...rootNames, ...Array.from(virtual.keys())], compilerOptions, host, program);
-  const saved = checker;
+  const saved = { program, checker, stores, escapes };
+  program = fixtureProgram;
   checker = fixtureProgram.getTypeChecker();
+  indexStores();
   try {
     return check(Array.from(virtual.keys()).map((f) => fixtureProgram.getSourceFile(f)!));
   } finally {
-    checker = saved;
+    ({ program, checker, stores, escapes } = saved);
+    holdingsMemo.clear();
   }
 }
 
@@ -523,7 +716,7 @@ const W = "lib/server/__rule6Writer.ts";
 describe("rule 6: customer handlers write customer data only through capabilities", () => {
   it("finds the handlers it starts from, and walks into the order scope", () => {
     const roots = customerHandlerRoots();
-    expect(roots.map(nameOf)).toEqual(
+    expect(roots.map((r) => ("unresolved" in r ? r.unresolved : nameOf(r)))).toEqual(
       expect.arrayContaining([
         "lib/server/handlers/customer/submitReturn.ts#submitReturnHandler",
         "lib/server/handlers/customer/cancelReturn.ts#cancelReturnHandler",
@@ -566,12 +759,69 @@ describe("rule 6: customer handlers write customer data only through capabilitie
     [
       "an aliased database handle and table",
       `export async function h(ctx: CustomerContext) { await writeThroughAliasedDb(ctx.orderId); }`,
-      `${H}#h -> ${W}#writeThroughAliasedDb writes orders without a capability`,
+      // The handle used other than as a drizzle receiver (aliased) is opaque: raw.
+      `${H}#h -> ${W}#writeThroughAliasedDb writes orders, <raw SQL> without a capability`,
     ],
     [
       "an aliased transact",
       `export async function h(ctx: CustomerContext) { await rawThroughAliasedTransact(ctx.orderId); }`,
       `${H}#h -> ${W}#rawThroughAliasedTransact writes <raw SQL> without a capability`,
+    ],
+    // Codex fix-check, finding 2: annotations must not hide an implementation.
+    [
+      "a call through an explicitly typed const alias",
+      `const save: (id: string) => Promise<void> = unbrandedWrite;
+       export async function h(ctx: CustomerContext) { await save(ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through a typed arrow wrapper",
+      `const wrap: (id: string) => Promise<void> = async (id) => { await unbrandedWrite(id); };
+       export async function h(ctx: CustomerContext) { await wrap(ctx.orderId); }`,
+      `${H}#h -> ${H}#wrap -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a typed exported handler",
+      `export const h: (ctx: CustomerContext) => Promise<void> = async (ctx) => { await unbrandedWrite(ctx.orderId); };`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through a cast that lies about the type",
+      `const save = unbrandedWrite as unknown as typeof brandedWrite;
+       export async function h(ctx: CustomerContext) { await save(ctx.orderId as never); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through an interface-typed dependency",
+      `type Deps = { save(id: string): Promise<void> };
+       async function run(deps: Deps, id: string) { await deps.save(id); }
+       export async function h(ctx: CustomerContext) { await run({ save: unbrandedWrite }, ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through a typed lookup table",
+      `const LOOKUP: Record<string, (id: string) => Promise<void>> = { a: unbrandedWrite };
+       export async function h(ctx: CustomerContext) { await LOOKUP["a"](ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through a registry filled elsewhere",
+      `const registry = new Map<string, (id: string) => Promise<void>>();
+       function register() { registry.set("x", unbrandedWrite); }
+       void register;
+       export async function h(ctx: CustomerContext) { await registry.get("x")!(ctx.orderId); }`,
+      `${H}#h -> ${W}#unbrandedWrite writes orders without a capability`,
+    ],
+    [
+      "a call through an untyped global (fails closed at the store)",
+      `(globalThis as any).save = unbrandedWrite;
+       export async function h(ctx: CustomerContext) { await (globalThis as any).save(ctx.orderId); }`,
+      `${H}:5 stores \`unbrandedWrite\` where no symbol can find it`,
+    ],
+    [
+      "an exported handler with no implementation (fails closed)",
+      `export declare const h: (ctx: CustomerContext) => Promise<void>;`,
+      `${H}#h is exported, but its implementation cannot be found`,
     ],
   ])("fails %s to an unbranded writer, naming the chain", (_label, body, expected) => {
     expect(fixtureOffenders(body)).toEqual([expected]);

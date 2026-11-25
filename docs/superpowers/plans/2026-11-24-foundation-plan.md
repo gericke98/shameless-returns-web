@@ -75,6 +75,22 @@ on a killed function, and the crash screen after a booked return.
 **Check:** on a Neon branch, kill the function after `returnCreate` and recovery completes; a second
 return on one order books its own parcel; cancel reaches the real `RET` record.
 
+## FX: An exchange's replacement is backed by the stock that ships it (HEAVY, found 2026-11-25)
+**Root weakness:** the exchange hold is a Shopify draft order with `reserveInventoryUntil`. It only raises Shopify
+`committed`; Amphora (the WMS that picks and ships) never sees it, and its inventory sync overwrites Shopify `available`
+with its own number. So Amphora keeps selling the held unit. At settlement `orderCreate` runs with
+`DECREMENT_IGNORING_POLICY` whenever a hold existed (`lib/settlement/exchangeOrderInput.ts:159`), so a sold-out
+replacement still becomes an order nobody can pick. The gate (`lib/autoApproveGate.ts`) never looks at stock.
+**Evidence (live reads 2026-11-25 ~23:50Z):** 59 open CAMBIO lines / 46 SKUs; 9 units on 8 SKUs exceed Amphora
+`available_quantity`: 20260303 ×2 (#312935, #313090), 20240802 (#313127), 20251904 (#310542), 20252103 (#313008),
+20260203 (#312939), 20260901 (#310848), 20261002 (#311618), 20261105 (#313061). Earlier victim #311904. None can settle
+on 2026-11-26 07:00Z: every one is pre-warehouse, has no receipt time, or has no Amphora record; the gate opens 2 days
+after a receipt time appears.
+**Foundation (to design in its own plan, rule 5):** the reservation lives where stock is allocated, or Amphora's stock
+is the truth both when an exchange is accepted and at settlement; a replacement that is gone becomes an explicit
+customer choice (other size/garment or refund), never a silent stockless order. First question for the plan: can an
+order Amphora imports, e.g. a real Shopify order under a fulfillment hold, be counted in Amphora's `reserved_quantity`?
+
 ## F5: One client per external service (HEAVY for Shopify/Stripe)
 - Shopify: the settlement transport becomes the only client (one API version, timeout, answer vs
   no-answer, userErrors, `@idempotent` where supported).

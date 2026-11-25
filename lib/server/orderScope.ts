@@ -29,7 +29,7 @@ export type AddressFields = {
   name: string;
   address1: string;
   address2?: string;
-  zip: string;
+  zip?: string;
   city: string;
   province?: string;
   phone?: string;

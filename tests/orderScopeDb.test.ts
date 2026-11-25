@@ -174,7 +174,16 @@ describe("saveAddress (handler + scope)", () => {
     expect((await order("A")).shipping_address1).toBeNull();
   });
 
-  it("refuses an incomplete collection address", async () => {
-    expect(await save("A", { ...address, zip: " " })).toEqual({ ok: false, reason: "incomplete" });
+  it("refuses an incomplete collection address (name, street or city missing)", async () => {
+    for (const missing of ["name", "address1", "city"]) {
+      expect(await save("A", { ...address, [missing]: " " })).toEqual({ ok: false, reason: "incomplete" });
+    }
+    expect((await order("A")).shipping_address1).toBeNull();
+  });
+
+  it("saves without a zip, which stays optional (spec §10)", async () => {
+    const { zip: _zip, ...noZip } = address;
+    expect(await save("A", noZip)).toEqual({ ok: true, value: {} });
+    expect(await save("A", { ...address, zip: "" })).toEqual({ ok: true, value: {} });
   });
 });

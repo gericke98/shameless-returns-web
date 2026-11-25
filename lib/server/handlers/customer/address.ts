@@ -15,7 +15,8 @@ export const saveAddressInput = z
     name: field,
     address1: field,
     address2: field.optional(),
-    zip: field,
+    /** Optional, as it always was (spec §10): not every destination has one. */
+    zip: field.optional(),
     city: field,
     province: field.optional(),
     phone: field.optional(),
@@ -40,7 +41,7 @@ export async function saveAddressHandler(
   ctx: CustomerContext,
   input: Omit<z.infer<typeof saveAddressInput>, "expectedOrderId">
 ): Promise<HandlerResult<{}, "incomplete" | "invalid-delivery" | "not-editable">> {
-  const required = [input.name, input.address1, input.zip, input.city];
+  const required = [input.name, input.address1, input.city];
   if (required.some((v) => v.trim().length === 0)) return refuse("incomplete");
 
   // The same all-or-nothing parse the form always went through: a partial

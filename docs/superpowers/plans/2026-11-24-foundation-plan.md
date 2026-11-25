@@ -58,6 +58,11 @@ It depends on F2 (CI proves the upgrade). F1 is written so it carries over uncha
   (`app/api/webhooks/amphora/route.ts:67`, a rule-4 violation found in the F1 review).
 - Pinning self-booked tracking and cancelling are transitions of the same shipment row, so a cancel can never cross
   an Amphora pin in flight (the window F1 rev 3 §4 leaves open after its `FOR UPDATE` claim).
+- A submission is `accepted` only after its Shopify return exists; a failed confirm moves it to `failed`, never leaves it
+  `accepted` (#313026, 2026-11-25: three portal retries left three accepted credit submissions for one line).
+- Before creating a return, read the line's existing Shopify returns. A customer's own request made outside the portal
+  (Shopify Inbox / customer account, status `REQUESTED`) holds the quantity, so `returnCreate` fails "invalid quantity".
+  The spec decides whether the portal adopts that request (`returnApproveRequest`) or refuses with a reason; never a retry.
 **Closes:** wrong warehouse items, second-return reuse, cancel hitting the SHP shadow, paid-but-no-return
 on a killed function, and the crash screen after a booked return.
 **Decision:** ledger + cron (proven here) vs Vercel Workflow (durable steps; needs F3).
@@ -79,7 +84,7 @@ return on one order books its own parcel; cancel reaches the real `RET` record.
 - Drain the legacy settlement path and delete `legacyTerms`.
 
 ## Order and why
-F1 → F2 → F3 → F4 → F5 → F6. F1 first because two holes are live and its foundation is small.
+F1 → F4 → F2 → F3 → F5 → F6 (Santi, 2026-11-25: F4 moved up after #313026). F1 first because two holes are live and its foundation is small.
 F2 before any HEAVY change so every phase ships through checks. F3 before F4 so the durable
 lifecycle is built on the framework it will live on.
 

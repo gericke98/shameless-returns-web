@@ -76,3 +76,19 @@ warehouse's existing path. A real reservation needs Amphora (questions below).
 - After deploy: the 9 currently-unbacked units are each held as shortfalls when they reach the gate; no `orderCreate`
   with IGNORING appears in the ledger again.
 - One Codex review of this plan, then one of the code.
+
+## Codex plan review round 1 (2026-11-26): CHANGES-REQUIRED, 9 blockers (full text: 2026-11-26-fx-codex-review-r1.md)
+Reviewed 69e8014, before D1–D3 were recorded. Substance:
+1. Inventory incomplete (lines.ts/orderScope stock predicate, replacementCatalogue, holdRelease callers, tests, historical
+   release_hold contracts). 2. Stock pool undefined: Amphora rows are per product_id × location_id; multi-line/qty demand.
+3. "Never a stockless order" is NOT achievable from our side: Amphora allocates nothing for a NEW order, so two
+   settlements (even sequential, minutes apart) can both read available=1. A guarantee needs Amphora allocation.
+4. Admission-only gate: goods/refund/exchange ops are independent (`after: null`); orderCreate rejection after goods are
+   processed strands the line; recovery re-runs frozen requests. Needs one delivery-resolution lifecycle.
+5. Converting to refund has no defined money obligation; no partial Stripe refund operation exists (cancellation helper
+   refunds the whole PaymentIntent).
+6. No agreement-revision model exists; scope keys are per submission, so a changed decision collides with frozen ops.
+7. Shortfall detection/decision/admission not serialized; `alertOps` is not the outbox.
+8. Releasing 44 drafts has no valid authority (releaseHoldDraft mints only for cancel/revert).
+9. Decisions + "until then" operator path.
+Status: open, to Santi (scope).

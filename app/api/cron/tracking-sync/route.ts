@@ -11,6 +11,7 @@ import { isInternationalOrder } from "@/lib/countries";
 import { tracksWithCorreos } from "@/lib/trackingStatus";
 import { readLocale } from "@/lib/i18n";
 import { alertOps } from "@/lib/server/opsAlert";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Tell customers where their return has got to.
@@ -43,14 +44,6 @@ export const dynamic = "force-dynamic";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
-/** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
- *  closed, never open — this route emails customers. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 /** Empty and whitespace fall back, because `Number("")` is 0 and a cap of zero
  *  or a silent default is not what an operator who left a box blank meant. */
 function intEnv(name: string, fallback: number): number {
@@ -79,7 +72,7 @@ async function sendEmail(payload: Record<string, unknown>): Promise<number> {
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

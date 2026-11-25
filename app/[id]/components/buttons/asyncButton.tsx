@@ -1,6 +1,7 @@
 "use client";
-import { useTransition } from "react";
-import { returnFunction } from "@/actions/return";
+import { useState, useTransition } from "react";
+import { submitReturn } from "@/actions/return";
+import { sharedRefusalKey, useCallAction } from "@/lib/callAction";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n/context";
 import type { ReturnMethod } from "@/lib/returnMethods";
@@ -9,7 +10,6 @@ export const AsyncButton = ({
   text,
   id,
   isCredit,
-  email,
   method,
   disabled,
   onPayoutRefused,
@@ -18,7 +18,6 @@ export const AsyncButton = ({
   id: string;
   /** Null when no payout step was shown (nothing comes back to the customer). */
   isCredit: boolean | null;
-  email: string;
   /**
    * The customer's claimed shipping lane, from ReturnMethodChoice (lifted up
    * to ClientOrder, the lowest common ancestor of the choice and this
@@ -37,8 +36,10 @@ export const AsyncButton = ({
 }) => {
   const t = useT();
   const [isPending, startTransition] = useTransition();
+  const callAction = useCallAction();
+  const [message, setMessage] = useState<string | null>(null);
 
-  return (
+  const button = (
     <button
       className={cn(
         // Matches ContinueButton — see nextButton.tsx for why the border stays.
@@ -52,22 +53,49 @@ export const AsyncButton = ({
       // duplicate submit on order #310185 was produced. The guards downstream
       // refused it correctly, but the second click should never happen.
       //
-      // `isPending` stays true through the redirect that ends returnFunction,
-      // so the button does not flicker back to clickable mid-flight.
+      // `isPending` stays true through the navigation that ends a successful
+      // submit, so the button does not flicker back to clickable mid-flight.
       disabled={isPending || disabled}
       aria-busy={isPending}
       onClick={() => {
         if (isPending || disabled) return;
+        setMessage(null);
         startTransition(async () => {
-          // Success redirects (to Stripe or /success) and never returns here.
-          // A refusal for a missing payout comes back as a value, not the
-          // crash screen.
-          const refusal = await returnFunction(id, isCredit, email, method);
-          if (refusal?.reason === "payout-required") onPayoutRefused();
+          const outcome = await callAction(submitReturn, {
+            expectedOrderId: id,
+            payout: isCredit === null ? null : isCredit ? "credit" : "refund",
+            method,
+          });
+          // No answer: whether the submit happened is unknown, so the crash
+          // screen (unchanged until F4 resolves unknown outcomes).
+          if (outcome.kind === "unknown") throw outcome.error;
+          const { result } = outcome;
+          if (result.ok) {
+            // Stripe Checkout or /success. A full navigation, so `isPending`
+            // has no flicker back to clickable before the page leaves.
+            window.location.assign(result.value.navigate);
+            await new Promise(() => {});
+            return;
+          }
+          if (result.reason === "payout-required") return onPayoutRefused();
+          if (result.reason === "no-session") return;
+          if (result.reason === "nothing-selected") return setMessage(t.action.nothingSelected);
+          if (result.reason === "submission-in-progress") return setMessage(t.action.submissionInProgress);
+          setMessage(t.action[sharedRefusalKey(result.reason) ?? "failed"]);
         });
       }}
     >
       {isPending ? t.common.processing : text}
     </button>
+  );
+  return message ? (
+    <div className="flex flex-col gap-2 w-full">
+      {button}
+      <p role="alert" className="text-sm text-red-600 text-center">
+        {message}
+      </p>
+    </div>
+  ) : (
+    button
   );
 };

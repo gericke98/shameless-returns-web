@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import * as schema from "@/db/schema";
@@ -69,7 +70,7 @@ vi.mock("@/lib/stripe", () => ({
 
 async function checkout() {
   const { createStripeUrl } = await import("@/lib/server/payments");
-  return createStripeUrl(order.id, order.email, false, "CORREOS" as any);
+  return createStripeUrl(vid(order.id), false, "CORREOS" as any);
 }
 
 beforeAll(async () => {
@@ -90,7 +91,7 @@ describe("createStripeUrl binds the session to the agreement it saved", () => {
     const result = await checkout();
 
     const [row] = (await pg.query<any>("SELECT * FROM return_submissions")).rows;
-    expect(result.submissionId).toBe(row.id);
+    expect(result).toMatchObject({ ok: true, submission: { id: row.id } });
     expect(sessions[0].client_reference_id).toBe(row.id);
     expect(sessions[0].metadata.submission_id).toBe(row.id);
     expect(row.stripe_session_id).toBe("cs_1");
@@ -113,7 +114,8 @@ describe("createStripeUrl binds the session to the agreement it saved", () => {
       await checkout();
     };
 
-    await expect(checkout()).rejects.toThrow(/superseded before checkout/);
+    // A value now (F1): the customer is told a submission is in progress.
+    expect(await checkout()).toEqual({ ok: false, reason: "submission-in-progress" });
 
     const rows = (await pg.query<any>(
       "SELECT state, stripe_session_id FROM return_submissions ORDER BY created_at"

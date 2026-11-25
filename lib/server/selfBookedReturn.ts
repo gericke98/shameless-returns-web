@@ -1,4 +1,5 @@
 import "server-only";
+import type { VerifiedOrderId } from "./identity";
 import { and, eq, isNull } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders } from "@/db/schema";
@@ -26,7 +27,7 @@ import { describeError } from "@/lib/describeError";
  * `createInternationalReturn`, so `createReturnShipment` can treat all three
  * lanes identically.
  */
-export async function createSelfBookedReturn(id: string): Promise<number> {
+export async function createSelfBookedReturn(id: VerifiedOrderId): Promise<number> {
   // Deliberately NOT `getOrderById` — that is wrapped in React `cache()` and
   // would serve a stale row (from an earlier read in this warm serverless
   // instance) to a second submit arriving right behind the first, defeating

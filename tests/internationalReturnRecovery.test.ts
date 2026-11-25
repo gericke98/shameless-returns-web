@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The failure that cost order #310972.
 //
@@ -79,7 +80,7 @@ vi.mock("axios", () => ({
 
 async function run() {
   const { createInternationalReturn } = await import("@/lib/server/amphoraReturn");
-  return createInternationalReturn("13194624794950");
+  return createInternationalReturn(vid("13194624794950"));
 }
 
 beforeEach(() => {

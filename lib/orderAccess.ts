@@ -6,6 +6,7 @@ import {
   signOrderSession,
   verifyOrderSession,
 } from "@/lib/orderSession";
+import type { VerifiedOrderId } from "@/lib/server/identity";
 
 // The next/headers layer for the portal session. Deliberately thin: all the
 // crypto lives in lib/orderSession.ts, which stays pure and unit-testable.
@@ -15,11 +16,12 @@ import {
 /**
  * Record that the caller has proven ownership of `orderId`.
  *
- * Called from `actions/order.ts` getOrder, at the point the order number and
- * contact email have already been checked. That check was always there; it just
+ * Called from the lookup handler (lib/server/handlers/lookup.ts), at the point
+ * the order number and contact email have already been checked — hence the
+ * `VerifiedOrderId` parameter. That check was always there; it just
  * had nowhere to record its result.
  */
-export async function issueOrderAccess(orderId: string): Promise<void> {
+export async function issueOrderAccess(orderId: VerifiedOrderId): Promise<void> {
   const expiresAt = Date.now() + ORDER_SESSION_TTL_MS;
 
   cookies().set(ORDER_SESSION_COOKIE, signOrderSession(orderId, expiresAt), {

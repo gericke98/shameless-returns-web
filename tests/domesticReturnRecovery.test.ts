@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The same defect as the Amphora path, on the flow that carries most of the
 // volume. `createShippingLabel` returned the EMAIL's status as its own, so a
@@ -57,7 +58,7 @@ vi.mock("axios", () => ({
 
 async function run() {
   const { createShippingLabel } = await import("@/lib/server/shipping");
-  return createShippingLabel(ORDER.id);
+  return createShippingLabel(vid(ORDER.id));
 }
 
 beforeEach(() => {

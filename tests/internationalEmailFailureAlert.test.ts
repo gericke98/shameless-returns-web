@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The international half of the August 2026 silent-email outage.
 //
@@ -71,7 +72,7 @@ vi.mock("axios", () => ({
 
 async function run() {
   const { createInternationalReturn } = await import("@/lib/server/amphoraReturn");
-  return createInternationalReturn(ORDER.id);
+  return createInternationalReturn(vid(ORDER.id));
 }
 
 beforeEach(async () => {

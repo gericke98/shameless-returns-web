@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { sweepReceiptShortfalls } from "@/lib/server/receiptShortfallSweep";
 import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Detect short receipts and queue their ops alerts.
@@ -12,15 +13,8 @@ import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-/** Same fail-closed rule as the other crons: unset secret = closed. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

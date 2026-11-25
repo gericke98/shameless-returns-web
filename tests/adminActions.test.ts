@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// `validateReturn` is a "use server" action: an independently addressable
+// `settleRow` (was `validateReturn`) is a "use server" action: an independently addressable
 // HTTP endpoint that `middleware.ts` does not cover. It settles money, so it
 // must be unreachable without an admin session (kept IN ADDITION to the
 // ledger's ownership, S2 plan L7), and nothing the caller sends may decide
@@ -11,6 +11,8 @@ const session = { value: null as unknown };
 vi.mock("next-auth", () => ({ getServerSession: async () => session.value }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {}, revalidateTag: () => {} }));
+vi.mock("@/lib/server/orderScope", () => ({ orderScope: () => ({}) }));
+vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlert: async () => true }));
 
 const calls = { lookup: [] as number[], settle: [] as Array<[string, number[]]> };
 const lookup = { value: { ok: true, submissionId: "sub-1" } as any };
@@ -30,9 +32,11 @@ vi.mock("@/lib/settlement/settle", () => ({
 
 const product = { id: 7, variant_id: "v1", price: "9999.00", credit: true, return_id: "r-evil" };
 
+// The client sends only the row id now (F1 §4); anything else is refused by
+// the `.strict()` schema before the handler runs.
 async function click(p: any = product) {
-  const { validateReturn } = await import("@/actions/refund");
-  await validateReturn(p, "any", { id: "1", total: "9999" });
+  const { settleRow } = await import("@/actions/refund");
+  return settleRow({ rowId: p.id } as any);
 }
 
 beforeEach(() => {
@@ -45,14 +49,14 @@ beforeEach(() => {
 
 describe("validateReturn authorization", () => {
   it("settles nothing for an unauthenticated caller", async () => {
-    await click();
+    expect(await click()).toEqual({ ok: false, reason: "not-admin" });
     expect(calls.lookup).toHaveLength(0);
     expect(calls.settle).toHaveLength(0);
   });
 
   it("settles nothing for a signed-in non-admin", async () => {
     session.value = { user: { role: "user" } };
-    await click();
+    expect(await click()).toEqual({ ok: false, reason: "not-admin" });
     expect(calls.settle).toHaveLength(0);
   });
 
@@ -75,8 +79,8 @@ describe("validateReturn does not trust caller-supplied money", () => {
 
   it("pays nothing for a row id that is not a positive integer", async () => {
     session.value = { user: { role: "admin" } };
-    await click({ ...product, id: "7; DROP TABLE" });
-    await click({ ...product, id: -1 });
+    expect(await click({ ...product, id: "7; DROP TABLE" })).toEqual({ ok: false, reason: "invalid-input" });
+    expect(await click({ ...product, id: -1 })).toEqual({ ok: false, reason: "invalid-input" });
     expect(calls.lookup).toHaveLength(0);
     expect(calls.settle).toHaveLength(0);
   });
@@ -86,7 +90,16 @@ describe("validateReturn does not trust caller-supplied money", () => {
     // holds it, and settlement is never started.
     session.value = { user: { role: "admin" } };
     lookup.value = { ok: false, held: "already-refunded" };
-    await click();
+    expect(await click()).toEqual({ ok: false, reason: "not-settleable" });
+    expect(calls.settle).toHaveLength(0);
+  });
+});
+
+describe("settleRow's input is the row id alone", () => {
+  it("refuses any other field the caller adds", async () => {
+    session.value = { user: { role: "admin" } };
+    const { settleRow } = await import("@/actions/refund");
+    expect(await settleRow({ rowId: 7, price: "9999.00" } as any)).toEqual({ ok: false, reason: "invalid-input" });
     expect(calls.settle).toHaveLength(0);
   });
 });

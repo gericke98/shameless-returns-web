@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The submit half of a self-booked return. It must book NOTHING: no Correos
 // pre-registration, no Amphora collection, no courier. The Amphora ticket is
@@ -93,7 +94,7 @@ vi.mock("axios", () => ({
 
 async function run() {
   const { createSelfBookedReturn } = await import("@/lib/server/selfBookedReturn");
-  return createSelfBookedReturn(ORDER.id);
+  return createSelfBookedReturn(vid(ORDER.id));
 }
 
 beforeEach(() => {

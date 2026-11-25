@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { pg16Available, startPg16 } from "./support/pg16";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
@@ -76,14 +77,14 @@ describe.skipIf(!pg16Available)("settlement races on PostgreSQL 16", () => {
 
   it("admission against cancellation: exactly one holder, and ops exist only if settlement won", async () => {
     const { insertAdmission } = await ledger();
-    const { claimForCancellation } = await import("@/lib/submissionCancellation");
+    const { claimForCancellation } = await import("@/lib/server/submissionScope");
     for (let i = 0; i < ROUNDS; i += 1) {
       await env.reset();
       const seeded = await seedSubmission(env.pool as any);
       const plan = planFor(seeded);
       const [admitted, cancelled] = await Promise.all([
         insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] }),
-        claimForCancellation(seeded.id),
+        claimForCancellation(vsub(seeded.orderId, seeded.id)),
       ]);
       expect(admitted.admitted !== cancelled).toBe(true);
       const [s] = await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]);

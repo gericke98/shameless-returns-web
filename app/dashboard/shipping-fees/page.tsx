@@ -2,6 +2,7 @@ import { getFeeTable } from "@/db/fees";
 import { SUPPORTED_COUNTRIES } from "@/lib/countries";
 import { DEFAULT_FEE_KEY, UNBOUNDED_MAX_GRAMS, type CountryBands } from "@/lib/fees";
 import { FeesTable } from "./FeesTable";
+import { requireAdmin } from "@/lib/requireAdmin";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +24,7 @@ function bandLabel(maxGrams: number, previousMaxGrams: number | null) {
 }
 
 export default async function ShippingFeesPage() {
+  await requireAdmin();
   const table = await getFeeTable();
   const fallback = table[DEFAULT_FEE_KEY] ?? [];
 

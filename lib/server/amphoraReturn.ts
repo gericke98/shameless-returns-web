@@ -1,4 +1,5 @@
 import "server-only";
+import type { VerifiedOrderId } from "./identity";
 // Server-only module (reads secret env, hits the Amphora API + DB). Imported
 // only by server actions / route handlers — NOT a "use server" action module,
 // because it also exports the sync helper `isInternationalOrder`.
@@ -91,7 +92,7 @@ async function sendAmphoraConfirmationEmail(
  * would succeed and the return would never be created. The gate belongs on the
  * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
  */
-export async function createInternationalReturn(id: string): Promise<number> {
+export async function createInternationalReturn(id: VerifiedOrderId): Promise<number> {
   const order = await getOrderById(id);
   if (!order) return 404;
 

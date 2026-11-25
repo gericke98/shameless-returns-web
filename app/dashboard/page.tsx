@@ -45,10 +45,7 @@ async function ReturnsList() {
       )
     ) as string[];
 
-    let variantInfoById: Record<
-      string,
-      { productTitle: string; variantTitle: string }
-    > = {};
+    let variantInfoById: Record<string, { productTitle: string; variantTitle: string }> = {};
     try {
       variantInfoById = await getVariantsByIds(variantIds);
     } catch (error) {

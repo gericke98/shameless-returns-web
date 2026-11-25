@@ -1,7 +1,8 @@
 "use client";
 
 import { setLocale } from "@/actions/locale";
-import { useLocale } from "@/lib/i18n/context";
+import { useLocale, useT } from "@/lib/i18n/context";
+import { useCallAction } from "@/lib/callAction";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -18,8 +19,11 @@ export const LanguageSwitcher = () => {
   const locale = useLocale();
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
+  const [notSaved, setNotSaved] = useState(false);
+  const callAction = useCallAction();
+  const t = useT();
 
-  return (
+  const select = (
     <select
       aria-label="Language"
       value={locale}
@@ -27,8 +31,13 @@ export const LanguageSwitcher = () => {
       onChange={async (e) => {
         const next = e.target.value === "en" ? "en" : "es";
         setIsSaving(true);
+        setNotSaved(false);
         try {
-          await setLocale(next);
+          const outcome = await callAction(setLocale, { locale: next });
+          if (outcome.kind === "unknown" || !outcome.result.ok) {
+            setNotSaved(true);
+            return;
+          }
           // setLocale revalidates the root layout server-side, but that only
           // invalidates the cache entry — it does not by itself force this
           // client to re-fetch and re-render with the new locale, especially
@@ -45,5 +54,15 @@ export const LanguageSwitcher = () => {
       <option value="es">Español</option>
       <option value="en">English</option>
     </select>
+  );
+  return notSaved ? (
+    <span className="inline-flex items-center gap-2">
+      {select}
+      <span role="alert" className="text-xs text-red-600">
+        {t.action.notSaved}
+      </span>
+    </span>
+  ) : (
+    select
   );
 };

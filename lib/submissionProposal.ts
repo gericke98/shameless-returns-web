@@ -2,38 +2,43 @@
 // submission, for checkout (actions/payments.ts).
 //
 // Deliberately NOT a "use server" module: every export of one is a callable
-// endpoint, and this writes money terms for any order id it is given. Callers
-// gate access themselves.
+// endpoint. It writes money terms, so it takes a `VerifiedOrderId` (F1): only
+// a caller holding a credential for the order can reach it.
 import { getFeeTable } from "@/db/fees";
 import { getOrderTotal } from "@/db/queries";
-import { proposeSubmission, type SubmissionLineInput } from "@/db/submissions";
+import type { SubmissionLineInput } from "@/db/submissions";
+import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
+import { proposeSubmission } from "@/lib/server/submissionScope";
 import type { Agreement } from "@/lib/agreement";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { resolveFulfillmentLineItems } from "@/lib/fulfillmentLines";
 import { loadBasket } from "@/lib/loadBasket";
 import type { ReturnMethod } from "@/lib/returnMethods";
 import { selectionTerms, tenderFromIsCredit } from "@/lib/selectionTerms";
-import { PayoutRequiredError } from "@/lib/payoutRequired";
 
 export type Proposal = {
-  submissionId: string;
+  submission: VerifiedSubmission;
   agreement: Agreement;
   loaded: NonNullable<Awaited<ReturnType<typeof loadBasket>>>;
 };
+
+/** Why there is no agreement to save. Values, not throws: the customer can act on each. */
+export type ProposalRefusal = "nothing-selected" | "payout-required" | "submission-in-progress";
 
 /**
  * The agreement for the order's current selection, and each line's identity:
  * its row, its Shopify line item and — resolved here, before anything is paid
  * — the fulfillment line item the Shopify return will name.
  *
- * Null when the order is gone or nothing is selected. Throws when a selected
- * line has no fulfillment line item: it was never shipped, so there is nothing
- * to send back, and agreeing terms for it would charge for a return that
- * cannot be made.
+ * `nothing-selected` when the order is gone or nothing is selected;
+ * `payout-required` when money comes back and no payout was chosen. Throws
+ * when a selected line has no fulfillment line item: it was never shipped, so
+ * there is nothing to send back, and agreeing terms for it would charge for a
+ * return that cannot be made.
  */
-async function currentAgreement(orderId: string, isCredit: boolean | null, method: ReturnMethod) {
+async function currentAgreement(orderId: VerifiedOrderId, isCredit: boolean | null, method: ReturnMethod) {
   const loaded = await loadBasket(orderId);
-  if (!loaded || !loaded.basket.hasItems) return null;
+  if (!loaded || !loaded.basket.hasItems) return { ok: false as const, reason: "nothing-selected" as const };
   const { order, basket } = loaded;
 
   // Two legs, two zones. The parcel is collected from `order.shipping*` and
@@ -49,7 +54,7 @@ async function currentAgreement(orderId: string, isCredit: boolean | null, metho
   // The payout is the customer's choice, never a default (#312385). When money
   // comes back it must have been made explicitly; when nothing comes back the
   // tender moves no money and the portal shows no choice.
-  if (!terms.agreement) throw new PayoutRequiredError(orderId);
+  if (!terms.agreement) return { ok: false as const, reason: "payout-required" as const };
   const agreement = terms.agreement;
 
   const rowById = new Map<number, any>(
@@ -79,31 +84,30 @@ async function currentAgreement(orderId: string, isCredit: boolean | null, metho
       notes: row?.notes ?? null,
     };
   });
-  return { agreement, loaded, lines };
+  return { ok: true as const, agreement, loaded, lines };
 }
 
 /**
  * Save the current selection as a submission awaiting payment, superseding
- * any earlier one. Null when there is nothing to submit. Throws when another
- * submission for the same order is being saved at the same instant (a double
- * submit): that one carries on, and this one must not open a second checkout
- * for the same goods.
+ * any earlier one. `submission-in-progress` when another submission for the
+ * same order is being saved at the same instant (a double submit): that one
+ * carries on, and this one must not open a second checkout for the same goods.
  */
 export async function proposeCurrentSelection(
-  orderId: string,
+  orderId: VerifiedOrderId,
   isCredit: boolean | null,
   method: ReturnMethod
-): Promise<Proposal | null> {
+): Promise<{ ok: true; proposal: Proposal } | { ok: false; reason: ProposalRefusal }> {
   const current = await currentAgreement(orderId, isCredit, method);
-  if (!current) return null;
-  const proposed = await proposeSubmission({
-    orderId,
+  if (!current.ok) return current;
+  const proposed = await proposeSubmission(orderId, {
     returnMethod: method,
     agreement: current.agreement,
     lines: current.lines,
   });
-  if (!proposed.ok) {
-    throw new Error(`Order ${orderId}: a submission is already being saved`);
-  }
-  return { submissionId: proposed.id, agreement: current.agreement, loaded: current.loaded };
+  if (!proposed.ok) return { ok: false, reason: "submission-in-progress" };
+  return {
+    ok: true,
+    proposal: { submission: proposed.submission, agreement: current.agreement, loaded: current.loaded },
+  };
 }

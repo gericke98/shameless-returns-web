@@ -1,4 +1,5 @@
 import "server-only";
+import type { VerifiedOrderId } from "./identity";
 // Server-only: talks to the Shopify Admin API and the database. Imported by
 // server actions and route handlers.
 //
@@ -68,7 +69,7 @@ const CREATE = `
  * so a Stripe webhook retry cannot freeze the stock twice.
  */
 export async function reserveExchangeStock(
-  orderId: string,
+  orderId: VerifiedOrderId,
   // The lines to hold, from the confirmed submission — not re-read from the
   // rows, which another tab may have edited since the customer paid.
   agreed: ExchangeLine[]

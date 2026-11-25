@@ -13,8 +13,14 @@ afterEach(cleanup);
 
 const submitReturnTracking = vi.fn();
 
-vi.mock("@/actions/selfBookedTracking", () => ({
-  submitReturnTracking: (...args: unknown[]) => submitReturnTracking(...args),
+// The test keeps the old positional shape for its assertions; the mock maps
+// the action's object input onto it.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
+vi.mock("@/actions/tracking", () => ({
+  submitTracking: (input: any) =>
+    input.trackingUrl === undefined
+      ? submitReturnTracking(input.expectedOrderId, input.carrierCode, input.trackingNumber)
+      : submitReturnTracking(input.expectedOrderId, input.carrierCode, input.trackingNumber, input.trackingUrl),
 }));
 
 vi.mock("@/lib/i18n/context", () => ({
@@ -44,7 +50,7 @@ vi.mock("@/lib/i18n/context", () => ({
 
 beforeEach(() => {
   submitReturnTracking.mockReset();
-  submitReturnTracking.mockResolvedValue({ ok: true });
+  submitReturnTracking.mockResolvedValue({ ok: true, value: { pending: false } });
 });
 
 describe("TrackingCapture", () => {
@@ -240,7 +246,7 @@ describe("a number that cannot be the tracking number", () => {
   });
 
   it("says the number is saved and being checked when the server holds it for ops", async () => {
-    submitReturnTracking.mockResolvedValue({ ok: true, pending: true });
+    submitReturnTracking.mockResolvedValue({ ok: true, value: { pending: true } });
     const user = userEvent.setup();
     render(<TrackingCapture id="132210" orderNumber="#313127" />);
     await user.selectOptions(screen.getByLabelText("Carrier"), "DHL");

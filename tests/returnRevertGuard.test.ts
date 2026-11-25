@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // Order #310957. The customer submitted, Shopify created return #310957-R1 and
@@ -116,22 +117,22 @@ vi.mock("@/lib/fulfillmentLines", () => ({
   refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
 }));
 
-vi.mock("@/db/submissions", () => ({
-  getSubmission: async () =>
+vi.mock("@/lib/server/submissionScope", () => ({
+  loadSubmission: async () =>
     acceptedSubmission("13192219558214", state.rows, {
       fulfillment: FULFILLMENT_LINE_ITEMS,
       returnLineItemIds: submissionState.returnLineItemIds,
     }),
-  recordConfirmation: (...args: unknown[]) => (recorded as any)(...args),
+  recordConfirmation: (_sub: unknown, ...args: unknown[]) => (recorded as any)(...args),
 }));
 
 async function revert(id: string) {
   const mod = await import("@/lib/submissionConfirmation");
-  return mod.revertFinalOrder(id);
+  return mod.revertFinalOrder(vid(id));
 }
 async function confirm() {
   const mod = await import("@/lib/submissionConfirmation");
-  return mod.confirmSubmission("sub-1");
+  return mod.confirmSubmission(vsub("13192219558214", "sub-1"));
 }
 
 beforeEach(() => {

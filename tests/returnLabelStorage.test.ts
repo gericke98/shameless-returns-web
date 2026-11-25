@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // Correos hands the label PDF over exactly once, in the <Fichero> of the
 // PreRegistro response, and there is no way to ask for it again. We used to
@@ -92,7 +93,7 @@ describe("storing the label PDF", () => {
   it("keeps the PDF against the tracking number it belongs to", async () => {
     const { createShippingLabel } = await load();
 
-    await createShippingLabel(ORDER.id);
+    await createShippingLabel(vid(ORDER.id));
 
     expect(saved).toEqual([
       { orderId: ORDER.id, trackingNumber: TRACKING, pdfBase64: PDF },
@@ -102,7 +103,7 @@ describe("storing the label PDF", () => {
   it("attaches the same PDF it stored", async () => {
     const { createShippingLabel } = await load();
 
-    await createShippingLabel(ORDER.id);
+    await createShippingLabel(vid(ORDER.id));
 
     const attachment = posted[0]?.Attachments?.find(
       (a: any) => a.Name === "Return_label.pdf"
@@ -115,7 +116,7 @@ describe("storing the label PDF", () => {
     behaviour.emailFails = true;
     const { createShippingLabel } = await load();
 
-    await createShippingLabel(ORDER.id);
+    await createShippingLabel(vid(ORDER.id));
 
     expect(saved).toHaveLength(1);
   });
@@ -124,7 +125,7 @@ describe("storing the label PDF", () => {
     behaviour.correos = CORREOS_NO_PDF;
     const { createShippingLabel } = await load();
 
-    await createShippingLabel(ORDER.id);
+    await createShippingLabel(vid(ORDER.id));
 
     expect(saved).toHaveLength(0);
     // And it must not send an email claiming a label is attached.
@@ -135,7 +136,7 @@ describe("storing the label PDF", () => {
     behaviour.correos = CORREOS_REJECTED;
     const { createShippingLabel } = await load();
 
-    await createShippingLabel(ORDER.id);
+    await createShippingLabel(vid(ORDER.id));
 
     expect(saved).toHaveLength(0);
   });
@@ -146,7 +147,7 @@ describe("re-sending a stored label", () => {
     storedLabel = { trackingNumber: TRACKING, pdfBase64: PDF };
     const { resendReturnLabel } = await load();
 
-    await expect(resendReturnLabel(ORDER.id)).resolves.toBe(200);
+    await expect(resendReturnLabel(vid(ORDER.id))).resolves.toBe(200);
 
     expect(posted).toHaveLength(1);
     const attachment = posted[0].Attachments.find(
@@ -163,7 +164,7 @@ describe("re-sending a stored label", () => {
 
     // 409, not 200 and not a fresh registration — re-registering costs a real
     // uncancellable shipment and must be a deliberate choice.
-    await expect(resendReturnLabel(ORDER.id)).resolves.toBe(409);
+    await expect(resendReturnLabel(vid(ORDER.id))).resolves.toBe(409);
     expect(posted).toHaveLength(0);
   });
 
@@ -172,7 +173,7 @@ describe("re-sending a stored label", () => {
     behaviour.emailFails = true;
     const { resendReturnLabel } = await load();
 
-    await expect(resendReturnLabel(ORDER.id)).resolves.not.toBe(200);
+    await expect(resendReturnLabel(vid(ORDER.id))).resolves.not.toBe(200);
   });
 });
 

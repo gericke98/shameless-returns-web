@@ -1,4 +1,5 @@
 import "server-only";
+import type { VerifiedOrderId } from "./identity";
 import db from "@/db/drizzle";
 import {
   getLatestReturnLabel,
@@ -295,7 +296,7 @@ async function sendEmail(
  * would succeed and the return would never be created. The gate belongs on the
  * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
  */
-export async function createShippingLabel(id: string): Promise<number> {
+export async function createShippingLabel(id: VerifiedOrderId): Promise<number> {
   const order = await getOrderById(id);
   if (!order) return 404;
 
@@ -440,7 +441,7 @@ export async function createShippingLabel(id: string): Promise<number> {
  * response that carried no `<Fichero>`). That is the case where a new
  * registration really is the only option, and it should be a deliberate choice.
  */
-export async function resendReturnLabel(id: string): Promise<number> {
+export async function resendReturnLabel(id: VerifiedOrderId): Promise<number> {
   const order = await getOrderByIdFresh(id);
   if (!order) return 404;
 

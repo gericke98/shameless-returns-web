@@ -540,7 +540,21 @@ export async function getProduct(id: string) {
   }
 }
 
-export async function getVariantsByIds(variantIds: string[]) {
+/**
+ * A variant as Shopify reports it now. `productStatus` and `inventoryQuantity`
+ * are what `isOfferedReplacement` (lib/replacementCatalogue.ts) decides on, so
+ * the server checks an exchange against the same policy the dialog offers.
+ */
+export type VariantInfo = {
+  productTitle: string;
+  variantTitle: string;
+  productId: string;
+  productStatus: string | null;
+  inventoryQuantity: number | null;
+  availableForSale: boolean;
+};
+
+export async function getVariantsByIds(variantIds: string[]): Promise<Record<string, VariantInfo>> {
   const uniqueIds = Array.from(new Set(variantIds)).filter(Boolean);
   if (uniqueIds.length === 0) {
     return {};
@@ -555,8 +569,12 @@ export async function getVariantsByIds(variantIds: string[]) {
         ... on ProductVariant {
           id
           title
+          inventoryQuantity
+          availableForSale
           product {
+            id
             title
+            status
           }
         }
       }
@@ -584,16 +602,17 @@ export async function getVariantsByIds(variantIds: string[]) {
     }
 
     const variants = data?.nodes ?? [];
-    const variantInfoById: Record<
-      string,
-      { productTitle: string; variantTitle: string }
-    > = {};
+    const variantInfoById: Record<string, VariantInfo> = {};
 
     for (const node of variants) {
       if (!node?.id || !node?.product?.title) continue;
       variantInfoById[node.id] = {
         productTitle: node.product.title,
         variantTitle: node.title,
+        productId: String(node.product.id ?? ""),
+        productStatus: node.product.status ?? null,
+        inventoryQuantity: typeof node.inventoryQuantity === "number" ? node.inventoryQuantity : null,
+        availableForSale: node.availableForSale === true,
       };
     }
 
@@ -695,6 +714,7 @@ export async function getProducts() {
           node {
             id
             title
+            status
             handle
             description
             images(first: 1) {

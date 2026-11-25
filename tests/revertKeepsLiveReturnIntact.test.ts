@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 
 // Order #311329 (Koen Krijnen, Netherlands), 2026-08-21. A paid exchange whose
 // Amphora booking reported 501 — the POST threw and the immediate read-back
@@ -59,7 +60,7 @@ vi.mock("@/db/drizzle", () => {
 
 async function revert() {
   const { revertFinalOrder } = await import("@/lib/submissionConfirmation");
-  return revertFinalOrder("13238997909830");
+  return revertFinalOrder(vid("13238997909830"));
 }
 
 beforeEach(() => {

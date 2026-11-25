@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // The return fee is collected in TWO places, and self-booking has to be
@@ -73,8 +74,8 @@ vi.mock("@/lib/fulfillmentLines", () => ({
   refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
 }));
 
-vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => acceptedSubmission(ORDER.id, LINE_ROWS, { ...agreed, fulfillment: FULFILLMENT_LINE_ITEMS }),
+vi.mock("@/lib/server/submissionScope", () => ({
+  loadSubmission: async () => acceptedSubmission(ORDER.id, LINE_ROWS, { ...agreed, fulfillment: FULFILLMENT_LINE_ITEMS }),
   recordConfirmation: async () => [],
 }));
 const returnInputs: any[] = [];
@@ -157,13 +158,14 @@ vi.mock("@/db/drizzle", () => {
 });
 
 async function settleLine(product: Record<string, any>) {
-  const { validateReturn } = await import("@/actions/refund");
-  await validateReturn(product, "any", { id: ORDER.id });
+  // The admin settle (F1 `settleRow`), called with the context `adminAction` builds.
+  const { settleRowHandler } = await import("@/lib/server/handlers/admin/settleRow");
+  await settleRowHandler({ admin: "ops@example.com" }, { rowId: Number(product.id) });
 }
 
 async function createTheShopifyReturn() {
   const { confirmSubmission } = await import("@/lib/submissionConfirmation");
-  await confirmSubmission("sub-1");
+  await confirmSubmission(vsub(ORDER.id, "sub-1"));
 }
 
 beforeEach(() => {

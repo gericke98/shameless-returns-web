@@ -1,59 +1,58 @@
-"use server";
-
-import { and, eq, isNull } from "drizzle-orm";
-import db from "@/db/drizzle";
-import { orders } from "@/db/schema";
-import { getOrderByIdFresh } from "@/db/queries";
-import { hasOrderAccess } from "@/lib/orderAccess";
-import { carrierByCode, checkTrackingNumber } from "@/lib/carriers";
+import "server-only";
+// The capture half of a self-booked return (F1 spec §4 `submitTracking`): the
+// customer tells us who they shipped with and the tracking number, and we
+// tell the warehouse. Wrapped by `customerAction` in actions/tracking.ts.
+//
+// The claim is made for an IDENTIFIED self-booked submission
+// (`activeSelfSubmission`), never inferred from `orders.return_method`, which
+// is written before checkout; and it is one transaction that serializes with
+// a cancellation (`claimTracking`).
+import { z } from "zod";
+import { carrierByCode, checkTrackingNumber, type TrackingNumberProblem } from "@/lib/carriers";
 import { checkTrackingUrl } from "@/lib/trackingUrl";
-import { alertOps } from "@/lib/server/opsAlert";
 import { verifyWithCarrier } from "@/lib/carrierLookup";
 import { pinSelfTracking } from "@/lib/pinSelfTracking";
+import { ok, refuse, type HandlerResult } from "@/lib/actionResult";
+import type { CustomerContext } from "@/lib/server/actions";
+import { alertOps } from "@/lib/server/opsAlert";
+import { activeSelfSubmission, claimTracking } from "@/lib/server/submissionScope";
 
-export type TrackingSubmission = {
-  ok: boolean;
-  reason?: string;
-  /** Saved, but not yet sent to the warehouse: ops confirms the number first. */
-  pending?: boolean;
-};
+// Transport bounds only, deliberately above the domain limits
+// (MAX_TRACKING_NUMBER_LENGTH 64, MAX_TRACKING_URL_LENGTH 512): an over-long
+// value is the domain's `too-long` / `invalid-url`, which the portal words.
+export const submitTrackingInput = z
+  .object({
+    expectedOrderId: z.string(),
+    carrierCode: z.string().max(64),
+    trackingNumber: z.string().max(1000),
+    trackingUrl: z.string().max(4000).optional(),
+  })
+  .strict();
 
-/**
- * The capture half of a self-booked return: the customer tells us who they
- * shipped with and the tracking number, and we tell the warehouse.
- *
- * Session-gated, unlike `createShippingLabel`: this one is only ever reached
- * from the portal by the customer, never from a webhook, so there is no paid
- * flow to break by requiring a session.
- *
- * ⚠️ Deliberately NOT `getOrderById` — that is wrapped in React `cache()` and
- * would serve a stale row to a second submit arriving in the same request,
- * defeating the idempotency guard below.
- */
-export async function submitReturnTracking(
-  id: string,
-  carrierCode: string,
-  trackingNumber: string,
-  /**
-   * The customer's tracking link. Required for a carrier whose link we cannot
-   * build ("Other"); ignored otherwise, so a client cannot replace a link we
-   * build ourselves.
-   */
-  trackingUrl?: unknown
-): Promise<TrackingSubmission> {
-  if (!(await hasOrderAccess(id))) {
-    console.error(`submitReturnTracking: rejected a call without a session for ${id}`);
-    return { ok: false, reason: "no-session" };
-  }
+export type TrackingRefusal =
+  | "unknown-carrier"
+  | "no-active-self-return"
+  | TrackingNumberProblem
+  | "missing-url"
+  | "invalid-url"
+  | "not-at-carrier"
+  | "already-submitted";
+
+export async function submitTrackingHandler(
+  ctx: CustomerContext,
+  input: Omit<z.infer<typeof submitTrackingInput>, "expectedOrderId">
+): Promise<HandlerResult<{ pending: boolean }, TrackingRefusal>> {
+  const id = ctx.orderId;
+  const { carrierCode, trackingNumber, trackingUrl } = input;
 
   const carrier = carrierByCode(carrierCode);
-  if (!carrier) return { ok: false, reason: "unknown-carrier" };
+  if (!carrier) return refuse("unknown-carrier");
 
-  const order = await getOrderByIdFresh(id);
-  if (!order) return { ok: false, reason: "no-order" };
-  if ((order as any).returnMethod !== "SELF") {
-    return { ok: false, reason: "not-self-booked" };
-  }
+  // Read fresh (never React's request `cache()`), so a second submit in the
+  // same request sees the first one's locator.
+  const order = await ctx.order.read();
+  const submission = order ? await activeSelfSubmission(id) : null;
+  if (!order || !submission) return refuse("no-active-self-return");
 
   // The same check the portal runs as the customer types (lib/carriers):
   // never a coerced non-string, bounded, not the customer's own order number
@@ -61,7 +60,7 @@ export async function submitReturnTracking(
   // carrier's link can be built from. Before the write-once claim below, so a
   // refusal writes nothing anywhere and the customer can correct it.
   const checkedNumber = checkTrackingNumber(carrier, trackingNumber, order);
-  if (!checkedNumber.ok) return { ok: false, reason: checkedNumber.reason };
+  if (!checkedNumber.ok) return refuse(checkedNumber.reason);
   const number = checkedNumber.number;
 
   // `carrier_url` is required by Amphora's approve and pinned with the
@@ -72,7 +71,7 @@ export async function submitReturnTracking(
     carrierUrl = checkedNumber.link;
   } else {
     const checked = checkTrackingUrl(trackingUrl);
-    if (!checked.ok) return { ok: false, reason: checked.reason };
+    if (!checked.ok) return refuse(checked.reason);
     carrierUrl = checked.url;
   }
 
@@ -84,7 +83,7 @@ export async function submitReturnTracking(
     console.warn(
       `Order ${id}: tracking ${order.locator} already submitted — refusing to replace it.`
     );
-    return { ok: false, reason: "already-submitted" };
+    return refuse("already-submitted");
   }
 
   // A number reaches Amphora (write-once) only once it is verified
@@ -96,7 +95,7 @@ export async function submitReturnTracking(
   // not recognise) proves nothing either way: it neither refuses the customer
   // nor approves, it goes to ops like a carrier we cannot ask.
   const verdict = carrier.verify ? await verifyWithCarrier(carrier.verify, number) : null;
-  if (verdict === "unknown") return { ok: false, reason: "not-at-carrier" };
+  if (verdict === "unknown") return refuse("not-at-carrier");
   const verified = verdict === "verified";
 
   // Written together, and BEFORE Amphora: `carrier` must never be null on a row
@@ -117,25 +116,26 @@ export async function submitReturnTracking(
   // has no locator gets written, and `.returning()` tells us whether ours was
   // the write that landed. Only the winner may go on to call Amphora, because
   // Amphora's pin cannot be undone.
-  const writtenRows = await db
-    .update(orders)
-    .set({
-      locator: number,
-      carrier: carrier.code,
-      carrierUrl,
-      trackingSubmittedAt: new Date(),
-      trackingVerifiedAt: verified ? new Date() : null,
-      trackingVerifiedBy: verified ? carrier.verify! : null,
-      trackingSubmissionId: crypto.randomUUID(),
-    })
-    .where(and(eq(orders.id, id), isNull(orders.locator)))
-    .returning({ id: orders.id });
+  //
+  // F1: the write is `claimTracking`, one transaction that first locks the
+  // identified submission (`FOR UPDATE`) and re-checks it is still accepted
+  // and unheld, so a concurrent cancellation either wins first (this is then
+  // `no-active-self-return`) or waits for this claim to commit.
+  const claimed = await claimTracking(submission, {
+    locator: number,
+    carrier: carrier.code,
+    carrierUrl,
+    verifiedBy: verified ? carrier.verify! : null,
+  });
 
-  if (writtenRows.length === 0) {
+  if (!claimed) {
+    // Either the slot is taken (a racing submit) or a cancellation took the
+    // submission in between. Re-read which, so the customer sees the truth.
+    if (!(await activeSelfSubmission(id))) return refuse("no-active-self-return");
     console.warn(
       `Order ${id}: lost the write-once race — another submit already claimed the tracking slot.`
     );
-    return { ok: false, reason: "already-submitted" };
+    return refuse("already-submitted");
   }
 
   if (!verified) {
@@ -160,7 +160,7 @@ export async function submitReturnTracking(
         `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
       ].join("\n")
     );
-    return { ok: true, pending: true };
+    return ok({ pending: true });
   }
 
   await pinSelfTracking({
@@ -172,5 +172,5 @@ export async function submitReturnTracking(
     carrierUrl,
   });
 
-  return { ok: true };
+  return ok({ pending: false });
 }

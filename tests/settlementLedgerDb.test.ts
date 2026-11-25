@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
@@ -104,8 +105,8 @@ describe("admission — one statement", () => {
 
   it("is refused while cancellation holds the submission", async () => {
     const seeded = await seedSubmission(env.pg);
-    const { claimForCancellation } = await import("@/lib/submissionCancellation");
-    expect(await claimForCancellation(seeded.id)).toBe(true);
+    const { claimForCancellation } = await import("@/lib/server/submissionScope");
+    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(true);
     const { insertAdmission } = await ledger();
     const plan = planFor(seeded);
     expect(
@@ -116,14 +117,14 @@ describe("admission — one statement", () => {
   it("cancellation never claims a submission that has operations, whatever its holder says", async () => {
     const { seeded } = await admitted();
     await env.pg.query("UPDATE return_submissions SET holder = NULL WHERE id=$1", [seeded.id]);
-    const { claimForCancellation } = await import("@/lib/submissionCancellation");
-    expect(await claimForCancellation(seeded.id)).toBe(false);
+    const { claimForCancellation } = await import("@/lib/server/submissionScope");
+    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(false);
   });
 
   it("leaves cancellation nothing to claim once anything is admitted", async () => {
     const { seeded } = await admitted();
-    const { claimForCancellation } = await import("@/lib/submissionCancellation");
-    expect(await claimForCancellation(seeded.id)).toBe(false);
+    const { claimForCancellation } = await import("@/lib/server/submissionScope");
+    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(false);
   });
 });
 
@@ -547,7 +548,7 @@ describe("recovery", () => {
 describe("ownership of the rows (S2 plan L2)", () => {
   it("a portal edit cannot touch a row inside a submission settlement holds", async () => {
     await admitted();
-    const { rowNotHeldBySettlement } = await import("@/lib/submissionCancellation");
+    const { rowNotHeldBySettlement } = await import("@/lib/server/submissionScope");
     const { sql } = await import("drizzle-orm");
     await env.db.execute(
       sql`UPDATE productsorder SET reason = 'edited' WHERE id = 1 AND ${rowNotHeldBySettlement(sql`productsorder`)}`
@@ -557,9 +558,9 @@ describe("ownership of the rows (S2 plan L2)", () => {
 
   it("a cancellation finishes in one transaction: cancelled, and the rows reset", async () => {
     const seeded = await seedSubmission(env.pg);
-    const c = await import("@/lib/submissionCancellation");
-    expect(await c.claimForCancellation(seeded.id)).toBe(true);
-    await c.finishCancellation(seeded.orderId, [seeded.id]);
+    const c = await import("@/lib/server/submissionScope");
+    expect(await c.claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(true);
+    await c.finishCancellation(vid(seeded.orderId), [vsub(seeded.orderId, seeded.id)]);
     expect((await q("SELECT state FROM return_submissions WHERE id=$1", [seeded.id]))[0].state).toBe("cancelled");
     expect((await q("SELECT confirmed, return_line_item_id FROM productsorder WHERE id=1"))[0]).toEqual({
       confirmed: false,
@@ -569,9 +570,9 @@ describe("ownership of the rows (S2 plan L2)", () => {
 
   it("releasing a cancellation gives settlement the submission back", async () => {
     const seeded = await seedSubmission(env.pg);
-    const c = await import("@/lib/submissionCancellation");
-    await c.claimForCancellation(seeded.id);
-    await c.releaseCancellation(seeded.id);
+    const c = await import("@/lib/server/submissionScope");
+    await c.claimForCancellation(vsub(seeded.orderId, seeded.id));
+    await c.releaseCancellation(vsub(seeded.orderId, seeded.id));
     expect((await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]))[0].holder).toBeNull();
   });
 });

@@ -15,18 +15,19 @@ import { ProductLineClient } from "@/app/[id]/components/productLineClient";
 import { en } from "@/lib/i18n/en";
 import type { Product } from "@/types";
 
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
 vi.mock("@/lib/i18n/context", () => ({
   useT: () => en,
   useLocale: () => "en",
 }));
 
 // ProductLineClient statically imports FormProduct from ./dialogForm, which
-// imports actions/updateOrder -> db/drizzle.ts. That throws at import time
+// imports actions/lines -> db/drizzle.ts. That throws at import time
 // without a live DATABASE_URL, so it must be stubbed even though this test
 // never opens the dialog. Same stub as returnMethodThreading.render.test.tsx.
-vi.mock("@/actions/updateOrder", () => ({
-  updateOrder: vi.fn(),
-  anularOrder: vi.fn(),
+vi.mock("@/actions/lines", () => ({
+  setLineSelection: vi.fn(),
+  clearLineSelection: vi.fn(),
 }));
 
 const vgid = (n: string) => `gid://shopify/ProductVariant/${n}`;
@@ -35,6 +36,7 @@ function product(id: string, variants: { id: string; price: string }[]): Product
   return {
     id: `gid://shopify/Product/${id}`,
     title: `Product ${id}`,
+    status: "ACTIVE",
     handle: `p${id}`,
     description: "",
     images: { edges: [] },

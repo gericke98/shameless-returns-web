@@ -58,8 +58,8 @@ vi.mock("@/lib/server/opsAlert", () => ({
 }));
 
 vi.mock("@/lib/submissionConfirmation", () => ({
-  confirmSubmission: async (submissionId: string) => {
-    calls.push(`confirm:${submissionId}`);
+  confirmSubmission: async (sub: { id: string }) => {
+    calls.push(`confirm:${sub.id}`);
     if (behaviour.confirmThrows) {
       throw new Error("returnCreate failed: The presentment currency of the order needs to be used.");
     }
@@ -75,13 +75,15 @@ vi.mock("@/lib/server/opsAlertOutbox", () => ({
   },
 }));
 
-vi.mock("@/db/submissions", () => ({
-  acceptPaidSubmission: async (id: string, evidence: { sessionId: string }) => {
-    calls.push(`accept:${id}:${evidence.sessionId}`);
+vi.mock("@/lib/server/submissionScope", () => ({
+  // The submission belongs to the order the signed metadata names (F1).
+  submissionOf: async (orderId: string, id: string) => ({ id, orderId }),
+  acceptPaidSubmission: async (sub: { id: string }, evidence: { sessionId: string }) => {
+    calls.push(`accept:${sub.id}:${evidence.sessionId}`);
     return behaviour.outcome;
   },
-  getSubmission: async (id: string) => ({
-    submission: { id, returnMethod: behaviour.agreedMethod },
+  loadSubmission: async (sub: { id: string }) => ({
+    submission: { id: sub.id, returnMethod: behaviour.agreedMethod },
     lines: [],
   }),
 }));

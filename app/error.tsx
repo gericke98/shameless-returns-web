@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE,
@@ -29,13 +30,14 @@ export default function Error({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  // The locale lives in a cookie that is not httpOnly (actions/locale.ts sets
-  // it without that flag), so a client component can read it. It is read in an
+  // The locale lives in a cookie that is not httpOnly (lib/server/handlers/setLocale.ts
+  // sets it without that flag), so a client component can read it. It is read in an
   // effect rather than during render because this component can be rendered on
   // the server, where `document` does not exist — a lazy initializer reading
   // document.cookie would be a hydration mismatch. The one-frame Spanish
   // default is the correct fallback anyway.
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
+  const router = useRouter();
 
   useEffect(() => {
     const match = document.cookie.match(
@@ -60,7 +62,14 @@ export default function Error({
         <p className="text-sm text-gray-700">{t.error.body}</p>
         <button
           type="button"
-          onClick={reset}
+          // `reset()` alone re-renders the same (possibly stale) server
+          // payload; refreshing first fetches it again (F1 spec §7).
+          onClick={() =>
+            startTransition(() => {
+              router.refresh();
+              reset();
+            })
+          }
           className="bg-white text-black border border-black py-4 rounded-full hover:bg-gray-100 focus:bg-gray-100 transition-colors flex items-center justify-center w-full font-bold"
         >
           {t.error.retry}

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { submitReturnTracking } from "@/actions/selfBookedTracking";
+import { useRouter } from "next/navigation";
+import { submitTracking } from "@/actions/tracking";
+import { useCallAction } from "@/lib/callAction";
 import {
   CARRIERS,
   carrierByCode,
@@ -41,6 +43,8 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
     null
   );
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const callAction = useCallAction();
 
   // Derived during render: whether this carrier needs the customer's link,
   // and whether what they typed is one.
@@ -174,20 +178,33 @@ export function TrackingCapture({ id, orderNumber }: { id: string; orderNumber: 
             return;
           }
           startTransition(async () => {
-            const outcome = needsLink
-              ? await submitReturnTracking(id, carrier, trimmed, link.trim())
-              : await submitReturnTracking(id, carrier, trimmed);
-            if (outcome.ok) setResult(outcome.pending ? "pending" : "done");
-            else if (outcome.reason === "missing-url" || outcome.reason === "invalid-url") {
-              setResult("invalid-url");
-            } else if (
-              outcome.reason === "order-number" ||
-              outcome.reason === "wrong-format" ||
-              outcome.reason === "too-long" ||
-              outcome.reason === "not-at-carrier"
-            ) {
-              setRefusedNumber(outcome.reason);
-            } else setResult("error");
+            const outcome = await callAction(submitTracking, {
+              expectedOrderId: id,
+              carrierCode: carrier,
+              trackingNumber: trimmed,
+              ...(needsLink ? { trackingUrl: link.trim() } : {}),
+            });
+            if (outcome.kind === "unknown") {
+              // Whether it was saved is unknown: the page gates on
+              // `trackingSubmittedAt`, so a refresh shows the truth.
+              router.refresh();
+              setResult("error");
+            } else if (outcome.result.ok) {
+              setResult(outcome.result.value.pending ? "pending" : "done");
+            } else {
+              const reason = outcome.result.reason;
+              // Someone (this customer, another tab) already gave us tracking.
+              if (reason === "already-submitted") setResult("done");
+              else if (reason === "missing-url" || reason === "invalid-url") setResult("invalid-url");
+              else if (
+                reason === "order-number" ||
+                reason === "wrong-format" ||
+                reason === "too-long" ||
+                reason === "not-at-carrier"
+              ) {
+                setRefusedNumber(reason);
+              } else if (reason !== "no-session") setResult("error");
+            }
             setConfirming(false);
           });
         }}

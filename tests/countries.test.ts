@@ -150,15 +150,13 @@ describe("an unnameable stored country still routes and prices safely", () => {
   });
 
   it("is never written back from the address form", () => {
-    // The country is display-only in secondWindowForm. updateData must not
-    // read a `country` field at all — that is what makes it impossible for a
-    // stored country to be replaced by a client-supplied one.
-    const source = readFileSync(
-      resolve(__dirname, "../actions/updateOrder.ts"),
-      "utf-8"
-    );
-    expect(source).not.toContain('formData.get("country")');
+    // The country is display-only in secondWindowForm. The address write
+    // (lib/server/orderScope.ts `saveAddress`) never names the column, and the
+    // action's `.strict()` schema refuses a `country` field (F1).
+    const source = readFileSync(resolve(__dirname, "../lib/server/orderScope.ts"), "utf-8");
     expect(source).not.toContain("shippingCountry:");
+    const handler = readFileSync(resolve(__dirname, "../lib/server/handlers/customer/address.ts"), "utf-8");
+    expect(handler).not.toContain("shippingCountry");
   });
 });
 

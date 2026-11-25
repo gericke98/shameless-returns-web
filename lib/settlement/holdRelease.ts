@@ -25,6 +25,7 @@ import db from "@/db/drizzle";
 import { releaseHoldDraft, type HoldReleaseAuthority } from "./effects";
 import { graphQLErrors } from "./shopify";
 import { DRAFT_ORDER_QUERY, read } from "./reads";
+import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 
@@ -108,12 +109,14 @@ async function release(orderId: string, by: HoldReleaseAuthority["by"], refusal:
 
 /** A cancellation releases the hold of the submissions it holds. */
 export async function releaseHoldForCancellation(
-  orderId: string,
-  submissionIds: readonly string[]
+  orderId: VerifiedOrderId,
+  submissions: readonly VerifiedSubmission[]
 ): Promise<HoldRelease> {
   let refusal: string | null;
   try {
-    refusal = await cancellationOwnsHold(orderId, submissionIds);
+    refusal = submissions.some((s) => s.orderId !== orderId)
+      ? "a named submission is not this order's"
+      : await cancellationOwnsHold(orderId, submissions.map((s) => s.id));
   } catch (error: any) {
     return { released: false, reason: String(error?.message ?? error) };
   }
@@ -121,7 +124,7 @@ export async function releaseHoldForCancellation(
 }
 
 /** A failed confirmation, reverted, releases the hold it placed. */
-export async function releaseHoldForRevert(orderId: string): Promise<HoldRelease> {
+export async function releaseHoldForRevert(orderId: VerifiedOrderId): Promise<HoldRelease> {
   let refusal: string | null;
   try {
     refusal = await revertOwnsHold(orderId);

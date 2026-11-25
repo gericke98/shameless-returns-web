@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // Six customers, three days, zero emails, and not one signal.
 //
@@ -91,7 +92,7 @@ vi.mock("axios", () => ({
 
 async function run() {
   const { createShippingLabel } = await import("@/lib/server/shipping");
-  return createShippingLabel(ORDER.id);
+  return createShippingLabel(vid(ORDER.id));
 }
 
 beforeEach(() => {

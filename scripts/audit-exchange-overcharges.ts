@@ -189,6 +189,7 @@ async function fetchCatalogueProducts(): Promise<Product[]> {
   return data.products.edges.map(({ node }: any): Product => ({
     id: node.id,
     title: node.title,
+    status: node.status ?? "",
     handle: node.handle,
     description: "",
     images: { edges: [] },

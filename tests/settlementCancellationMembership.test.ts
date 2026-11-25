@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
@@ -23,7 +24,7 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => ({
 const q = async (sql: string, params: any[] = []) => (await env.pg.query<any>(sql, params)).rows;
 const rowsOfOrder = async () =>
   q("SELECT id, confirmed, refunded, return_line_item_id FROM productsorder WHERE order_id='100' ORDER BY id");
-const claim = async () => (await import("@/lib/submissionCancellation")).claimOrderForCancellation(await rowsOfOrder());
+const claim = async () => (await import("@/lib/submissionCancellation")).claimOrderForCancellation(vid("100"), await rowsOfOrder());
 /** A paid submission: the card covered `cents` the garments did not. */
 const paid = (id: string, cents: number, intent: string | null) =>
   env.pg.query(
@@ -47,8 +48,8 @@ describe("claimOrderForCancellation", () => {
     expect(result.ok).toBe(true);
     const members = (result as any).members.sort((x: any, y: any) => x.returnId.localeCompare(y.returnId));
     expect(members).toEqual([
-      { submissionId: a.id, returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_a" } },
-      { submissionId: b.id, returnId: "gid://shopify/Return/2", payment: { kind: "intent", paymentIntent: "pi_b" } },
+      { submission: vsub("100", a.id), returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_a" } },
+      { submission: vsub("100", b.id), returnId: "gid://shopify/Return/2", payment: { kind: "intent", paymentIntent: "pi_b" } },
     ]);
     expect(await holders()).toEqual(["cancellation", "cancellation"]);
   });
@@ -57,7 +58,7 @@ describe("claimOrderForCancellation", () => {
     const a = await seedSubmission(env.pg);
     expect(await claim()).toEqual({
       ok: true,
-      members: [{ submissionId: a.id, returnId: "gid://shopify/Return/1", payment: { kind: "none" } }],
+      members: [{ submission: vsub("100", a.id), returnId: "gid://shopify/Return/1", payment: { kind: "none" } }],
     });
   });
 
@@ -103,6 +104,6 @@ describe("claimOrderForCancellation", () => {
   it("a lone legacy submission is refunded from the order's payment", async () => {
     const a = await seedSubmission(env.pg);
     await env.pg.query("UPDATE return_submissions SET provenance='legacy' WHERE id=$1", [a.id]);
-    expect(await claim()).toMatchObject({ ok: true, members: [{ submissionId: a.id, payment: { kind: "order-payment" } }] });
+    expect(await claim()).toMatchObject({ ok: true, members: [{ submission: vsub("100", a.id), payment: { kind: "order-payment" } }] });
   });
 });

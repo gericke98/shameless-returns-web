@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { customerCtx } from "./support/verified";
 
 // The chosen lane must survive the Stripe round trip. returnFunction redirects
 // to Stripe for a paid return and comes back through the webhook, which has no
@@ -56,7 +57,7 @@ vi.mock("@/lib/submissionConfirmation", () => ({
   confirmSubmission: async () => {},
   revertFinalOrder: async () => {},
 }));
-vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
+vi.mock("@/lib/server/submissionScope", () => ({ acceptFreeSubmission: async () => true }));
 vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
@@ -64,10 +65,10 @@ vi.mock("@/lib/server/opsAlert", () => ({
 }));
 
 vi.mock("@/lib/server/payments", () => ({
-  createStripeUrl: async (_id: string, _e: string, _c: boolean, method: string) => {
+  createStripeUrl: async (_id: string, _c: boolean, method: string) => {
     events.push(`stripe:${method}`);
     stripeMethodSeen = method;
-    return { data: stripeUrl, submissionId: "sub-1" };
+    return { ok: true, url: stripeUrl, submission: { id: "sub-1", orderId: _id } };
   },
 }));
 
@@ -126,12 +127,14 @@ vi.mock("@/db/drizzle", () => {
 });
 
 async function submit(method?: unknown) {
-  const { returnFunction } = await import("@/actions/return");
-  try {
-    await returnFunction(order.id, false, order.email, method);
-  } catch (e: any) {
-    if (e?.message !== REDIRECTED) throw e;
-  }
+  // The handler behind `submitReturn` (F1), called with the context
+  // `customerAction` builds. An absent claim is sent as the non-SELF default.
+  const { submitReturnHandler } = await import("@/lib/server/handlers/customer/submitReturn");
+  const result = await submitReturnHandler(await customerCtx(order.id), {
+    payout: "refund",
+    method: (method ?? "CORREOS") as any,
+  });
+  return result;
 }
 
 beforeEach(() => {

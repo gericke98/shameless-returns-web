@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // Where a domestic return parcel is actually sent. The destination block in the
 // Correos pre-registration was still the old warehouse (CORISA TEXTIL,
@@ -53,7 +54,7 @@ vi.mock("axios", () => ({
 
 async function registerLabel() {
   const { createShippingLabel } = await import("@/lib/server/shipping");
-  return createShippingLabel(ORDER.id);
+  return createShippingLabel(vid(ORDER.id));
 }
 
 beforeEach(() => {

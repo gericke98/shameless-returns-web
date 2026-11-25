@@ -1,4 +1,5 @@
 import { getServerSession } from "next-auth";
+import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 
 /**
@@ -28,4 +29,15 @@ export async function adminEmail(): Promise<string | null> {
   const session = await getServerSession(authOptions);
   if (session?.user?.role !== "admin") return null;
   return session.user.email ?? "admin";
+}
+
+/**
+ * For an admin PAGE (F1 spec §6): the admin's email, or a redirect to /login.
+ * `middleware.ts` guards the route too; this makes the page itself refuse,
+ * whatever the matcher says.
+ */
+export async function requireAdmin(): Promise<string> {
+  const email = await adminEmail();
+  if (!email) redirect("/login");
+  return email;
 }

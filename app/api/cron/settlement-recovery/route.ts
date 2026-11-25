@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { recoverSettlements } from "@/lib/settlement/recovery";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Move every settlement operation nobody is moving (S2 plan L5): pending ones
@@ -17,14 +18,8 @@ export const dynamic = "force-dynamic";
 /** Stop starting new operations this far in, so the one in flight can record. */
 const BUDGET_MS = 200_000;
 
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {

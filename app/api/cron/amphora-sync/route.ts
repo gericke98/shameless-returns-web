@@ -12,6 +12,7 @@ import { sweepSelfReturns } from "@/lib/server/selfReturnSweep";
 import { alertOps } from "@/lib/server/opsAlert";
 import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 import { abandonExpiredSubmissions } from "@/db/submissions";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -30,14 +31,6 @@ import { abandonExpiredSubmissions } from "@/db/submissions";
 export const maxDuration = 60;
 // Always hit Amphora; a cached response would defeat the point.
 export const dynamic = "force-dynamic";
-
-/** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
- *  closed, never open, since this route writes and sends customer email. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
 
 /**
  * Did this order ever produce a return through OUR portal?
@@ -86,7 +79,7 @@ async function conflictsOnOurOrders(
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

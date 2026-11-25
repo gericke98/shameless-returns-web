@@ -5,6 +5,7 @@ import { orders, productsOrder } from "@/db/schema";
 import { OrderData, OrderLineItem } from "@/types";
 import { eq } from "drizzle-orm";
 import { formatOrderId } from "@/utils/order-utils";
+import type { VerifiedOrderId } from "@/lib/server/identity";
 
 /**
  * Checks if an order exists in the database
@@ -23,16 +24,18 @@ export async function orderExists(orderId: string): Promise<boolean> {
 /**
  * Saves order details to the database
  *
+ * @param id The order's verified id (F1): the lookup just matched it
  * @param order Order data to save
  * @param exchangeOf Id of the original order this one replaces, or null when
  *   this is an ordinary order. See lib/replacementOrigin.ts.
  */
 export async function saveOrderDetails(
+  id: VerifiedOrderId,
   order: OrderData,
   exchangeOf: string | null = null
 ): Promise<void> {
   await db.insert(orders).values({
-    id: formatOrderId(order.id),
+    id,
     orderNumber: order.name,
     subtotal: Math.round(Number(order.subtotal_price) * 100) || 0,
     email: order.contact_email,
@@ -60,13 +63,13 @@ export async function saveOrderDetails(
  */
 export async function saveOrderItem(
   item: OrderLineItem,
-  orderId: string,
+  orderId: VerifiedOrderId,
   wasChanged: boolean,
   priceWithDiscount: number
 ): Promise<void> {
   await db.insert(productsOrder).values({
     lineItemId: formatOrderId(item.id),
-    orderId: formatOrderId(orderId),
+    orderId,
     productId: formatOrderId(item.product_id),
     title: item.title,
     variant_title: item.variant_title || "",

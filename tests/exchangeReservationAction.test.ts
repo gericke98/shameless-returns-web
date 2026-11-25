@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The reservation runs AFTER the customer has paid, and often after a courier
 // collection or a Correos label already exists. So it may never throw: order
@@ -74,7 +75,7 @@ describe("reserveExchangeStock", () => {
     );
     const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", state.order.products);
+    await reserveExchangeStock(vid("13161229386054"), state.order.products);
 
     expect(updates).toContainEqual({
       exchangeReservationId: "gid://shopify/DraftOrder/1",
@@ -96,7 +97,7 @@ describe("reserveExchangeStock", () => {
     };
     const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", paid);
+    await reserveExchangeStock(vid("13161229386054"), paid);
 
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(sent.variables.input.lineItems).toEqual([
@@ -109,7 +110,7 @@ describe("reserveExchangeStock", () => {
     state.order = { ...state.order, exchangeReservationId: "gid://shopify/DraftOrder/1" };
     const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", state.order.products);
+    await reserveExchangeStock(vid("13161229386054"), state.order.products);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -123,7 +124,7 @@ describe("reserveExchangeStock", () => {
     };
     const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", state.order.products);
+    await reserveExchangeStock(vid("13161229386054"), state.order.products);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -141,7 +142,7 @@ describe("reserveExchangeStock", () => {
     });
     const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
+    await expect(reserveExchangeStock(vid("13161229386054"), state.order.products)).resolves.toBeUndefined();
     expect(updates).toHaveLength(0);
   });
 
@@ -149,7 +150,7 @@ describe("reserveExchangeStock", () => {
     fetchMock.mockRejectedValue(new Error("ECONNRESET"));
     const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
+    await expect(reserveExchangeStock(vid("13161229386054"), state.order.products)).resolves.toBeUndefined();
   });
 });
 

@@ -19,6 +19,7 @@ function product(
   return {
     id: `gid://shopify/Product/${productId}`,
     title: `P${productId}`,
+    status: "ACTIVE",
     handle: `p${productId}`,
     description: "",
     images: { edges: [] },
@@ -246,6 +247,7 @@ describe("indexCatalogue keys the catalogue side too, not just the lookup", () =
       {
         id: "gid://shopify/Product/15296978026822",
         title: "P15296978026822",
+        status: "ACTIVE",
         handle: "p15296978026822",
         description: "",
         images: { edges: [] },

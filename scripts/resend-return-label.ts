@@ -79,8 +79,8 @@ async function main() {
       continue;
     }
 
-    const { resendReturnLabel } = await import("../lib/server/shipping");
-    const status = await resendReturnLabel(order.id);
+    const { resendReturnLabelForOrder } = await import("../lib/server/handlers/system/resendReturnLabel");
+    const status = await resendReturnLabelForOrder(String(order.id));
     console.log(status === 200 ? "  ✅ sent\n" : `  ❌ failed (${status})\n`);
   }
 }

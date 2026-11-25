@@ -19,8 +19,12 @@ import userEvent from "@testing-library/user-event";
 
 const cancelReturnFunction = vi.fn();
 
+const refreshed: string[] = [];
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: () => {}, refresh: () => refreshed.push("refresh") }),
+}));
 vi.mock("@/actions/cancelReturn", () => ({
-  cancelReturnFunction: (orderId: string) => cancelReturnFunction(orderId),
+  cancelReturn: (input: { expectedOrderId: string }) => cancelReturnFunction(input.expectedOrderId),
 }));
 
 import { ReturnStatusPanel } from "@/app/[id]/components/returnStatusPanel";
@@ -63,7 +67,7 @@ let reload: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   cancelReturnFunction.mockReset();
-  cancelReturnFunction.mockResolvedValue({ ok: true });
+  cancelReturnFunction.mockResolvedValue({ ok: true, value: {} });
 
   // jsdom's location.reload is not writable; replace the whole object's method.
   reload = vi.fn();
@@ -181,6 +185,8 @@ describe("when the cancellation does not succeed", () => {
     await waitFor(() => {
       expect(screen.getByText(es.cancel.failed)).toBeTruthy();
     });
+    // No answer: the page recomputes eligibility from the database (F1 §7).
+    expect(refreshed).toContain("refresh");
   });
 
   it("uses the specific reason when eligibility changed under them", async () => {
@@ -196,7 +202,7 @@ describe("when the cancellation does not succeed", () => {
   });
 
   it("falls back to the generic message for a reason with no copy", async () => {
-    cancelReturnFunction.mockResolvedValue({ ok: false, reason: "forbidden" });
+    cancelReturnFunction.mockResolvedValue({ ok: false, reason: "needs-support" });
     renderPanel(CANCELLABLE);
 
     await cancelAndConfirm();

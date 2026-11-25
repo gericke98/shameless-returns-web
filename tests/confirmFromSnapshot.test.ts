@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 
 // What the customer paid for is the submission, frozen at checkout. Between
 // checkout and payment the rows can change — another tab, a retry — and the
@@ -97,14 +98,14 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
 }));
 
 const recorded = vi.fn(async (_input: any) => [7]);
-vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => SUBMISSION,
-  recordConfirmation: (input: any) => recorded(input),
+vi.mock("@/lib/server/submissionScope", () => ({
+  loadSubmission: async () => SUBMISSION,
+  recordConfirmation: (_sub: unknown, input: any) => recorded(input),
 }));
 
 async function confirm() {
   const { confirmSubmission } = await import("@/lib/submissionConfirmation");
-  return confirmSubmission("sub-1");
+  return confirmSubmission(vsub(SUBMISSION.submission.orderId, "sub-1"));
 }
 
 beforeEach(() => {

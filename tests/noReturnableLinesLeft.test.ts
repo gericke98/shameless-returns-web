@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // The gap between two correct changes.
@@ -95,14 +96,14 @@ vi.mock("@/lib/fulfillmentLines", () => ({
   refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
 }));
 
-vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => acceptedSubmission("13172075168070", state.rows, { fulfillment: FULFILLMENT_LINE_ITEMS }),
-  recordConfirmation: (...args: unknown[]) => (recorded as any)(...args),
+vi.mock("@/lib/server/submissionScope", () => ({
+  loadSubmission: async () => acceptedSubmission("13172075168070", state.rows, { fulfillment: FULFILLMENT_LINE_ITEMS }),
+  recordConfirmation: (_sub: unknown, ...args: unknown[]) => (recorded as any)(...args),
 }));
 
 async function confirm() {
   const mod = await import("@/lib/submissionConfirmation");
-  return mod.confirmSubmission("sub-1");
+  return mod.confirmSubmission(vsub("13172075168070", "sub-1"));
 }
 
 beforeEach(() => {

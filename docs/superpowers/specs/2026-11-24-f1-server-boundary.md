@@ -366,3 +366,14 @@ handlers never mint (exception by design: the lookup handler is the credential c
 `adminTarget(session)` / `adminTarget(id, admin)` callable only from `lib/server/actions.ts`; `systemTarget` only from
 `app/api/cron/**` and `scripts/**`. Commits: 3dfc64e, f0578ff, c4ec155, c96c963, 5a17324. Codex: no money-logic change;
 #2/#4 resolved; limit-0 regression fixed with a bound `sql.placeholder`.
+
+## 12. Verification log (2026-11-25, local F1 @ bcb9657 against Neon branch `f1-e2e`, senders disabled)
+- Crons (all 6): no secret → 401, wrong secret → 401. `/api/shipping-status` anonymous → 401 `private, no-store`.
+- Browser, 9/9 PASS: lookup (wrong email → i18n `mismatch`, nothing written); fresh size exchange offers in-stock sizes,
+  sold-out disabled; cross-product exchange saved with the new variant; clear restores the row; address saves with empty
+  postcode, refuses empty city server-side; stale tab → "Has abierto otro pedido en otra pestaña…", nothing written to
+  either order; cleared session → `/?session=expired`, nothing written; dashboard + shipping-fees redirect to /login when
+  logged out; fee edit saved and restored; no `[action-error]`/`[client-error]`.
+- Pre-existing on main, not F1: lookup inputs' `pattern` attributes are invalid under the `v` flag (no browser-side
+  validation); `formSelectSize.tsx` hard-codes English "Select a size"/"This field is required".
+- Still open: one real free Correos return on a fresh order (real senders); deployed-preview cache check.

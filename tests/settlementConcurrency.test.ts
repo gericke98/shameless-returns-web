@@ -87,7 +87,9 @@ describe.skipIf(!pg16Available)("settlement races on PostgreSQL 16", () => {
         insertAdmission({ submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: [] }),
         claimForCancellation(vsub(seeded.orderId, seeded.id)),
       ]);
-      expect(admitted.admitted !== cancelled).toBe(true);
+      expect(admitted.admitted !== (cancelled === "claimed")).toBe(true);
+      // The loser is told settlement won, never anything else.
+      if (admitted.admitted) expect(cancelled).toBe("settled");
       const [s] = await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]);
       expect(s.holder).toBe(admitted.admitted ? "settlement" : "cancellation");
       expect(await q("SELECT id FROM settlement_operations")).toHaveLength(admitted.admitted ? 1 : 0);

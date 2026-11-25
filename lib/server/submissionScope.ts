@@ -295,14 +295,28 @@ export async function recordConfirmation(
   return rowsOf(result).map((r) => Number(r.id));
 }
 
-/** Take the submission for cancellation. False if settlement got there first. */
-export async function claimForCancellation(sub: VerifiedSubmission): Promise<boolean> {
+/**
+ * Why a cancellation did or did not take a submission, decided under the
+ * submission's row lock (Codex review of F1, finding 3):
+ * - `claimed`: this cancellation holds it now.
+ * - `in-transit`: a self-booked return whose tracking was claimed first; the
+ *   parcel is presumed in the network (cancelEligibility's own rule).
+ * - `cancelled`: another cancellation holds it, or has already finished it.
+ * - `settled`: settlement holds it, has planned operations for it, or it is
+ *   no longer an accepted submission.
+ */
+export type CancellationClaimOutcome = "claimed" | "in-transit" | "cancelled" | "settled";
+
+/** Take the submission for cancellation, or say exactly why not. */
+export async function claimForCancellation(sub: VerifiedSubmission): Promise<CancellationClaimOutcome> {
   // ONE transaction (F1 spec §10). (1) takes the submission's row lock, the
   // same lock `claimTracking` takes. (2) runs on a fresh READ COMMITTED
   // snapshot taken after that lock, so it sees a tracking claim that committed
   // while (1) waited, and refuses: a self-booked return with tracking is
   // `in-transit` (cancelEligibility), here enforced where the two serialize.
-  const [, claimed] = await transact([
+  // (3) reads, still under the lock, why (2) did or did not take it, so the
+  // answer is the state the decision was made on, not a later read.
+  const [, claimed, why] = await transact([
     sql`
       SELECT id FROM return_submissions
        WHERE id = ${sub.id} AND order_id = ${sub.orderId}
@@ -320,8 +334,20 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<boo
                             AND o.return_method = 'SELF'
                             AND o.locator IS NOT NULL)
       RETURNING id`,
+    sql`
+      SELECT s.state, s.holder,
+             EXISTS (SELECT 1 FROM orders o
+                      WHERE o.id = s.order_id AND o.return_method = 'SELF'
+                        AND o.locator IS NOT NULL) AS in_transit
+        FROM return_submissions s
+       WHERE s.id = ${sub.id} AND s.order_id = ${sub.orderId}`,
   ]);
-  return (claimed ?? []).length === 1;
+  if ((claimed ?? []).length === 1) return "claimed";
+  const row = (why ?? [])[0];
+  if (!row) throw new Error(`submission ${sub.id} of order ${sub.orderId} vanished under its own lock`);
+  if (row.in_transit === true) return "in-transit";
+  if (row.state === "cancelled" || row.holder === "cancellation") return "cancelled";
+  return "settled";
 }
 
 /** Amphora refused, so nothing moved: give the submission back. */

@@ -19,6 +19,7 @@ import {
   claimForCancellation,
   releaseCancellation,
   submissionOf,
+  type CancellationClaimOutcome,
 } from "@/lib/server/submissionScope";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -42,10 +43,21 @@ export type CancellationMember = {
 
 export type CancellationClaim =
   | { ok: true; members: CancellationMember[] }
-  | { ok: false; reason: "already-settled" | "no-return" }
+  | { ok: false; reason: "already-settled" | "no-return" | "in-transit" }
   /** Membership or a payment could not be established: refused BEFORE any
    *  external effect, for a human (finding 3). */
   | { ok: false; reason: "needs-support"; detail: string };
+
+/**
+ * What the customer is told when the claim decided against them. Each is a
+ * `CancelBlockedReason` the portal already explains; a submission another
+ * cancellation took is no return left to cancel here.
+ */
+const CLAIM_REFUSAL: Record<Exclude<CancellationClaimOutcome, "claimed">, "in-transit" | "already-settled" | "no-return"> = {
+  "in-transit": "in-transit",
+  settled: "already-settled",
+  cancelled: "no-return",
+};
 
 type CancellableRow = {
   id: number;
@@ -158,9 +170,10 @@ export async function claimOrderForCancellation(
 
   const taken: VerifiedSubmission[] = [];
   for (const m of members) {
-    if (!(await claimForCancellation(m.submission))) {
+    const outcome = await claimForCancellation(m.submission);
+    if (outcome !== "claimed") {
       for (const back of taken) await releaseCancellation(back);
-      return { ok: false, reason: "already-settled" };
+      return { ok: false, reason: CLAIM_REFUSAL[outcome] };
     }
     taken.push(m.submission);
   }

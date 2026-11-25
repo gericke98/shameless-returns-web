@@ -101,6 +101,15 @@ describe("claimOrderForCancellation", () => {
     expect(await holders()).toEqual([null, null]);
   });
 
+  it("a self-booked return whose tracking was claimed is refused as in transit, releasing what it took", async () => {
+    await seedSubmission(env.pg, { lines: [line(1)] });
+    await seedSubmission(env.pg, { lines: [line(2)] });
+    await env.pg.query("UPDATE productsorder SET return_id='gid://shopify/Return/2' WHERE id=2");
+    await env.pg.query("UPDATE orders SET return_method='SELF', locator='RR123456785ES' WHERE id='100'");
+    expect(await claim()).toEqual({ ok: false, reason: "in-transit" });
+    expect(await holders()).toEqual([null, null]);
+  });
+
   it("a lone legacy submission is refunded from the order's payment", async () => {
     const a = await seedSubmission(env.pg);
     await env.pg.query("UPDATE return_submissions SET provenance='legacy' WHERE id=$1", [a.id]);

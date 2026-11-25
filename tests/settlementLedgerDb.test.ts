@@ -106,7 +106,7 @@ describe("admission — one statement", () => {
   it("is refused while cancellation holds the submission", async () => {
     const seeded = await seedSubmission(env.pg);
     const { claimForCancellation } = await import("@/lib/server/submissionScope");
-    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(true);
+    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe("claimed");
     const { insertAdmission } = await ledger();
     const plan = planFor(seeded);
     expect(
@@ -118,13 +118,13 @@ describe("admission — one statement", () => {
     const { seeded } = await admitted();
     await env.pg.query("UPDATE return_submissions SET holder = NULL WHERE id=$1", [seeded.id]);
     const { claimForCancellation } = await import("@/lib/server/submissionScope");
-    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(false);
+    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe("settled");
   });
 
   it("leaves cancellation nothing to claim once anything is admitted", async () => {
     const { seeded } = await admitted();
     const { claimForCancellation } = await import("@/lib/server/submissionScope");
-    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(false);
+    expect(await claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe("settled");
   });
 });
 
@@ -559,7 +559,7 @@ describe("ownership of the rows (S2 plan L2)", () => {
   it("a cancellation finishes in one transaction: cancelled, and the rows reset", async () => {
     const seeded = await seedSubmission(env.pg);
     const c = await import("@/lib/server/submissionScope");
-    expect(await c.claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe(true);
+    expect(await c.claimForCancellation(vsub(seeded.orderId, seeded.id))).toBe("claimed");
     await c.finishCancellation(vid(seeded.orderId), [vsub(seeded.orderId, seeded.id)]);
     expect((await q("SELECT state FROM return_submissions WHERE id=$1", [seeded.id]))[0].state).toBe("cancelled");
     expect((await q("SELECT confirmed, return_line_item_id FROM productsorder WHERE id=1"))[0]).toEqual({
@@ -574,5 +574,15 @@ describe("ownership of the rows (S2 plan L2)", () => {
     await c.claimForCancellation(vsub(seeded.orderId, seeded.id));
     await c.releaseCancellation(vsub(seeded.orderId, seeded.id));
     expect((await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]))[0].holder).toBeNull();
+  });
+
+  it("a second cancellation of a held or finished submission answers cancelled, not settled", async () => {
+    const seeded = await seedSubmission(env.pg);
+    const c = await import("@/lib/server/submissionScope");
+    const sub = vsub(seeded.orderId, seeded.id);
+    expect(await c.claimForCancellation(sub)).toBe("claimed");
+    expect(await c.claimForCancellation(sub)).toBe("cancelled");
+    await c.finishCancellation(vid(seeded.orderId), [sub]);
+    expect(await c.claimForCancellation(sub)).toBe("cancelled");
   });
 });

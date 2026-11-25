@@ -115,9 +115,13 @@ describe.skipIf(!pg16Available)("tracking claim against cancellation (PostgreSQL
       const sub = (await activeSelfSubmission(vid("100")))!;
       const track = () => claimTracking(sub, WRITE);
       const cancel = () => claimForCancellation(sub);
-      const [tracked, cancelled] = trackingFirst
+      const [tracked, outcome] = trackingFirst
         ? await Promise.all([track(), cancel()])
-        : await Promise.all([cancel(), track()]).then(([c, t]) => [t, c]);
+        : await Promise.all([cancel(), track()]).then(([c, t]) => [t, c] as const);
+      const cancelled = outcome === "claimed";
+      // A cancellation that loses to tracking is told why: in transit,
+      // never "already settled" (Codex review, finding 3).
+      if (tracked) expect(outcome).toBe("in-transit");
       const key = tracked && cancelled ? "both" : tracked ? "tracking" : cancelled ? "cancellation" : "neither";
       outcomes[key] = (outcomes[key] ?? 0) + 1;
 
@@ -137,7 +141,7 @@ describe.skipIf(!pg16Available)("tracking claim against cancellation (PostgreSQL
     await seedSelf(env.pool);
     const sub = (await activeSelfSubmission(vid("100")))!;
     expect(await claimTracking(sub, WRITE)).toBe(true);
-    expect(await claimForCancellation(sub)).toBe(false);
+    expect(await claimForCancellation(sub)).toBe("in-transit");
   });
 
   it("a cancellation that holds the submission first makes the claim write nothing", async () => {
@@ -146,7 +150,7 @@ describe.skipIf(!pg16Available)("tracking claim against cancellation (PostgreSQL
     await seedSelf(env.pool);
     const sub = (await activeSelfSubmission(vid("100")))!;
 
-    expect(await claimForCancellation(sub)).toBe(true);
+    expect(await claimForCancellation(sub)).toBe("claimed");
     expect(await claimTracking(sub, WRITE)).toBe(false);
     const { rows } = await env.pool.query(`SELECT locator FROM orders WHERE id = '100'`);
     expect(rows[0].locator).toBeNull();

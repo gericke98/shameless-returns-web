@@ -55,7 +55,7 @@ type CancellableRow = {
 };
 
 /** Each submission's own return(s) and payment, from the database. */
-async function membersOf(submissionIds: readonly string[]): Promise<
+async function membersOf(submissions: readonly VerifiedSubmission[]): Promise<
   Array<{ id: string; provenance: string; chargeCents: number; paymentIntent: string | null; returnIds: string[] }>
 > {
   const rows = rowsOf(
@@ -66,7 +66,8 @@ async function membersOf(submissionIds: readonly string[]): Promise<
         LEFT JOIN submission_lines sl ON sl.submission_id = s.id
         LEFT JOIN productsorder p
           ON p.id = sl.productsorder_id AND p.return_line_item_id = sl.return_line_item_id
-       WHERE s.id IN (SELECT (jsonb_array_elements_text(${JSON.stringify(submissionIds)}::jsonb))::uuid)
+       WHERE s.id IN (SELECT (jsonb_array_elements_text(${JSON.stringify(submissions.map((s) => s.id))}::jsonb))::uuid)
+         AND s.order_id = ${submissions[0]?.orderId ?? null}
        GROUP BY s.id
     `)
   );
@@ -104,7 +105,7 @@ export async function claimOrderForCancellation(
   }
   const ids = new Set<string>();
   for (const row of current) {
-    const found = await submissionForRow(row.id);
+    const found = await submissionForRow(orderId, row.id);
     if (!found.ok) {
       return { ok: false, reason: "needs-support", detail: `row ${row.id} belongs to no submission (${found.held})` };
     }
@@ -121,7 +122,7 @@ export async function claimOrderForCancellation(
     bound.set(id, sub);
   }
 
-  const loaded = await membersOf(Array.from(ids));
+  const loaded = await membersOf(Array.from(bound.values()));
   const members: CancellationMember[] = [];
   for (const m of loaded) {
     if (m.returnIds.length !== 1) {

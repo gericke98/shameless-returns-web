@@ -34,14 +34,14 @@ export type HoldRelease =
   | { released: true }
   | { released: false; reason: string };
 
-async function heldDraftOf(orderId: string): Promise<string | null> {
+async function heldDraftOf(orderId: VerifiedOrderId): Promise<string | null> {
   const [row] = rowsOf(
     await db.execute(sql`SELECT exchange_reservation_id FROM orders WHERE id = ${orderId}`)
   );
   return row?.exchange_reservation_id ? String(row.exchange_reservation_id) : null;
 }
 
-async function cancellationOwnsHold(orderId: string, submissionIds: readonly string[]): Promise<string | null> {
+async function cancellationOwnsHold(orderId: VerifiedOrderId, submissionIds: readonly string[]): Promise<string | null> {
   const ids = JSON.stringify(submissionIds);
   const [row] = rowsOf(
     await db.execute(sql`
@@ -61,7 +61,7 @@ async function cancellationOwnsHold(orderId: string, submissionIds: readonly str
   return null;
 }
 
-async function revertOwnsHold(orderId: string): Promise<string | null> {
+async function revertOwnsHold(orderId: VerifiedOrderId): Promise<string | null> {
   const [row] = rowsOf(
     await db.execute(sql`
       SELECT
@@ -79,12 +79,12 @@ async function revertOwnsHold(orderId: string): Promise<string | null> {
   return null;
 }
 
-async function release(orderId: string, by: HoldReleaseAuthority["by"], refusal: string | null): Promise<HoldRelease> {
+async function release(orderId: VerifiedOrderId, by: HoldReleaseAuthority["by"], refusal: string | null): Promise<HoldRelease> {
   try {
     const draftOrderId = await heldDraftOf(orderId);
     if (!draftOrderId) return { released: true };
     if (refusal) return { released: false, reason: refusal };
-    const authority = { orderId, draftOrderId, by } as HoldReleaseAuthority;
+    const authority = { orderId: orderId as string, draftOrderId, by } as HoldReleaseAuthority;
 
     const answer = await releaseHoldDraft(authority);
     const deleted =

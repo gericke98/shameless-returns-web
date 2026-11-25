@@ -6,7 +6,11 @@ import "server-only";
 // click admits that row, plus the whole exchange when it is one (one parcel,
 // one replacement order).
 import { revalidatePath } from "next/cache";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
+import db from "@/db/drizzle";
+import { productsOrder } from "@/db/schema";
+import { adminTarget } from "@/lib/server/identity";
 import { submissionForRow } from "@/lib/settlement/legacy";
 import { settleSubmission } from "@/lib/settlement/settle";
 import { ok, refuse, type HandlerResult } from "@/lib/actionResult";
@@ -18,10 +22,20 @@ const BUDGET_MS = 45_000;
 export const settleRowInput = z.object({ rowId: z.number().int().positive() }).strict();
 
 export async function settleRowHandler(
-  _ctx: AdminContext,
+  ctx: AdminContext,
   input: z.infer<typeof settleRowInput>
 ): Promise<HandlerResult<{ lines: { rowId: number; status: string }[] }, "not-settleable">> {
-  const found = await submissionForRow(input.rowId);
+  // The admin's credential covers any order; the target is the order the
+  // clicked row belongs to, read from our own database.
+  const [row] = await db
+    .select({ orderId: productsOrder.orderId })
+    .from(productsOrder)
+    .where(eq(productsOrder.id, input.rowId));
+  if (!row?.orderId) {
+    console.error(`settleRow: row ${input.rowId} not settled — no such line`);
+    return refuse("not-settleable");
+  }
+  const found = await submissionForRow(adminTarget(String(row.orderId), ctx), input.rowId);
   if (!found.ok) {
     console.error(`settleRow: row ${input.rowId} not settled — held:${found.held}`);
     return refuse("not-settleable");

@@ -12,14 +12,30 @@ vi.mock("next-auth", () => ({ getServerSession: async () => session.value }));
 vi.mock("@/lib/auth", () => ({ authOptions: {} }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {}, revalidateTag: () => {} }));
 vi.mock("@/lib/server/orderScope", () => ({ orderScope: () => ({}) }));
+// The handler reads which order the clicked row belongs to (F1 §10).
+const ROW_ORDER: Record<number, string> = { 7: "1" };
+vi.mock("@/db/drizzle", () => {
+  let wanted: number | undefined;
+  const chain: any = {
+    select: () => chain,
+    from: () => chain,
+    where: (cond: any) => {
+      // eq(productsOrder.id, n): the bound value is the clicked row id.
+      wanted = cond?.queryChunks?.find((c: any) => typeof c?.value === "number")?.value;
+      return Promise.resolve(ROW_ORDER[wanted!] ? [{ orderId: ROW_ORDER[wanted!] }] : []);
+    },
+  };
+  return { default: chain };
+});
 vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlert: async () => true }));
 
-const calls = { lookup: [] as number[], settle: [] as Array<[string, number[]]> };
+const calls = { lookup: [] as number[], orders: [] as string[], settle: [] as Array<[string, number[]]> };
 const lookup = { value: { ok: true, submissionId: "sub-1" } as any };
 
 vi.mock("@/lib/settlement/legacy", () => ({
-  submissionForRow: async (id: number) => {
+  submissionForRow: async (orderId: string, id: number) => {
     calls.lookup.push(id);
+    calls.orders.push(String(orderId));
     return lookup.value;
   },
 }));
@@ -41,6 +57,7 @@ async function click(p: any = product) {
 
 beforeEach(() => {
   calls.lookup.length = 0;
+  calls.orders.length = 0;
   calls.settle.length = 0;
   session.value = null;
   lookup.value = { ok: true, submissionId: "sub-1" };
@@ -72,6 +89,8 @@ describe("validateReturn does not trust caller-supplied money", () => {
     session.value = { user: { role: "admin" } };
     await click();
     expect(calls.lookup).toEqual([7]);
+    // …under the order that row belongs to, read from our database.
+    expect(calls.orders).toEqual(["1"]);
     // No price, credit flag, return id or order object crosses into settlement.
     expect(JSON.stringify(calls.settle)).not.toContain("9999");
     expect(JSON.stringify(calls.settle)).not.toContain("r-evil");

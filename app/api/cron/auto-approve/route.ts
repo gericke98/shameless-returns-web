@@ -8,6 +8,7 @@ import {
 import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { decideAutoApprove, type GateLine } from "@/lib/autoApproveGate";
 import { submissionForRow } from "@/lib/settlement/legacy";
+import { systemTarget } from "@/lib/server/identity";
 import { submissionOfRow } from "@/lib/settlement/ledger";
 import { settleSubmission } from "@/lib/settlement/settle";
 import { alertOps } from "@/lib/server/opsAlert";
@@ -187,7 +188,7 @@ export async function GET(req: Request) {
           );
           continue;
         }
-        const found = await submissionForRow(id);
+        const found = await submissionForRow(systemTarget(String(order.id), "auto-approve"), id);
         if (!found.ok) {
           held.push({ order: label, reason: `held:${found.held}` });
           await alertNotSettled(label, `held:${found.held}`);

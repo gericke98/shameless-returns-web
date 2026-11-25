@@ -52,8 +52,10 @@ const rowOrder: Record<number, string> = {};
 const settleCalls: Array<[string, number[]]> = [];
 const lookups: number[] = [];
 vi.mock("@/lib/settlement/legacy", () => ({
-  submissionForRow: async (id: number) => {
+  submissionForRow: async (orderId: string, id: number) => {
     lookups.push(id);
+    // The cron mints the order the row was selected under (F1 §10).
+    if (String(orderId) !== String(rowOrder[id])) return { ok: false, held: "no-such-line" };
     return { ok: true, submissionId: `sub-${rowOrder[id]}` };
   },
 }));

@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { settlementDatabase } from "./support/settlementDb";
+import { vid } from "./support/verified";
 
 // S3 R1 `--write`, D1/D2 approval and D3 on PGlite with the real migrations
 // (0004, 0006–0009): paid → done operation + refunded, idempotent; ambiguous →
@@ -589,7 +590,7 @@ describe("a line with no Shopify return: needs-human, and nothing writes it", ()
 
     const { recordApprovedLegacySubmission, submissionForRow } = await import("@/lib/settlement/legacy");
     expect(await recordApprovedLegacySubmission([approval(30)])).toEqual({ ok: false, held: "not-confirmed" });
-    expect(await submissionForRow(30)).toEqual({ ok: false, held: "not-confirmed" });
+    expect(await submissionForRow(vid("100"), 30)).toEqual({ ok: false, held: "not-confirmed" });
     const { decideLineAction } = await import("@/lib/settlement/lineAction");
     expect((await decideLineAction({ productsorderId: 30, action: "DEVOLUCIÓN", newVariantId: null, by: "santi", evidence: "x" })).ok).toBe(false);
 

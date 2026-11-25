@@ -9,6 +9,7 @@ import { orders, productsOrder, returnLabels } from "./schema";
 import { OrderData, OrderLineItem } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
+import type { VerifiedOrderId } from "@/lib/server/identity";
 
 const createSession = (): RequestInit => {
   if (
@@ -809,7 +810,7 @@ export async function getProducts() {
  * return.
  */
 export async function saveReturnLabel(
-  orderId: string,
+  orderId: VerifiedOrderId,
   trackingNumber: string,
   pdfBase64: string
 ): Promise<void> {

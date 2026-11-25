@@ -32,6 +32,9 @@ wrapped; a cross-order write is impossible to express (type error), not just ref
 - Test DBs are built only by replaying migrations, plus a schema↔DB diff check.
 - A typed env module, so a missing variable fails the build. Admin tokens are server-only.
 - **Neon branch per preview**, and a log drain.
+- **Postgres roles as the last boundary** (from F1 §11, Codex review 2026-11-25): a SELECT-only role behind the read
+  handle, an `ops_alerts`/`lookup_attempts`-only role, and the writer role behind `writeDb`, each its own connection
+  string. Stops hostile in-process code (mutated prepared SQL, namespace-indexed mints) that types cannot.
 **Primitives:** Vercel Deployment Checks, drizzle-kit migrator, Neon–Vercel integration.
 **Check:** a PR adding a column without a migration fails; the preview DB is not prod's.
 

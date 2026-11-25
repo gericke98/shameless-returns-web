@@ -344,3 +344,16 @@ The foundation removes the ability instead, and `tsc` enforces it for all code:
 - **G3** Overloads on the existing symbols: `systemTarget(job): SystemTarget` / `systemTarget(id, job): VerifiedOrderId`;
   `adminTarget(ctx): AdminTarget` / `adminTarget(id, ctx): VerifiedOrderId`. Caller rules unchanged.
 - **G4** No `LookupTarget`: `WriteCapability = VerifiedOrderId | VerifiedSubmission | AdminTarget | SystemTarget`.
+
+### §11 threat model (Santi, 2026-11-25, after Codex review of f0578ff)
+F1 guards against **untrusted clients** and **developer mistakes**. It does not claim to stop deliberately hostile code
+inside the server process; the database is the only real boundary for that.
+- Fixed in F1 (Codex #2): `tableWriter` is replaced by **table-bound writers**: `db/opsAlerts.ts` and
+  `db/lookupAttempts.ts` receive operations bound to their own table only (no table argument, no raw `execute`, no
+  transaction/session handle). Negative type test: writing `orders` through either is a type error.
+- Fixed in F1 (Codex #4): handlers never mint. `adminAction` mints `AdminTarget` from the authenticated session inside the
+  factory and passes it in `ctx`; handlers receive an opaque capability, never a `{ admin }` object they could fabricate.
+  Same for the other factories and capabilities. Rule 4's caller list shrinks accordingly.
+- Moved to F2 (Codex #1, #3: mutable prepared queries and namespace-indexed mint calls by hostile code): **Postgres
+  roles**: a SELECT-only role behind the read handle, a role limited to `ops_alerts`/`lookup_attempts`, and the writer
+  role behind `writeDb`, each with its own connection string. Recorded in the parent plan's F2.

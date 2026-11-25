@@ -4,7 +4,7 @@ Base: `main` @ `cbbf980`. Branch: `feat/f1-server-boundary`. Parent plan: `docs/
 Tier: HEAVY (it fronts the submit, cancel and payment entry points). Rev 1: Codex CHANGES-REQUIRED (14 findings).
 Rev 2: Codex CHANGES-REQUIRED (10 of 14 resolved; #7, #9, #12 open, #11 accepted as F4; new blockers 15, 16).
 The 2-round Codex cap is reached. Rev 3 fixes #12 and 16 directly and writes the recommended option for #7, #9 and 15,
-each marked **DECISION PENDING (Santi)** in §9 until chosen. No code before those three are decided.
+Santi chose option A for all three on 2026-11-25 (§9). The spec is approved for implementation.
 
 ## Rules (verbatim from the owner)
 1. Fix the root cause. Never a heuristic, tie-breaker, special case, flag, retry, regex over words, "until phase N"
@@ -59,7 +59,7 @@ export type VerifiedSubmission = { readonly id: string; readonly orderId: Verifi
 | Mint | Credential it stands for | Only caller |
 |---|---|---|
 | `fromSession(sessionOrderId)` | portal session ∩ `expectedOrderId` | `lib/server/actions.ts` (`customerAction`) |
-| `verifiedByLookup(order)` (DECISION PENDING, option A) | order number + contact email matched against Shopify by `validateOrderDetails`, rate limit passed | `lib/server/handlers/lookup.ts`, after validation, **before** `saveOrderToDatabase` and `issueOrderAccess` (blocker 15) |
+| `verifiedByLookup(order)` (decided A) | order number + contact email matched against Shopify by `validateOrderDetails`, rate limit passed | `lib/server/handlers/lookup.ts`, after validation, **before** `saveOrderToDatabase` and `issueOrderAccess` (blocker 15) |
 | `verifiedByStripeSignature(metadata)` | Stripe signature verified by `constructEvent` | `app/api/webhooks/stripe/route.ts` |
 | `adminTarget(id, ctx)` | admin session (`adminAction` ctx) | `lib/server/handlers/admin/*` |
 | `systemTarget(id, job)` | a cron, for an id it selected from our own DB | `app/api/cron/*/route.ts`, `lib/server/handlers/system/*` |
@@ -152,7 +152,7 @@ Customer inputs all include `expectedOrderId: string`. The client never sends th
 | `lookupOrder` public (`publicFormAction`) | FormData `order, email` (field names as today) | state `{ message: MessageKey \| null }`; success mints `verifiedByLookup`, saves, issues the session and `redirect("/<id>")` as today | `lookup.tooManyAttempts`, `lookup.notFound`, `lookup.mismatch`, `lookup.contactSupport`, plus `lookup.invalidInput`/`lookup.failed` from the factory |
 | `setLocale` public | `locale: enum(locales)` | `{}` | (none) |
 
-**Tracking claim (finding 9; DECISION PENDING, option A written).** "Accepted" alone is not "active": acceptance
+**Tracking claim (finding 9; decided A).** "Accepted" alone is not "active": acceptance
 precedes confirmation (`return.ts:264-268`) and a submission stays `accepted` while cancellation holds it
 (`submissionCancellation.ts:36`, until `finishCancellation`). The eligible submission is identified, not inferred:
 - **Identity:** the order's one submission with `return_method = 'SELF'`, `state = 'accepted'`, `holder IS NULL`, whose
@@ -218,7 +218,7 @@ Per caller:
    checked by the type checker's symbol references), and **each mint's references are exactly its "only caller" files**
    from the §1 table. A new caller of a mint fails the test, so an unrestricted mint cannot be called from a handler.
 5. `publicAction`/`publicFormAction` are used exactly by `lookupOrder` and `setLocale`.
-6. **Customer handlers reach the database only through capabilities (finding 7; DECISION PENDING, option A written).**
+6. **Customer handlers reach the database only through capabilities (finding 7; decided A).**
    Walk the transitive **value**-import graph (type-only imports ignored) from every `lib/server/handlers/customer/**`
    module. Every module in that closure that imports `@/db/drizzle` must be on the capability list
    (`lib/server/orderScope.ts`, `lib/server/submissionScope.ts` (the §1 submission functions), and the moved internals
@@ -252,8 +252,8 @@ dropping `AND p.order_id` from `recordConfirmation` (unit test below); restoring
   → `order-mismatch`, nothing written); dashboard settle, fee save, tracking confirm/reject; expired session on each action.
 - After deploy: the first real customer flow of each lane is checked end to end; no `[action-error]` alerts.
 
-## 9. Decisions pending (Santi) — Codex cap reached, so these are A/B, not a third review round
-| # | Question | A (written in this rev, recommended) | B |
+## 9. Decisions (Santi, 2026-11-25: A, A, A) — Codex cap reached, so these were A/B, not a third review round
+| # | Question | A (chosen) | B (rejected) |
 |---|---|---|---|
 | 7 | How is "customer code can only write through capabilities" enforced? | Import-graph test from customer handlers (§Enforcement 6). Scoped to the customer surface; ~12 internals gain branded params. | Make it global now: only `lib/server/data/**` may import `@/db/drizzle` (29 modules today), every export takes a capability. Strongest, but it moves the whole settlement/cron data layer inside F1. |
 | 9 | Tracking vs cancellation | Lock the identified SELF submission `FOR UPDATE` in the claim; the pin-vs-cancel window after commit goes to F4's shipment state machine (§4). | Add a `holder = 'tracking'` ownership value held across the Amphora pin. Closes the window now, but every settlement admission check (`ledger.ts:279`, `admission.ts:52`, `plan.ts:126`) must learn the new holder: a money-path change inside F1. |

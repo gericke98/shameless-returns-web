@@ -59,7 +59,7 @@ describe("setLineSelection", () => {
   it("saves an exchange to an offered variant of ANOTHER product, titled by Shopify", async () => {
     const s = await scope("A");
     expect(
-      await s.setLineSelection(1, { action: "CAMBIO", reason: "size" as any, notes: "n", newVariantId: VARIANT(9) })
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "n", newVariantId: VARIANT(9) })
     ).toEqual({ ok: true, value: {} });
     expect(await row(1)).toMatchObject({
       action: "CAMBIO",
@@ -73,7 +73,7 @@ describe("setLineSelection", () => {
 
   it("accepts a bare numeric variant id, stored as the full GID", async () => {
     const s = await scope("A");
-    await s.setLineSelection(1, { action: "CAMBIO", reason: "size" as any, notes: "", newVariantId: "9" });
+    await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: "9" });
     expect((await row(1)).new_variant_id).toBe(VARIANT(9));
   });
 
@@ -85,14 +85,14 @@ describe("setLineSelection", () => {
   ])("refuses a replacement the dialog does not offer (%s)", async (_label, id) => {
     const s = await scope("A");
     expect(
-      await s.setLineSelection(1, { action: "CAMBIO", reason: "size" as any, notes: "", newVariantId: id })
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: id })
     ).toEqual({ ok: false, reason: "variant-not-offered" });
     expect((await row(1)).action).toBeNull();
   });
 
   it("refuses another order's row: not-editable, and that row is untouched", async () => {
     const s = await scope("A");
-    expect(await s.setLineSelection(2, { action: "DEVOLUCIÓN", reason: "size" as any, notes: "x" })).toEqual({
+    expect(await s.setLineSelection(2, { action: "DEVOLUCIÓN", reason: "TOO_BIG", notes: "x" })).toEqual({
       ok: false,
       reason: "not-editable",
     });
@@ -101,7 +101,7 @@ describe("setLineSelection", () => {
 
   it("refuses a row already confirmed (submitted)", async () => {
     const s = await scope("A");
-    expect(await s.setLineSelection(3, { action: "DEVOLUCIÓN", reason: "size" as any, notes: "x" })).toEqual({
+    expect(await s.setLineSelection(3, { action: "DEVOLUCIÓN", reason: "TOO_BIG", notes: "x" })).toEqual({
       ok: false,
       reason: "not-editable",
     });

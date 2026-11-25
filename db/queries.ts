@@ -6,7 +6,7 @@ import { cache } from "react";
 import db from "./drizzle";
 import { and, desc, eq, isNotNull, isNull, lt, ne, or } from "drizzle-orm";
 import { orders, productsOrder, returnLabels } from "./schema";
-import { OrderData, OrderLineItem } from "@/types";
+import { OrderData, OrderLineItem, type Product } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
 import type { VerifiedOrderId } from "@/lib/server/identity";
@@ -468,35 +468,66 @@ export async function getFulfillmentLineItems(fulfillmentId: string) {
   }
 }
 
-export async function getProduct(id: string) {
+/**
+ * The fields every Product reader selects, so `getProduct` and `getProducts`
+ * hand the exchange dialog ONE shape. `status` is load-bearing: the dialog
+ * offers a size only when `isOfferedReplacement` (lib/replacementCatalogue.ts)
+ * sees an ACTIVE product, so a reader that omitted it disabled every size.
+ */
+const PRODUCT_FIELDS = `
+  id
+  title
+  status
+  handle
+  description
+  images(first: 1) {
+    edges {
+      node {
+        url
+        src: url
+      }
+    }
+  }
+  variants(first: 50) {
+    edges {
+      node {
+        id
+        price
+        title
+        inventoryQuantity
+        # Drives the weight band a return is priced in. Lives under
+        # inventoryItem because ProductVariant.weight is deprecated.
+        # Needs the read_inventory scope in addition to read_products.
+        inventoryItem {
+          measurement {
+            weight {
+              value
+              unit
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/** A Shopify product node (selected with PRODUCT_FIELDS) as the app's `Product`. */
+function toProduct(node: any): Product {
+  node.image = { src: node.images?.edges?.[0]?.node?.src ?? "" };
+  for (const edge of node.variants?.edges ?? []) {
+    edge.node.grams = toGrams(edge.node.inventoryItem?.measurement?.weight);
+  }
+  return node as Product;
+}
+
+export async function getProduct(id: string): Promise<Product> {
   const session = createSession();
   const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
 
   const query = `
     query getProduct($id: ID!) {
       product(id: $id) {
-        id
-        title
-        handle
-        description
-        images(first: 1) {
-          edges {
-            node {
-              url
-              src: url
-            }
-          }
-        }
-        variants(first: 50) {
-          edges {
-            node {
-              id
-              price
-              title
-              inventoryQuantity
-            }
-          }
-        }
+        ${PRODUCT_FIELDS}
       }
     }
   `;
@@ -522,19 +553,7 @@ export async function getProduct(id: string) {
       throw new Error("GraphQL query failed");
     }
 
-    // Transform the response to include image.src
-    const product = data.product;
-    if (product.images.edges.length > 0) {
-      product.image = {
-        src: product.images.edges[0].node.src,
-      };
-    } else {
-      product.image = {
-        src: "", // Provide a default empty string if no image exists
-      };
-    }
-
-    return product;
+    return toProduct(data.product);
   } catch (error) {
     console.error("Error fetching product:", error);
     throw error;
@@ -713,41 +732,7 @@ export async function getProducts() {
       products(first: 250, query: "status:ACTIVE") {
         edges {
           node {
-            id
-            title
-            status
-            handle
-            description
-            images(first: 1) {
-              edges {
-                node {
-                  url
-                  src: url
-                }
-              }
-            }
-            variants(first: 50) {
-              edges {
-                node {
-                  id
-                  price
-                  title
-                  inventoryQuantity
-                  # Drives the weight band a return is priced in. Lives under
-                  # inventoryItem because ProductVariant.weight is deprecated.
-                  # Needs the read_inventory scope in addition to
-                  # read_products.
-                  inventoryItem {
-                    measurement {
-                      weight {
-                        value
-                        unit
-                      }
-                    }
-                  }
-                }
-              }
-            }
+            ${PRODUCT_FIELDS}
           }
         }
       }
@@ -774,24 +759,7 @@ export async function getProducts() {
       throw new Error("GraphQL query failed");
     }
 
-    // Transform the response to include image.src for each product
-    const products = data.products.edges.map(
-      ({ node: product }: { node: any }) => {
-        if (product.images.edges.length > 0) {
-          product.image = {
-            src: product.images.edges[0].node.src,
-          };
-        } else {
-          product.image = {
-            src: "", // Provide a default empty string if no image exists
-          };
-        }
-        for (const edge of product.variants?.edges ?? []) {
-          edge.node.grams = toGrams(edge.node.inventoryItem?.measurement?.weight);
-        }
-        return product;
-      }
-    );
+    const products: Product[] = data.products.edges.map(({ node }: { node: any }) => toProduct(node));
 
     return products;
   } catch (error) {

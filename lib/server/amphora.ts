@@ -18,14 +18,15 @@ import axios from "axios";
 const DEFAULT_BASE = "https://api.amphoralogistics.com/prod-integrations-api";
 const DEFAULT_SHOP_NAME = "shameless-collective-madrid.myshopify.com";
 
-type AmphoraConfig = {
+export type AmphoraConfig = {
   base: string;
   tenant: string;
   apiKey: string;
   shopName: string;
 };
 
-function getConfig(): AmphoraConfig {
+/** The Company API's base, tenant, key and shop — shared with the stock reader (lib/server/amphoraStock.ts). */
+export function amphoraConfig(): AmphoraConfig {
   const apiKey = process.env.AMPHORA_API_KEY;
   const tenant = process.env.AMPHORA_TENANT_ID;
   if (!apiKey || !tenant) {
@@ -44,7 +45,7 @@ async function amphoraRequest<T = any>(
   path: string,
   opts: { query?: Record<string, string>; body?: unknown } = {},
 ): Promise<T> {
-  const cfg = getConfig();
+  const cfg = amphoraConfig();
   const url = `${cfg.base}/${encodeURIComponent(cfg.tenant)}${path}`;
   const res = await axios.request<T>({
     method,
@@ -253,7 +254,7 @@ export function buildCreateReturnBody(
 
 /** Create a return (Amphora arranges carrier + garment collection). */
 export async function createAmphoraReturn(input: CreateReturnInput): Promise<AmphoraReturn> {
-  const cfg = getConfig();
+  const cfg = amphoraConfig();
   const data = await amphoraRequest<{ return_order: AmphoraReturn }>("POST", "/returns", {
     body: buildCreateReturnBody(input, cfg.shopName),
   });

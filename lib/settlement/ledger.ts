@@ -705,8 +705,9 @@ export type TakeOverResult = { kind: "taken"; op: Operation } | { kind: "refused
 export async function takeOver(cap: WriteCapability, op: Operation, me: string): Promise<TakeOverResult> {
   const legacyHold = legacyHoldCtes([
     `An operation in a shape this code no longer runs (a stock-hold release, or a sibling not gated on`,
-    `the exchange) was sent before and Shopify shows no effect. It is NOT re-sent: recovery keeps`,
-    `re-reading it and records it done if the effect appears. Check Shopify by hand before releasing.`,
+    `the exchange) was sent before and Shopify shows no effect. It is NOT re-sent: it is recorded`,
+    `unresolved for a human. Check Shopify by hand, then resolve it with resolve-operation`,
+    `(--done if the effect exists; --rejected ONLY when Shopify proves it never happened).`,
   ]);
   const replayable = sql`
            o.id = ${op.id}

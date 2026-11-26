@@ -422,3 +422,10 @@ left open or a deviation the code forced. Coordinator: review each.
       (dispatched + absent → unresolved + alert → `resolve-operation --done` → `--take`/`--done`), the same op with
       positive evidence → done, legacy gift card, gated sibling before its exchange is done and under a blocking hold
       (both → unresolved, never re-sent), a takeover lost to another worker (unchanged); D2 microsecond-equal / -earlier; the unreadable digest. Migration: each NULL field alone.
+
+## Code review status (2026-11-26)
+Codex code review of ff38737: CHANGES-REQUIRED (1–7) → fixed 255410c…f47e34c → fix-check: 1–7 RESOLVED, #10 blocker →
+ce6862f → fix-check 2: **APPROVED** (docs …-fx-codex-code-review.md, -fixcheck.md, -fixcheck2.md). Verified by the
+coordinator: tsc clean, single-fork suite 157 files / 1731 tests.
+Operator rule (existing authority, Codex fix-check 2 #3): `resolve-operation --rejected` re-authorizes a fresh send with
+a new idempotency key, so use it ONLY when Shopify proves the effect never happened; a search miss is not proof.

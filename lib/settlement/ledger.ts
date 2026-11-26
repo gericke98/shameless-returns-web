@@ -579,6 +579,47 @@ export async function earlierExchangeDemand(submissionId: string): Promise<OpenD
 // ── L4: claim → dispatch → record ──────────────────────────────────────────
 
 /**
+ * A3's hold, as CTEs `h`, `seq`, `a` that follow a CTE `legacy(id,
+ * submission_id)` naming the refused op: a `legacy-plan` hold for its
+ * submission listing every not-done legacy op of it, the admission sequence
+ * bump, and the hold's outbox row — unless a blocking hold or a manual holder
+ * is already there.
+ */
+function legacyHoldCtes(detail: string[]): SQL {
+  const holdId = randomUUID();
+  const alert = holdAlert(holdId, "{submission}", "legacy-plan", detail);
+  return sql`
+      h AS (
+        INSERT INTO settlement_holds (id, submission_id, cause, detail)
+        SELECT ${holdId}, l.submission_id, 'legacy-plan',
+               jsonb_build_object('operations',
+                 (SELECT jsonb_agg(x.id ORDER BY x.created_at, x.scope_key) FROM settlement_operations x
+                   WHERE x.submission_id = l.submission_id AND x.state NOT IN ('done', 'void')
+                     AND ${legacyShape(sql`x`)}))
+          FROM legacy l
+         WHERE NOT ${blockingHold(sql`l.submission_id`)}
+           AND NOT ${takenByHand(sql`l.submission_id`)}
+        ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+        RETURNING id, submission_id
+      ),
+      seq AS (
+        UPDATE return_submissions rs SET admission_seq = rs.admission_seq + 1
+          FROM h WHERE rs.id = h.submission_id
+        RETURNING 1
+      ),
+      a AS (
+        INSERT INTO ops_alerts (dedupe_key, subject, body)
+        SELECT ${alert.dedupeKey},
+               replace(${alert.subject}, '{order}', ${orderNumberOf(sql`h.submission_id`)}),
+               replace(replace(${alert.body}, '{order}', ${orderNumberOf(sql`h.submission_id`)}),
+                       '{submission}', h.submission_id::text)
+          FROM h
+        ON CONFLICT (dedupe_key) DO NOTHING
+        RETURNING 1
+      )`;
+}
+
+/**
  * Claim an op that may be SENT AFRESH: a pending op (never sent) or a
  * rejected one (Shopify said no, so nothing happened) — those two start a new
  * financial attempt and forget any earlier dispatch. A claim whose lease ran
@@ -593,8 +634,7 @@ export async function earlierExchangeDemand(submissionId: string): Promise<OpenD
  * such op), bumps its admission sequence, and writes the hold's outbox row.
  */
 export async function claim(cap: WriteCapability, opId: string, me: string): Promise<Operation | null> {
-  const holdId = randomUUID();
-  const alert = holdAlert(holdId, "{submission}", "legacy-plan", [
+  const legacyHold = legacyHoldCtes([
     `An operation was admitted in a shape this code no longer runs (an exchange that ignores the`,
     `inventory policy, a stock-hold release, or a sibling not gated on the exchange). Nothing was sent.`,
     `Void those operations (or settle by hand with --take/--done) before releasing.`,
@@ -627,34 +667,7 @@ export async function claim(cap: WriteCapability, opId: string, me: string): Pro
            AND NOT EXISTS (SELECT 1 FROM legacy)
         RETURNING o.*
       ),
-      h AS (
-        INSERT INTO settlement_holds (id, submission_id, cause, detail)
-        SELECT ${holdId}, l.submission_id, 'legacy-plan',
-               jsonb_build_object('operations',
-                 (SELECT jsonb_agg(x.id ORDER BY x.created_at, x.scope_key) FROM settlement_operations x
-                   WHERE x.submission_id = l.submission_id AND x.state NOT IN ('done', 'void')
-                     AND ${legacyShape(sql`x`)}))
-          FROM legacy l
-         WHERE NOT ${blockingHold(sql`l.submission_id`)}
-           AND NOT ${takenByHand(sql`l.submission_id`)}
-        ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
-        RETURNING id, submission_id
-      ),
-      seq AS (
-        UPDATE return_submissions rs SET admission_seq = rs.admission_seq + 1
-          FROM h WHERE rs.id = h.submission_id
-        RETURNING 1
-      ),
-      a AS (
-        INSERT INTO ops_alerts (dedupe_key, subject, body)
-        SELECT ${alert.dedupeKey},
-               replace(${alert.subject}, '{order}', ${orderNumberOf(sql`h.submission_id`)}),
-               replace(replace(${alert.body}, '{order}', ${orderNumberOf(sql`h.submission_id`)}),
-                       '{submission}', h.submission_id::text)
-          FROM h
-        ON CONFLICT (dedupe_key) DO NOTHING
-        RETURNING 1
-      )
+      ${legacyHold}
       SELECT * FROM c
     `)
   );
@@ -663,30 +676,59 @@ export async function claim(cap: WriteCapability, opId: string, me: string): Pro
 
 /**
  * Recovery takes over an op that has dispatched before — dispatched long ago
- * with no answer, or a takeover claim whose lease ran out before it re-sent —
- * to re-send it after re-reading the evidence, only for kinds whose re-send is
- * safe (L5). `exchange_order` never. An ownership change NEVER touches the
- * financial identity: `attempt` (the idempotency key) and `dispatched_at`
- * (the start of the 23 h replay window) are kept for every kind; only the
- * worker fence `lease_gen` moves. A root_refund is re-sent only within 23 h
- * of its first dispatch.
+ * with no answer, or a takeover claim whose lease ran out — to re-send it
+ * after re-reading the evidence, only for kinds whose re-send is safe (L5).
+ * `exchange_order` never. An ownership change NEVER touches the financial
+ * identity: `attempt` (the idempotency key) and `dispatched_at` (the start of
+ * the 23 h replay window) are kept for every kind; only the worker fence
+ * `lease_gen` moves. A root_refund is re-sent only within 23 h of its first
+ * dispatch.
+ *
+ * FX (review #1): a re-send is a send, so it is authorized exactly as
+ * `claim` authorizes one — never while its `after` op is not done, a hold
+ * blocks the submission (§#7) or an operator holds it (A2). An op frozen in a
+ * legacy shape (A3) is never re-sent: absence of evidence does not authorize
+ * its replay. The same statement records the `legacy-plan` hold (as `claim`
+ * does); the op stays `dispatched`, observed and completed from evidence only.
  */
 export async function takeOver(cap: WriteCapability, op: Operation, me: string): Promise<Operation | null> {
+  const legacyHold = legacyHoldCtes([
+    `An operation in a shape this code no longer runs (a stock-hold release, or a sibling not gated on`,
+    `the exchange) was sent before and Shopify shows no effect. It is NOT re-sent: recovery keeps`,
+    `re-reading it and records it done if the effect appears. Check Shopify by hand before releasing.`,
+  ]);
+  const replayable = sql`
+           o.id = ${op.id}
+       AND o.lease_gen = ${op.leaseGen}
+       AND o.owner IS NOT DISTINCT FROM ${op.owner}
+       AND o.dispatched_at IS NOT NULL
+       AND ((o.state = 'dispatched' AND o.updated_at < now() - ${lease})
+            OR (o.state = 'claimed' AND o.lease_until < now()))
+       AND o.kind <> 'exchange_order'
+       AND (o.kind <> 'root_refund' OR o.dispatched_at > now() - ${replayWindow})
+       AND ${notReconciliation}`;
   const rows = rowsOf(
     await writeDb(cap).execute(sql`
-      UPDATE settlement_operations o
-         SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
-             lease_until = now() + ${lease}, updated_at = now()
-       WHERE o.id = ${op.id}
-         AND o.lease_gen = ${op.leaseGen}
-         AND o.owner IS NOT DISTINCT FROM ${op.owner}
-         AND o.dispatched_at IS NOT NULL
-         AND ((o.state = 'dispatched' AND o.updated_at < now() - ${lease})
-              OR (o.state = 'claimed' AND o.lease_until < now()))
-         AND o.kind <> 'exchange_order'
-         AND (o.kind <> 'root_refund' OR o.dispatched_at > now() - ${replayWindow})
-         AND ${notReconciliation}
-      RETURNING o.*
+      WITH legacy AS (
+        SELECT o.id, o.submission_id FROM settlement_operations o
+         WHERE ${replayable}
+           AND ${legacyShape(sql`o`)}
+      ),
+      t AS (
+        UPDATE settlement_operations o
+           SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
+               lease_until = now() + ${lease}, updated_at = now()
+         WHERE ${replayable}
+           AND (o.after IS NULL
+                OR EXISTS (SELECT 1 FROM settlement_operations d
+                            WHERE d.id = o.after AND d.state = 'done'))
+           AND NOT ${blockingHold(sql`o.submission_id`)}
+           AND NOT ${takenByHand(sql`o.submission_id`)}
+           AND NOT EXISTS (SELECT 1 FROM legacy)
+        RETURNING o.*
+      ),
+      ${legacyHold}
+      SELECT * FROM t
     `)
   );
   return rows[0] ? toOperation(rows[0]) : null;

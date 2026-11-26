@@ -3,7 +3,7 @@ import { sys, vsub } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
-import { orderObject } from "./support/shopifyEvidence";
+import { giftCardObject, orderObject, returnObject } from "./support/shopifyEvidence";
 import type { SubmissionLineRow } from "@/lib/settlement/ledger";
 
 // FX: Amphora authorizes the replacement (§#4 (d), A1), holds stop a
@@ -98,9 +98,9 @@ function shopifyReturn(lines: SubmissionLineRow[], orderId = "100") {
 }
 
 /** An accepted submission of order `orderId` with an exchange (and a refund sibling), ready to admit. */
-async function seeded(opts: { orderId?: string; lines?: SubmissionLineRow[] } = {}) {
+async function seeded(opts: { orderId?: string; lines?: SubmissionLineRow[]; tender?: "refund" | "credit" } = {}) {
   const lines = opts.lines ?? [exchangeLine(1), line(2)];
-  const s = await seedSubmission(env.pg, { orderId: opts.orderId, lines });
+  const s = await seedSubmission(env.pg, { orderId: opts.orderId, lines, tender: opts.tender });
   await q(
     `UPDATE orders SET shipping_name='Ana', shipping_address1='Calle 1', shipping_zip='28001', shipping_city='Madrid',
        shipping_province='Madrid', shipping_country='Spain', shipping_phone='600000000', email='c@example.com'
@@ -364,6 +364,112 @@ describe("A3: old shapes are refused and held", () => {
     const ungated = planned.filter((o) => o.kind !== "exchange_order").map((o) => o.id);
     expect(ungated).toContain(sibling.id);
     expect([...hold.detail.operations].sort()).toEqual([...ungated].sort());
+  });
+});
+
+describe("recovery never replays what claim would refuse (review #1)", () => {
+  /** An op some earlier code sent and nobody heard back from: dispatched, aged past the lease. */
+  async function sentLongAgo(opId: string) {
+    await q(
+      `UPDATE settlement_operations SET state='dispatched', owner=gen_random_uuid(), lease_gen=1, attempt=1,
+         dispatched_at = now() - interval '2 hours', updated_at = now() - interval '1 hour' WHERE id=$1`,
+      [opId]
+    );
+  }
+  const recover = async (opId: string) => {
+    const { getOperation } = await ledger();
+    return (await import("@/lib/settlement/run")).recoverDispatched(sys, (await getOperation(opId))!, crypto.randomUUID());
+  };
+  const stateOf = async (opId: string) => (await q(`SELECT state FROM settlement_operations WHERE id=$1`, [opId]))[0].state;
+
+  it("a legacy sibling (after NULL) dispatched, evidence absent, exchange pending → observed only: no returnProcess, one legacy-plan hold", async () => {
+    const s = await seeded();
+    const planned = await admittedDirectly(s, (p) => {
+      for (const o of p) if (o.kind !== "exchange_order") o.after = null;
+    });
+    const refund = planned.find((o) => o.kind === "process_refund");
+    const exchange = planned.find((o) => o.kind === "exchange_order");
+    await sentLongAgo(refund.id);
+    answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
+    answers.SettlementReturnProcess = () => ({ data: { returnProcess: { return: returnObject(refund.request.check), userErrors: [] } } });
+
+    expect(await recover(refund.id)).toBe("not-claimed");
+    expect(await recover(refund.id)).toBe("not-claimed");
+    expect(sends("SettlementReturnEvidence")).toHaveLength(2);
+    expect(sends("SettlementReturnProcess")).toHaveLength(0);
+    expect(await stateOf(refund.id)).toBe("dispatched");
+    expect(await stateOf(exchange.id)).toBe("pending");
+    const [hold] = await holds(s.id);
+    expect(hold.cause).toBe("legacy-plan");
+    expect(hold.detail.operations).toContain(refund.id);
+    expect((await holds(s.id))).toHaveLength(1);
+    expect((await alerts()).map((a) => a.dedupe_key)).toEqual([`settlement-held:${hold.id}`]);
+
+    // The effect appears in Shopify: it is completed from evidence, held or not.
+    answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check) } });
+    expect(await recover(refund.id)).toBe("done");
+    expect(sends("SettlementReturnProcess")).toHaveLength(0);
+  });
+
+  it("a legacy gift card dispatched → not re-sent (its re-send is no probe here): observed, and a search that cannot prove it is a human's", async () => {
+    const s = await seeded({ tender: "credit" });
+    const planned = await admittedDirectly(s, (p) => {
+      for (const o of p) if (o.kind !== "exchange_order") o.after = null;
+    });
+    const card = planned.find((o) => o.kind === "gift_card");
+    await sentLongAgo(card.id);
+    answers.SettlementGiftCardEvidence = () => ({ data: { giftCards: { nodes: [] } } });
+    answers.SettlementGiftCardCreate = () => ({ data: { giftCardCreate: { giftCard: giftCardObject(card.request.check), userErrors: [] } } });
+    // A search finding no card proves nothing (judgeGiftCardSearch): unresolved, the existing human path.
+    expect(await recover(card.id)).toBe("unresolved");
+    expect(sends("SettlementGiftCardEvidence")).toHaveLength(1);
+    expect(sends("SettlementGiftCardCreate")).toHaveLength(0);
+    expect(await stateOf(card.id)).toBe("unresolved");
+    expect((await holds(s.id))[0].cause).toBe("legacy-plan");
+  });
+
+  it("a legacy gift card dispatched whose card exists → done from evidence, never re-sent", async () => {
+    const s = await seeded({ tender: "credit" });
+    const planned = await admittedDirectly(s, (p) => {
+      for (const o of p) if (o.kind !== "exchange_order") o.after = null;
+    });
+    const card = planned.find((o) => o.kind === "gift_card");
+    await sentLongAgo(card.id);
+    answers.SettlementGiftCardEvidence = () => ({ data: { giftCards: { nodes: [giftCardObject(card.request.check)] } } });
+    answers.SettlementGiftCardCreate = () => ({ data: { giftCardCreate: { giftCard: giftCardObject(card.request.check), userErrors: [] } } });
+    expect(await recover(card.id)).toBe("done");
+    expect(sends("SettlementGiftCardCreate")).toHaveLength(0);
+  });
+
+  it("a gated sibling is not replayed while its exchange is not done (no hold: its shape is current)", async () => {
+    const s = await seeded();
+    const planned = await admittedDirectly(s);
+    const refund = planned.find((o) => o.kind === "process_refund");
+    await sentLongAgo(refund.id);
+    answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
+    answers.SettlementReturnProcess = () => ({ data: { returnProcess: { return: returnObject(refund.request.check), userErrors: [] } } });
+    expect(await recover(refund.id)).toBe("not-claimed");
+    expect(sends("SettlementReturnProcess")).toHaveLength(0);
+    expect(await holds(s.id)).toEqual([]);
+  });
+
+  it("a gated sibling is not replayed under a blocking hold; after --release it is", async () => {
+    const s = await seeded();
+    const planned = await admittedDirectly(s);
+    const refund = planned.find((o) => o.kind === "process_refund");
+    const exchange = planned.find((o) => o.kind === "exchange_order");
+    await q(`UPDATE settlement_operations SET state='done' WHERE id=$1`, [exchange.id]);
+    await sentLongAgo(refund.id);
+    const { insertHold } = await ledger();
+    const { holdId } = await insertHold(sys, { submissionId: s.id, seenSeq: await seqOf(s.id), short: [{ sku: V, need: 1, available: 0, earlier: 0 }] });
+    answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
+    answers.SettlementReturnProcess = () => ({ data: { returnProcess: { return: returnObject(refund.request.check), userErrors: [] } } });
+    expect(await recover(refund.id)).toBe("not-claimed");
+    expect(sends("SettlementReturnProcess")).toHaveLength(0);
+    expect(await resolve(holdId, "release", { evidence: "checked" })).toMatchObject({ ok: true });
+    expect(await recover(refund.id)).toBe("done");
+    expect(sends("SettlementReturnProcess")).toHaveLength(1);
+    expect((await q(`SELECT attempt FROM settlement_operations WHERE id=$1`, [refund.id]))[0].attempt).toBe(1);
   });
 });
 

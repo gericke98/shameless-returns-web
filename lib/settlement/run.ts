@@ -269,14 +269,23 @@ const hoursSince = (date: Date | null) =>
 /**
  * Recovery for an operation that has dispatched before and nobody heard back
  * from — dispatched over a lease ago, or a takeover claim whose lease ran out:
- * re-read the evidence, then follow the L5 table. Only a takeover row
- * authorises a re-send, and it keeps the op's attempt (its idempotency key)
- * and first-dispatch time.
+ * re-read the evidence, then follow the L5 table. Evidence is always applied
+ * (an effect that appeared is recorded, whatever the op's shape). Only a
+ * takeover row authorises a re-send — never for a legacy shape, before its
+ * exchange is done, under a blocking hold or a manual holder (`takeOver`) —
+ * and it keeps the op's attempt (its idempotency key) and first-dispatch time.
  */
 export async function recoverDispatched(cap: WriteCapability, op: Operation, me: string = randomUUID()): Promise<RunResult> {
   // A gift card is re-sent with its frozen code: the re-send IS the probe
-  // (created, or TAKEN → evidence). Every other kind is read first.
-  if (op.kind === "gift_card") return resend(cap, op, me);
+  // (created, or TAKEN → evidence). Every other kind is read first. When the
+  // re-send is not authorized (review #1: legacy shape, its exchange not done,
+  // a blocking hold, a manual holder — or another worker), it is observed only.
+  if (op.kind === "gift_card") {
+    const taken = await takeOver(cap, op, me);
+    if (taken) return dispatchAndSend(cap, taken, me);
+    const seen = await readEvidence(op);
+    return seen.v === "absent" ? "not-claimed" : apply(cap, op, fenceOf(op), seen);
+  }
 
   const verdict = await readEvidence(op);
   if (verdict.v !== "absent") return apply(cap, op, fenceOf(op), verdict);

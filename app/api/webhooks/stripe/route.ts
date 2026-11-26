@@ -131,9 +131,6 @@ function survivingReturn(
     `actually exists first: the Shopify return above, whether the carrier was`,
     `booked (orders.locator / orders.carrier), and whether the customer was`,
     `emailed. The 15-minute Amphora sync may have reconciled it already.`,
-    ``,
-    `Whatever you find, confirm the exchange stock hold is still in place`,
-    `(orders.exchange_reservation_id) — a refused revert used to release it.`,
   ];
 }
 

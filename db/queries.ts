@@ -561,9 +561,11 @@ export async function getProduct(id: string): Promise<Product> {
 }
 
 /**
- * A variant as Shopify reports it now. `productStatus` and `inventoryQuantity`
- * are what `isOfferedReplacement` (lib/replacementCatalogue.ts) decides on, so
- * the server checks an exchange against the same policy the dialog offers.
+ * A variant as Shopify reports it now. `productStatus` is what
+ * `isOfferedProduct` (lib/replacementCatalogue.ts) decides an exchange on, the
+ * same policy the dialog offers. `inventoryQuantity` is Shopify's mirror of
+ * stock: a display hint only (the dashboard shows it); whether a replacement
+ * can be shipped is Amphora's answer (lib/server/amphoraStock.ts, FX).
  */
 export type VariantInfo = {
   productTitle: string;

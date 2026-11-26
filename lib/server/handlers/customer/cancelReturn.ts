@@ -11,7 +11,6 @@ import { ok, refuse, type HandlerResult } from "@/lib/actionResult";
 import type { CustomerContext } from "@/lib/server/actions";
 import { readCarrierMovement } from "@/lib/server/shipping";
 import { amphoraOrderIdFromShopifyId, cancelAmphoraReturn } from "@/lib/server/amphora";
-import { releaseHoldForCancellation } from "@/lib/settlement/holdRelease";
 import { refundOrderPayment } from "@/lib/server/refundPayment";
 import { alertOps } from "@/lib/server/opsAlert";
 import { finishCancellation, releaseCancellation } from "@/lib/server/submissionScope";
@@ -36,11 +35,13 @@ const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
  *   1. Amphora cancel  — FATAL. The only booking either lane lets us release.
  *   2. Shopify cancel  — each submission's OWN return; continue on failure,
  *                        alert a human.
- *   3. Release hold    — never throws; continue on failure, alert a human.
- *   4. Stripe refund   — each submission's OWN payment, key
+ *   3. Stripe refund   — each submission's OWN payment, key
  *                        `cancel:<submission id>`; continue on failure, alert.
- *   5. One transaction: submissions `cancelled`, then our rows reset.
- *   6. Email the customer.
+ *   4. One transaction: submissions `cancelled`, then our rows reset.
+ *   5. Email the customer.
+ *
+ * No stock hold is released: none is placed any more (FX); the drafts placed
+ * before it are released by scripts/release-hold-drafts.ts.
  *
  * Past step 1 the customer's return no longer exists and, for Spain, their
  * Correos label cannot be voided (probed 2026-08-12: BajaOp rejects our
@@ -130,19 +131,7 @@ export async function cancelReturnHandler(
     }
   }
 
-  // 3. Never throws, but `released: false` means the hold is still live: the
-  //    replacement stock stays frozen behind nothing but this alert once
-  //    step 5 drops the row from the dashboard.
-  const hold = await releaseHoldForCancellation(orderId, submissions);
-  if (!hold.released) {
-    await alertOps(
-      `Exchange stock hold not released after cancelling ${(order as any).orderNumber}`,
-      `Order ${orderId} was cancelled by the customer, but its stock hold was not released: ${hold.reason}. ` +
-        `The replacement garment's stock hold may still be live in Shopify — release it by hand.`
-    );
-  }
-
-  // 4. Each submission's OWN payment, keyed by its own id: a retry of the same
+  // 3. Each submission's OWN payment, keyed by its own id: a retry of the same
   //    cancellation reuses each key, and no payment is refunded on another's
   //    behalf. `not-found` is not a failure: a free return had nothing to refund.
   for (const member of members) {
@@ -158,7 +147,7 @@ export async function cancelReturnHandler(
         `Refund FAILED after cancelling ${(order as any).orderNumber}`,
         `Order ${orderId} (submission ${member.submission.id}) was cancelled at the customer's request and ` +
           `their return is gone, but the refund did not go through. Refund them by hand in Stripe.\n\n` +
-          // Step 5 clears `stripe_payment_intent` from the order row; the
+          // Step 4 clears `stripe_payment_intent` from the order row; the
           // submission keeps its own.
           `Payment intent: ${paymentIntent || "not stored — find the Checkout Session by " +
             `customer_email ${(order as any).email} and metadata.id ${orderId}`}`
@@ -166,10 +155,10 @@ export async function cancelReturnHandler(
     }
   }
 
-  // 5. Clean slate — they can start a fresh return immediately.
+  // 4. Clean slate — they can start a fresh return immediately.
   //
   // Guarded because it is two separate updates and the customer's money has
-  // already moved. A throw escaping here would skip step 6 as well: no email,
+  // already moved. A throw escaping here would skip step 5 as well: no email,
   // no alert, and a row still `confirmed` with a `return_id` for a Shopify
   // return that no longer exists — a phantom live return on the dashboard that
   // an admin would settle, refunding the garment on top of the fee.
@@ -187,7 +176,7 @@ export async function cancelReturnHandler(
     );
   }
 
-  // 6. Tell them, in the language they used.
+  // 5. Tell them, in the language they used.
   await sendCancellationEmail(order as any);
 
   return ok({});

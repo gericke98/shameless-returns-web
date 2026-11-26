@@ -1,19 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { vid, vsub } from "./support/verified";
+import { vid } from "./support/verified";
 
 // Order #311329 (Koen Krijnen, Netherlands), 2026-08-21. A paid exchange whose
 // Amphora booking reported 501 — the POST threw and the immediate read-back
 // found nothing, though Amphora had in fact committed the collection. The
 // Stripe webhook then reverted.
 //
-// The per-line revert did the right thing: every line carried a Shopify
-// return_id, so it refused (the #310957 lesson). But the hold release
-// ran anyway, one line below the loop and outside its result — so a live
-// exchange lost the stock hold on its replacement garment while the return,
-// the collection and the customer's confirmation email all survived.
-//
-// The rule: a refused line means a REAL Shopify return still exists. The hold
-// belongs to that return, so it must outlive a revert that could not undo it.
+// The rule: a line carrying a Shopify return_id means a REAL Shopify return
+// still exists, and reverting cannot delete it — so the revert refuses that
+// line and leaves it confirmed. (The stock-hold release that once ran below
+// the loop is gone with the holds themselves, FX: nothing is released here.)
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -21,19 +17,8 @@ vi.mock("react", async (importOriginal) => {
 });
 
 let rows: any[] = [];
-const released: string[] = [];
 const updates: any[] = [];
 
-vi.mock("@/lib/server/exchangeReservation", () => ({
-  reserveExchangeStock: async () => {},
-}));
-// The release itself goes through lib/settlement/holdRelease.ts (finding 9).
-vi.mock("@/lib/settlement/holdRelease", () => ({
-  releaseHoldForRevert: async (id: string) => {
-    released.push(id);
-    return { released: true };
-  },
-}));
 vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 
 vi.mock("next/cache", () => ({
@@ -64,28 +49,11 @@ async function revert() {
 }
 
 beforeEach(() => {
-  released.length = 0;
   updates.length = 0;
 });
 
 describe("reverting a return that cannot actually be undone", () => {
-  it("keeps the exchange stock hold when a line carries a Shopify return", async () => {
-    // The exact shape of #311329: one confirmed exchange line with a live
-    // Shopify return behind it.
-    rows = [
-      {
-        variant_id: "55927926587718",
-        confirmed: true,
-        return_id: "gid://shopify/Return/57356845382",
-      },
-    ];
-
-    await revert();
-
-    expect(released).toHaveLength(0);
-  });
-
-  it("still refuses to un-confirm that line", async () => {
+  it("refuses to un-confirm a line that carries a Shopify return", async () => {
     rows = [
       {
         variant_id: "55927926587718",
@@ -99,35 +67,14 @@ describe("reverting a return that cannot actually be undone", () => {
     expect(updates).toHaveLength(0);
   });
 
-  it("releases the hold when the revert genuinely undid everything", async () => {
-    // No return_id anywhere: nothing external exists, so the replacement
-    // garments must not stay frozen for a return that no longer exists.
-    rows = [{ variant_id: "1", confirmed: true, return_id: null }];
-
-    await revert();
-
-    expect(released).toEqual(["13238997909830"]);
-  });
-
-  it("keeps the hold when only SOME lines are refused", async () => {
-    // A partially-created return is still a return. One live Shopify return on
-    // the order is enough to make the hold load-bearing.
+  it("un-confirms only the lines with nothing external behind them", async () => {
     rows = [
-      { variant_id: "1", confirmed: true, return_id: null },
-      { variant_id: "2", confirmed: true, return_id: "gid://shopify/Return/1" },
+      { id: 1, variant_id: "1", confirmed: true, return_id: null },
+      { id: 2, variant_id: "2", confirmed: true, return_id: "gid://shopify/Return/1" },
     ];
 
     await revert();
 
-    expect(released).toHaveLength(0);
-  });
-
-  it("releases the hold when there was nothing to revert at all", async () => {
-    // Nothing confirmed, nothing refused. A hold here belongs to no return.
-    rows = [{ variant_id: "1", confirmed: false, return_id: null }];
-
-    await revert();
-
-    expect(released).toEqual(["13238997909830"]);
+    expect(updates).toEqual([{ confirmed: false, return_id: null }]);
   });
 });

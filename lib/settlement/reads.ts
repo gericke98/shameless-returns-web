@@ -133,6 +133,19 @@ export const DRAFT_ORDER_QUERY = `
   }`;
 
 /** What admission freezes from the Shopify return. */
+/**
+ * FX §#8: a stock-hold draft as the release migration judges it — gone (null),
+ * completed into an order (never deleted), or still an open draft.
+ */
+export const HOLD_DRAFT_QUERY = `
+  query SettlementHoldDraft($id: ID!) {
+    draftOrder(id: $id) {
+      id
+      status
+      order { id }
+    }
+  }`;
+
 export const ADMISSION_RETURN_QUERY = `
   query SettlementAdmissionReturn($id: ID!) {
     return(id: $id) {

@@ -27,7 +27,6 @@ const calls = {
   carrierRead: [] as string[],
   amphoraCancel: [] as string[],
   shopifyCancel: [] as string[],
-  releaseHold: [] as string[],
   refund: [] as string[],
   reset: [] as string[],
   claim: [] as string[],
@@ -50,7 +49,6 @@ const behaviour = {
   // is what the pre-existing tests below expect to stay fatal.
   amphoraFailureStatus: undefined as number | undefined,
   shopifyFails: false,
-  releaseFails: false,
   refundOutcome: { refunded: true } as any,
   resetFails: false,
   emailFails: false,
@@ -172,13 +170,6 @@ vi.mock("@/lib/server/amphora", () => ({
     return { id };
   },
 }));
-vi.mock("@/lib/settlement/holdRelease", () => ({
-  releaseHoldForCancellation: async (id: string) => {
-    calls.releaseHold.push(id);
-    calls.sequence.push("release");
-    return behaviour.releaseFails ? { released: false, reason: "draft still exists" } : { released: true };
-  },
-}));
 vi.mock("@/lib/server/refundPayment", () => ({
   refundOrderPayment: async (order: any, submissionKey: string) => {
     calls.refund.push(order.id);
@@ -218,7 +209,6 @@ beforeEach(() => {
   behaviour.amphoraFails = false;
   behaviour.amphoraFailureStatus = undefined;
   behaviour.shopifyFails = false;
-  behaviour.releaseFails = false;
   behaviour.refundOutcome = { refunded: true };
   behaviour.resetFails = false;
   behaviour.emailFails = false;
@@ -249,11 +239,6 @@ describe("cancelling an eligible return", () => {
     expect(calls.shopifyCancel).toEqual(["gid://shopify/Return/1"]);
   });
 
-  it("releases the exchange stock hold", async () => {
-    await cancel();
-    expect(calls.releaseHold).toEqual([ORDER.id]);
-  });
-
   it("refunds the customer", async () => {
     await cancel();
     expect(calls.refund).toEqual([ORDER.id]);
@@ -275,7 +260,6 @@ describe("cancelling an eligible return", () => {
       "claim",
       "amphora",
       "shopify",
-      "release",
       "refund",
       "reset",
       "email",
@@ -292,7 +276,6 @@ describe("when the return may not be cancelled", () => {
     expect(calls.carrierRead).toHaveLength(0);
     expect(calls.amphoraCancel).toHaveLength(0);
     expect(calls.shopifyCancel).toHaveLength(0);
-    expect(calls.releaseHold).toHaveLength(0);
     expect(calls.refund).toHaveLength(0);
     expect(calls.reset).toHaveLength(0);
     expect(calls.customerEmail).toHaveLength(0);
@@ -329,7 +312,6 @@ describe("ownership of the submission (S2 plan L2)", () => {
     expect(await cancel()).toEqual({ ok: false, reason: "already-settled" });
     expect(calls.amphoraCancel).toHaveLength(0);
     expect(calls.shopifyCancel).toHaveLength(0);
-    expect(calls.releaseHold).toHaveLength(0);
     expect(calls.refund).toHaveLength(0);
     expect(calls.reset).toHaveLength(0);
   });
@@ -372,7 +354,7 @@ describe("ownership of the submission (S2 plan L2)", () => {
     expect(calls.refundKey).toEqual(["sub-a", "sub-b"]);
     expect(calls.refundIntent).toEqual(["pi_a", "pi_b"]);
     expect(calls.sequence).toEqual([
-      "claim", "amphora", "shopify", "shopify", "shopify", "release", "refund", "refund", "reset", "email",
+      "claim", "amphora", "shopify", "shopify", "shopify", "refund", "refund", "reset", "email",
     ]);
   });
 
@@ -451,17 +433,6 @@ describe("when a step fails", () => {
     expect(calls.opsAlert.length).toBeGreaterThan(0);
   });
 
-  it("alerts a human when the exchange stock hold cannot be released, and carries on", async () => {
-    // The hold survives past `resetOrderReturn`, which drops the row from the
-    // dashboard moments later — the alert is the only remaining record.
-    behaviour.releaseFails = true;
-
-    expect(await cancel()).toEqual({ ok: true, value: {} });
-    expect(calls.opsAlert.some((entry) => entry.includes(ORDER.id))).toBe(true);
-    expect(calls.refund).toEqual([ORDER.id]);
-    expect(calls.reset).toEqual([ORDER.id]);
-  });
-
   it("alerts a human when the refund cannot be issued", async () => {
     behaviour.refundOutcome = { refunded: false, reason: "error" };
 
@@ -534,7 +505,6 @@ describe("cancelling the same return twice", () => {
     expect(calls.refund).toEqual(["13217168851270"]);
     expect(calls.amphoraCancel).toHaveLength(1);
     expect(calls.shopifyCancel).toHaveLength(1);
-    expect(calls.releaseHold).toHaveLength(1);
     expect(calls.reset).toHaveLength(1);
     expect(calls.customerEmail).toHaveLength(1);
     expect(calls.opsAlert).toHaveLength(0);
@@ -548,7 +518,6 @@ describe("cancelling the same return twice", () => {
       "claim",
       "amphora",
       "shopify",
-      "release",
       "refund",
       "reset",
       "email",

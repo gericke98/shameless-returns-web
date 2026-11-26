@@ -102,13 +102,6 @@ vi.mock("@/db/queries", () => ({
 
 vi.mock("@/db/fees", () => ({ getFeeTable: async () => [] }));
 vi.mock("@/lib/loadBasket", () => ({ loadBasket: async () => null }));
-vi.mock("@/lib/server/exchangeReservation", () => ({
-  reserveExchangeStock: async () => {},
-}));
-vi.mock("@/lib/settlement/holdRelease", () => ({
-  releaseHoldForRevert: async () => ({ released: true }),
-  releaseHoldForCancellation: async () => ({ released: true }),
-}));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 const recorded = vi.fn(async () => []);

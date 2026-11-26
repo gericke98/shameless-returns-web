@@ -130,13 +130,6 @@ vi.mock("@/lib/loadBasket", () => ({
     basket: { hasItems: true, netAmount: 50, grams: 500 },
   }),
 }));
-vi.mock("@/lib/server/exchangeReservation", () => ({
-  reserveExchangeStock: async () => {},
-}));
-vi.mock("@/lib/settlement/holdRelease", () => ({
-  releaseHoldForRevert: async () => ({ released: true }),
-  releaseHoldForCancellation: async () => ({ released: true }),
-}));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 const dbLine = { value: null as null | Record<string, unknown> };

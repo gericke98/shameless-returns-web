@@ -11,10 +11,10 @@
 // dispatch UPDATE returned (lib/settlement/ledger.ts): a caller that does not
 // hold a dispatched row for this exact op, attempt and lease generation cannot
 // send. The hold-release authority is minted only by lib/settlement/
-// holdRelease.ts after it verified, in the database, that a cancellation or a
-// failed confirmation owns the hold — the two callers outside the ledger that
-// may delete a stock-hold draft (finding 9). Same document, same transport,
-// same API version as the ledger's release_hold.
+// holdRelease.ts, the one-off MIGRATION that releases the stock-hold drafts
+// placed before FX, from the order's persisted pointer and after reading the
+// draft (FX §#8). Nothing places a stock-hold draft any more. Same document,
+// same transport, same API version as the historical release_hold.
 // Variables are the op's frozen request, posted verbatim — nothing is built or
 // recomputed here.
 import "server-only";
@@ -73,15 +73,15 @@ export const DRAFT_ORDER_DELETE = `
   }`;
 
 declare const holdAuthority: unique symbol;
-/** Proof that a cancellation or a reverted confirmation owns this hold. */
+/** Proof that the FX migration read this order's persisted pointer and this draft (§#8). */
 export type HoldReleaseAuthority = {
   readonly orderId: string;
   readonly draftOrderId: string;
-  readonly by: "cancellation" | "revert";
+  readonly by: "migration";
   readonly [holdAuthority]: true;
 };
 
-/** Delete a stock-hold draft outside the ledger, with verified authority. */
+/** Delete a pre-FX stock-hold draft outside the ledger, with the migration's authority. */
 export async function releaseHoldDraft(authority: HoldReleaseAuthority): Promise<ShopifyAnswer> {
   if (!authority?.draftOrderId || !authority.orderId) {
     throw new Error("releaseHoldDraft: no hold-release authority");

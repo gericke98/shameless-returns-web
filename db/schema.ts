@@ -67,10 +67,11 @@ export const orders = pgTable("orders", {
    *  new parcel's "accepted" notice would be suppressed because the old one had
    *  already passed that milestone. */
   lastTrackingLocator: text("last_tracking_locator"),
-  // Draft order holding the replacement stock from the moment the customer
-  // paid for their exchange until an admin validates it. NEVER completed — it
-  // is deleted at validation and the real exchange order created as before.
-  // Null when there is no exchange, or when the hold could not be placed.
+  // HISTORICAL (FX): the stock-hold draft order placed before FX for this
+  // order's exchange. Nothing sets it any more; scripts/release-hold-drafts.ts
+  // releases each pointed draft and clears the pointer, and drizzle/0015 then
+  // pins it NULL (CHECK orders_no_exchange_reservation). Kept as the
+  // migration's input and its history (hold_draft_releases).
   exchangeReservationId: text("exchange_reservation_id"),
   // Language the customer chose in the portal; drives the transactional email.
   locale: text("locale"),

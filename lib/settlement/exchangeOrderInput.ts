@@ -7,7 +7,8 @@
 // delivery address. What changes: the quantity is the submission's (it was a
 // hardcoded 1), each line names the returned garment it replaces through a
 // line-item property, `sourceIdentifier` is the op id, and the inventory
-// behaviour depends on whether a stock hold existed at admission.
+// behaviour is ALWAYS the shop's policy (FX §#4): no stock hold exists any
+// more, so Shopify refuses an oversell rather than creating a stockless order.
 import { normalizeCountry } from "@/lib/countries";
 import { deliveryAddressOf } from "@/lib/deliveryAddress";
 import { variantGid } from "@/lib/shopifyIds";
@@ -113,8 +114,6 @@ export function buildExchangeOrderVariables(input: {
   order: ExchangeOrderSource;
   customerGid: string | null;
   lines: readonly ExchangeLineInput[];
-  /** A stock hold for exactly these garments existed at admission. */
-  holdExisted: boolean;
 }): ExchangeOrderBuild {
   const { order } = input;
   const delivery = deliveryAddressOf(order as any);
@@ -153,10 +152,12 @@ export function buildExchangeOrderVariables(input: {
     ok: true,
     variables: {
       options: {
-        // The unit is already held for this customer by the draft order, which
-        // is released only AFTER this order exists (L6): no window in which
-        // the garment is free. Without a hold, the shop's policy applies.
-        inventoryBehaviour: input.holdExisted ? "DECREMENT_IGNORING_POLICY" : "DECREMENT_OBEYING_POLICY",
+        // Shopify's own guard (OrderCreateInputsInventoryBehavior): the
+        // variants are `inventoryPolicy: DENY`, so an order Shopify's stock
+        // cannot cover is refused, never created. Amphora's stock was checked
+        // before this send (lib/settlement/run.ts, A1); this does not allocate
+        // at Amphora (the stated residual).
+        inventoryBehaviour: "DECREMENT_OBEYING_POLICY",
         sendFulfillmentReceipt: true,
         sendReceipt: true,
       },

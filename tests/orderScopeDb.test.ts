@@ -22,6 +22,10 @@ vi.mock("@/db/queries", () => ({
     Object.fromEntries(ids.filter((id) => catalogue[id]).map((id) => [id, catalogue[id]])),
 }));
 
+// FX §#1: Amphora, mocked at its reader's module boundary. SKU = variant gid.
+const stock = vi.hoisted(() => ({ available: {} as Record<string, number>, reason: null as string | null, reads: 0 }));
+vi.mock("@/lib/server/amphoraStock", async () => (await import("./support/amphoraStockMock")).amphoraStockModule(stock));
+
 const VARIANT = (n: number) => `gid://shopify/ProductVariant/${n}`;
 const variant = (title: string, productStatus: string, inventoryQuantity: number) => ({
   productTitle: "Other jeans",
@@ -39,9 +43,10 @@ const order = async (id: string) => (await env.pg.query<any>("SELECT * FROM orde
 beforeAll(() => env.ready);
 beforeEach(async () => {
   await env.reset();
+  (await import("./support/amphoraStockMock")).resetStock(stock);
   for (const k of Object.keys(catalogue)) delete catalogue[k];
   catalogue[VARIANT(9)] = variant("L", "ACTIVE", 3); // another product: cross-product exchange
-  catalogue[VARIANT(10)] = variant("XL", "ACTIVE", 0); // out of stock
+  catalogue[VARIANT(10)] = variant("XL", "ACTIVE", 0); // Shopify's mirror says 0
   catalogue[VARIANT(11)] = variant("S", "DRAFT", 5); // not on sale
   await env.pg.exec(`
     INSERT INTO orders (id, order_number, shipping_country, delivery_name, delivery_address1,
@@ -78,7 +83,6 @@ describe("setLineSelection", () => {
   });
 
   it.each([
-    ["out of stock", VARIANT(10)],
     ["not an active product", VARIANT(11)],
     ["unknown to Shopify", VARIANT(99)],
     ["not a variant id", "gid://shopify/Product/2"],
@@ -88,6 +92,65 @@ describe("setLineSelection", () => {
       await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: id })
     ).toEqual({ ok: false, reason: "variant-not-offered" });
     expect((await row(1)).action).toBeNull();
+  });
+
+  it("Shopify's stock number is a display hint only: Amphora decides (decision 2)", async () => {
+    const s = await scope("A");
+    expect(
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: VARIANT(10) })
+    ).toEqual({ ok: true, value: {} });
+    stock.available[VARIANT(9)] = 0; // Shopify says 3
+    expect(
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: VARIANT(9) })
+    ).toEqual({ ok: false, reason: "replacement-unavailable" });
+    expect((await row(1)).new_variant_id).toBe(VARIANT(10)); // the refused choice was not written
+  });
+
+  it("an unreadable Amphora is a refusal, never 'enough'", async () => {
+    stock.reason = "amphora-http:503";
+    const s = await scope("A");
+    expect(
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: VARIANT(9) })
+    ).toEqual({ ok: false, reason: "stock-unreadable" });
+    expect((await row(1)).action).toBeNull();
+  });
+
+  it("counts the order's other unconfirmed exchange rows on the same SKU, not other SKUs", async () => {
+    await env.pg.exec(`
+      INSERT INTO productsorder (id, order_id, line_item, product_id, title, variant_title, variant_id,
+        price, quantity, confirmed, action, new_variant_id)
+      VALUES (4, 'A', 'li4', 'p', 't', 'M', 'v2', '50.00', 1, NULL, 'CAMBIO', '${VARIANT(9)}'),
+             (5, 'A', 'li5', 'p', 't', 'M', 'v3', '50.00', 1, NULL, 'CAMBIO', '${VARIANT(10)}');`);
+    stock.available[VARIANT(9)] = 1;
+    stock.available[VARIANT(10)] = 0;
+    const s = await scope("A");
+    // Row 4 already wants the one unit of 9; row 5's SKU (10, none left) does not matter here.
+    expect(
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: VARIANT(9) })
+    ).toEqual({ ok: false, reason: "replacement-unavailable" });
+    stock.available[VARIANT(9)] = 2;
+    expect(
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: VARIANT(9) })
+    ).toEqual({ ok: true, value: {} });
+  });
+
+  it("an accepted submission's open exchange line is a promise the save cannot take", async () => {
+    await env.pg.exec(`
+      INSERT INTO productsorder (id, order_id, line_item, product_id, title, variant_title, variant_id,
+        price, quantity, confirmed, action, new_variant_id)
+      VALUES (6, 'B', 'li6', 'p', 't', 'M', 'v1', '50.00', 1, true, 'CAMBIO', '${VARIANT(9)}');
+      INSERT INTO return_submissions (id, order_id, state, tender, return_method, return_leg_cents,
+        outbound_leg_cents, charged_fee_cents, returned_value_cents, replacement_value_cents, net_cents,
+        stripe_charge_cents, waived_cents, owed_cents, residual_cents, accepted_at)
+      VALUES ('11111111-1111-4111-8111-111111111111', 'B', 'accepted', 'refund', 'CORREOS', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now());
+      INSERT INTO submission_lines (submission_id, productsorder_id, shopify_line_item_id, quantity, action,
+        new_variant_id, returned_cents, replacement_cents, pay_cents, stripe_funded_cents)
+      VALUES ('11111111-1111-4111-8111-111111111111', 6, '7006', 1, 'CAMBIO', '${VARIANT(9)}', 5000, 0, 0, 0);`);
+    stock.available[VARIANT(9)] = 1;
+    const s = await scope("A");
+    expect(
+      await s.setLineSelection(1, { action: "CAMBIO", reason: "TOO_BIG", notes: "", newVariantId: VARIANT(9) })
+    ).toEqual({ ok: false, reason: "replacement-unavailable" });
   });
 
   it("refuses another order's row: not-editable, and that row is untouched", async () => {

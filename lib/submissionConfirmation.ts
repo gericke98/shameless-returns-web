@@ -2,8 +2,7 @@
 // agreed and, if they owed anything, paid" and "a Shopify return exists".
 //
 // NOT a "use server" module. Every export of one is a callable endpoint, and
-// neither of these may be: anyone who knew an order id could revert it and
-// release its stock hold. They take a verified identity (F1), so they are
+// neither of these may be: anyone who knew an order id could revert it. They take a verified identity (F1), so they are
 // reached only through the customer's submit handler (portal session) and the
 // signature-verified Stripe webhook.
 import db, { writeDb } from "@/db/drizzle";
@@ -19,9 +18,6 @@ import {
   presentmentRateFromOrder,
   type ReturnableLine,
 } from "@/lib/returnPayload";
-import { reserveExchangeStock } from "@/lib/server/exchangeReservation";
-import { releaseHoldForRevert } from "@/lib/settlement/holdRelease";
-import { alertOps } from "@/lib/server/opsAlert";
 import { refundSourceFor } from "@/lib/server/replacementOrder";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -47,7 +43,7 @@ export async function revertFinalOrder(id: VerifiedOrderId) {
     const products = await db.query.productsOrder.findMany({
       where: eq(productsOrder.orderId, id),
     });
-    const refusals = await Promise.all(
+    await Promise.all(
       products.map(async (product) => {
         // A row carrying a `return_id` has a REAL Shopify return behind it, and
         // reverting cannot delete that return — it only blanks our copy of it,
@@ -78,30 +74,6 @@ export async function revertFinalOrder(id: VerifiedOrderId) {
         return false;
       })
     );
-    // The return is being undone, so the stock hold must go with it —
-    // otherwise the replacement garments stay frozen for a return that no
-    // longer exists.
-    //
-    // UNLESS the revert was refused. A refused line carries a live Shopify
-    // return, and the hold belongs to THAT return — releasing it frees the
-    // replacement garment for a return that very much still exists. Order
-    // #311329 (2026-08-21): a paid Netherlands exchange whose Amphora booking
-    // reported 501 after the collection had in fact been committed. The line
-    // refused correctly, the return, the collection and the customer's
-    // confirmation email all survived — and this call, one level outside the
-    // loop's result, quietly deleted the draft order holding their Medium.
-    if (!refusals.some(Boolean)) {
-      // Through the one draftOrderDelete (lib/settlement/effects.ts), and
-      // only once the database proves no live return owns the hold.
-      const hold = await releaseHoldForRevert(id);
-      if (!hold.released) {
-        await alertOps(
-          `Exchange stock hold not released after reverting order ${id}`,
-          `The confirmation of order ${id} failed and was reverted, but its stock hold was not released: ` +
-            `${hold.reason}. The replacement garment may still be held in Shopify — check and release it by hand.`
-        );
-      }
-    }
     revalidatePath("/", "layout");
   }
 }
@@ -111,8 +83,8 @@ export async function revertFinalOrder(id: VerifiedOrderId) {
  * from the agreement — never from the live rows.
  *
  * The rows can change between checkout and payment (another tab, a fee-table
- * edit); what was paid for is the submission, so that is what is returned,
- * reserved and later settled. Lines are identified by `productsorder.id` and
+ * edit); what was paid for is the submission, so that is what is returned
+ * and later settled. Lines are identified by `productsorder.id` and
  * the Shopify line item id, never by variant: two rows can share a variant.
  *
  * NOT session-gated, for the reason given on `revertFinalOrder` above: the
@@ -302,27 +274,8 @@ export async function confirmSubmission(sub: VerifiedSubmission) {
     lines: confirmed,
   });
 
-  // The rows are now confirmed, which is the moment the customer has paid.
-  // Hold the replacement stock so their size cannot sell out during the days
-  // the parcel spends travelling back. Best-effort by construction — see
-  // actions/exchangeReservation.ts.
-  //
-  // What is held is what was paid for: the submission's replacements, on the
-  // rows Shopify accepted — not whatever the rows say by now.
-  const confirmedIds = new Set(confirmed.map((line) => line.productsorderId));
-  await reserveExchangeStock(
-    id,
-    agreed
-      .filter((line) => confirmedIds.has(line.productsorderId))
-      .map((line) => ({
-        variant_id: String(rowById.get(line.productsorderId)?.variant_id ?? ""),
-        action: line.action,
-        new_variant_id: line.newVariantId,
-        quantity: line.quantity,
-        confirmed: true,
-        refunded: rowById.get(line.productsorderId)?.refunded ?? false,
-      }))
-  );
-
+  // No stock is held here (FX): the replacement's stock is Amphora's, checked
+  // when the customer chose it, at submit, and again before the replacement
+  // order is created at settlement.
   revalidatePath("/", "layout");
 }

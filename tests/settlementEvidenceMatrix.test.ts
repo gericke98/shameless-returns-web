@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sys } from "./support/verified";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { settlementDatabase } from "./support/settlementDb";
-import { planFor, seedSubmission } from "./support/settlementSeed";
+import { insertFrozenReleaseHold, planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import { giftCardObject, orderObject, refundObject, returnObject } from "./support/shopifyEvidence";
 
@@ -34,6 +34,9 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
+// Amphora covers every replacement here (A1 reads it before every orderCreate).
+const stock = vi.hoisted(() => ({ available: {} as Record<string, number>, reason: null as string | null, reads: 0 }));
+vi.mock("@/lib/server/amphoraStock", async () => (await import("./support/amphoraStockMock")).amphoraStockModule(stock));
 
 const ledger = () => import("@/lib/settlement/ledger");
 const runner = () => import("@/lib/settlement/run");
@@ -59,6 +62,7 @@ beforeEach(async () => {
   await env.reset();
   for (const k of Object.keys(answers)) delete answers[k];
   sent.length = 0;
+  (await import("./support/amphoraStockMock")).resetStock(stock);
 });
 
 const V = "gid://shopify/ProductVariant/11";
@@ -79,15 +83,20 @@ const kinds = {
       paying: { orderGid: ROOT, presentment: null, gateways: new Map([[TX, "manual"]]), transactionId: TX },
     }),
   exchange_order: () => opOf("exchange_order", { lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] }),
-  release_hold: async () => {
-    await env.pg.exec("INSERT INTO orders (id, order_number) VALUES ('100', '#100') ON CONFLICT DO NOTHING");
-    const { plan } = await admitted(
-      { lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] },
-      { reservation: { draftOrderId: "gid://shopify/DraftOrder/5", existed: true } }
-    );
-    // Its dependency, the exchange order, is done.
-    await env.pg.query("UPDATE settlement_operations SET state='done' WHERE kind='exchange_order'");
-    return plan.ops.find((o) => o.kind === "release_hold")! as any;
+  // FX: no planner writes a release_hold any more. A historical one, frozen
+  // before the deploy, after its exchange order (done), in `state`.
+  release_hold: async (state = "pending") => {
+    const { seeded, plan } = await admitted({ lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
+    const exchange = plan.ops.find((o) => o.kind === "exchange_order")!;
+    await env.pg.query("UPDATE settlement_operations SET state='done' WHERE id=$1", [exchange.id]);
+    const { id } = await insertFrozenReleaseHold(env.pg, {
+      submissionId: seeded.id,
+      orderId: seeded.orderId,
+      after: exchange.id,
+      draftOrderId: "gid://shopify/DraftOrder/5",
+      state,
+    });
+    return { id, submissionId: seeded.id } as any;
   },
 };
 
@@ -318,33 +327,21 @@ describe("exchange_order", () => {
   });
 });
 
-describe("release_hold", () => {
-  it("answered with the deleted id → done, and the order's hold pointer cleared", async () => {
-    const op = await kinds.release_hold();
-    await env.pg.query("UPDATE orders SET exchange_reservation_id = 'gid://shopify/DraftOrder/5' WHERE id='100'").catch(() => {});
+describe("release_hold (historical, frozen before FX)", () => {
+  it("a pending one is never claimed: one legacy-plan hold, nothing sent (A3)", async () => {
+    const op = await kinds.release_hold("pending");
     answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: "gid://shopify/DraftOrder/5", userErrors: [] } } });
-    expect(await run(op.id)).toBe("done");
+    expect(await run(op.id)).toBe("not-claimed");
+    expect(sends("SettlementDraftOrderDelete")).toHaveLength(0);
+    expect((await opState(op.id)).state).toBe("pending");
+    const holds = await q("SELECT cause, detail FROM settlement_holds WHERE submission_id=$1", [op.submissionId]);
+    expect(holds).toEqual([{ cause: "legacy-plan", detail: { operations: [op.id] } }]);
   });
 
-  it("userError while the draft still exists → rejected", async () => {
-    const op = await kinds.release_hold();
-    answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: null, ...USER_ERROR } } });
-    answers.SettlementDraftOrder = () => ({ data: { draftOrder: { id: "gid://shopify/DraftOrder/5" } } });
-    expect(await run(op.id)).toBe("rejected");
-  });
-
-  it("userError because it is already gone → done", async () => {
-    const op = await kinds.release_hold();
-    answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: null, ...USER_ERROR } } });
-    answers.SettlementDraftOrder = () => ({ data: { draftOrder: null } });
-    expect(await run(op.id)).toBe("done");
-  });
-
-  it("no answer, draft gone → done without a re-send", async () => {
-    const op = await kinds.release_hold();
-    await unanswered(op);
+  it("dispatched before the deploy, no answer, draft gone → recovery records done without a re-send", async () => {
+    const op = await kinds.release_hold("dispatched");
     answers.SettlementDraftOrder = () => ({ data: { draftOrder: null } });
     expect(await recover(op)).toBe("done");
-    expect(sends("SettlementDraftOrderDelete")).toHaveLength(1);
+    expect(sends("SettlementDraftOrderDelete")).toHaveLength(0);
   });
 });

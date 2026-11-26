@@ -85,3 +85,29 @@ export function planFor(
   if (!plan.ok) throw new Error(plan.held);
   return plan;
 }
+
+/**
+ * A `release_hold` operation as the planner froze it BEFORE FX (FX removed that
+ * planner): a literal historical row, for the code paths that still read one
+ * (evidence, operator done, the A3 legacy refusal).
+ */
+export async function insertFrozenReleaseHold(
+  pg: Exec,
+  input: { submissionId: string; orderId: string; after: string | null; draftOrderId: string; state?: string }
+) {
+  const id = randomUUID();
+  const request = {
+    kind: "release_hold",
+    variables: { input: { id: input.draftOrderId } },
+    check: { draftOrderId: input.draftOrderId, orderId: input.orderId },
+  };
+  await pg.query(
+    `INSERT INTO settlement_operations (id, submission_id, kind, scope_key, members, after, request, state,
+       dispatched_at, attempt, owner, lease_until)
+     VALUES ($1, $2, 'release_hold', $3, '{}', $4, $5::jsonb, $6,
+             CASE WHEN $6 IN ('dispatched', 'unresolved') THEN now() - interval '1 hour' END,
+             CASE WHEN $6 = 'pending' THEN 0 ELSE 1 END, NULL, NULL)`,
+    [id, input.submissionId, `hold:${input.submissionId}`, input.after, JSON.stringify(request), input.state ?? "pending"]
+  );
+  return { id, request };
+}

@@ -6,14 +6,28 @@
 // AUTO_APPROVE_ENABLED govern; running admitted operations (lib/settlement/
 // run.ts) is not gated.
 //
+// FX: a blocking hold, or an operator holding the submission, stops it first.
+// When the exchange op will be NEWLY planned, Amphora must cover it (§#4 (d)):
+// short → a hold and its alert on the admission fence, no operation planned;
+// unreadable → held for this run only (transient; the cron reports it).
+//
 // NOT "use server".
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import db from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { rootOrderIdOf } from "@/lib/server/replacementOrder";
-import { readDraftExists, readPayingOrder, readReturnFacts } from "./facts";
-import { approvalsOf, insertAdmission, loadSubmission, operationsOf, standingReconciliations } from "./ledger";
+import { readPayingOrder, readReturnFacts } from "./facts";
+import {
+  approvalsOf,
+  holdOf,
+  insertAdmission,
+  insertHold,
+  loadSubmission,
+  operationsOf,
+  standingReconciliations,
+} from "./ledger";
+import { exchangeCoverage } from "./stockGate";
 import { planAdmission, type PayingOrder, type ReturnFacts } from "./plan";
 import type { WriteCapability } from "@/lib/server/identity";
 
@@ -30,15 +44,23 @@ export function newGiftCardCode(): string {
   return code;
 }
 
-/** The whole exchange travels as one parcel: admitting one CAMBIO line admits all. */
+/**
+ * The admission unit (FX §#4). The whole exchange travels as one parcel, and
+ * it gates every other effect of its submission: whenever ANY line of a
+ * submission with a (non-approved) exchange is requested, every such CAMBIO
+ * line is admitted with it — so a refund sibling is never admitted without its
+ * exchange gate.
+ */
 export function expandAdmission(
   lines: ReadonlyArray<{ productsorderId: number; action: string }>,
-  requested: readonly number[]
+  requested: readonly number[],
+  approved: ReadonlySet<number> = new Set()
 ): number[] {
   const set = new Set(requested);
-  const byId = new Map(lines.map((l) => [l.productsorderId, l]));
-  if (requested.some((id) => byId.get(id)?.action === "CAMBIO")) {
-    for (const line of lines) if (line.action === "CAMBIO") set.add(line.productsorderId);
+  if (requested.length > 0) {
+    for (const line of lines) {
+      if (line.action === "CAMBIO" && !approved.has(line.productsorderId)) set.add(line.productsorderId);
+    }
   }
   return Array.from(set).sort((a, b) => a - b);
 }
@@ -51,12 +73,19 @@ export async function admit(cap: WriteCapability, submissionId: string, requeste
     const { submission, lines } = loaded;
     if (submission.state !== "accepted") return { ok: false, held: `not-accepted:${submission.state}` };
     if (submission.holder === "cancellation") return { ok: false, held: "cancelling" };
+    // FX §#7 / A2: a hold blocks everything of the submission; one settled by
+    // hand blocks it forever.
+    const hold = await holdOf(submissionId);
+    if (hold) {
+      return { ok: false, held: hold.resolution === "manual" ? `resolved-by-hand:${hold.id}` : `stock-held:${hold.id}` };
+    }
+    if (submission.holder === "manual") return { ok: false, held: "taken-by-hand" };
 
-    const admitIds = expandAdmission(lines, requested);
-    // S3: the reconciliation found this line paid before the ledger, or left
-    // it for a human. Either way no new obligation may be planned for it.
     // Santi's approvals recorded with this submission (drizzle/0010).
     const approved = await approvalsOf(submissionId);
+    const admitIds = expandAdmission(lines, requested, new Set(approved.keys()));
+    // S3: the reconciliation found this line paid before the ledger, or left
+    // it for a human. Either way no new obligation may be planned for it.
     const reconciled = await standingReconciliations(
       admitIds,
       new Map(Array.from(approved, ([po, a]) => [po, a.basis]))
@@ -113,14 +142,6 @@ export async function admit(cap: WriteCapability, submissionId: string, requeste
       paying = read.value;
     }
 
-    let reservation: { draftOrderId: string; existed: boolean } | null = null;
-    const exchanging = admitIds.some((id) => lines.find((l) => l.productsorderId === id)?.action === "CAMBIO");
-    if (exchanging && order.exchangeReservationId) {
-      const exists = await readDraftExists(order.exchangeReservationId);
-      if (!exists.ok) return { ok: false, held: "shopify-unreadable:reservation" };
-      reservation = { draftOrderId: order.exchangeReservationId, existed: exists.value };
-    }
-
     const plan = planAdmission({
       submission,
       lines,
@@ -130,13 +151,29 @@ export async function admit(cap: WriteCapability, submissionId: string, requeste
       returns,
       isReplacement,
       paying,
-      reservation,
       approved,
       order: order as any,
       newId: randomUUID,
       newGiftCardCode,
     });
     if (!plan.ok) return { ok: false, held: plan.held };
+
+    // FX §#4 (d): the replacement order is about to be planned — Amphora must
+    // cover exactly the lines it freezes, net of earlier-accepted promises.
+    const exchange = plan.ops.find((o) => o.kind === "exchange_order");
+    if (exchange && exchange.request.kind === "exchange_order") {
+      const coverage = await exchangeCoverage(submission.id, exchange.request.check.lines);
+      if (coverage.kind === "unreadable") return { ok: false, held: `stock-unreadable:${coverage.reason}` };
+      if (coverage.kind === "short") {
+        const recorded = await insertHold(cap, {
+          submissionId,
+          seenSeq: submission.admissionSeq,
+          short: coverage.short,
+        });
+        if (recorded.held) return { ok: false, held: `stock-short:${recorded.holdId}` };
+        continue; // the fence moved: read again
+      }
+    }
 
     const written = await insertAdmission(cap, {
       submissionId,

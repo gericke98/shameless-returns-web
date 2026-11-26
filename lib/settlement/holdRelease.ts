@@ -1,135 +1,124 @@
-// Releasing an exchange's stock hold OUTSIDE the ledger (finding 9).
+// FX §#8 — the one-off MIGRATION that releases the stock-hold drafts placed
+// before FX. Nothing places one any more; this is the only authority left to
+// delete one (`releaseHoldDraft` in lib/settlement/effects.ts, the ONE
+// draftOrderDelete document, on SHOPIFY_API_VERSION).
 //
-// The ledger releases a hold with its own `release_hold` operation. Two other
-// moments must release one too: a customer's cancellation (the return is
-// gone) and a confirmation that failed and was reverted (no return was ever
-// created). Both go through `releaseHoldDraft` in lib/settlement/effects.ts —
-// the ONE draftOrderDelete document, on SHOPIFY_API_VERSION — and only with an
-// authority minted here, after the database proves the caller owns the hold:
+// Input is explicit, persisted data: the order's pointer
+// `orders.exchange_reservation_id` (draft id + owning order). A draft is never
+// found by tag or name. Per draft, Shopify is READ first:
+//   unreadable    — the read failed: nothing done, re-run later;
+//   already-gone  — no such draft: the pointer is cleared;
+//   completed     — status COMPLETED, or it became an order: NEVER deleted;
+//                   the pointer stays (Santi decides it by hand before P4);
+//   otherwise it is deleted, then read BACK:
+//   deleted       — gone: the pointer is cleared;
+//   still-exists  — present: the pointer stays.
+// Each outcome is one append-only `hold_draft_releases` row, written in the
+// SAME statement as the conditional pointer clear (`WHERE id = order AND
+// exchange_reservation_id = draft`: a pointer that changed meanwhile is
+// reported, never overwritten). Re-running is idempotent: a crash after a
+// delete reads `already-gone` next time.
 //
-//   cancellation — every submission named is accepted, held by cancellation
-//                  and on this order, and no OTHER accepted submission on the
-//                  order still has an unsettled exchange line (that hold
-//                  would be its);
-//   revert       — the order carries no live return (no confirmed, unrefunded
-//                  row with a Shopify return id) and settlement has no
-//                  unfinished exchange or hold release on it.
-//
-// Then the draft is judged gone (deleted, or already absent) and the order's
-// pointer to it is cleared — the pointer only when it still names THIS draft.
-//
-// Never throws: both callers have already done something irreversible.
-// NOT "use server".
+// NOT "use server". Run by scripts/release-hold-drafts.ts (dry-run default).
 import { sql } from "drizzle-orm";
 import { readQuery, writeDb } from "@/db/drizzle";
+import type { SystemTarget } from "@/lib/server/identity";
 import { releaseHoldDraft, type HoldReleaseAuthority } from "./effects";
-import { graphQLErrors } from "./shopify";
-import { DRAFT_ORDER_QUERY, read } from "./reads";
-import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
+import { HOLD_DRAFT_QUERY, read } from "./reads";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 
-export type HoldRelease =
-  /** There is no hold now: released, already gone, or never placed. */
-  | { released: true }
-  | { released: false; reason: string };
+export type DraftOutcome = "unreadable" | "already-gone" | "completed" | "deleted" | "still-exists";
 
-async function heldDraftOf(orderId: VerifiedOrderId): Promise<string | null> {
-  const [row] = rowsOf(
-    await readQuery(sql`SELECT exchange_reservation_id FROM orders WHERE id = ${orderId}`)
-  );
-  return row?.exchange_reservation_id ? String(row.exchange_reservation_id) : null;
+export type DraftRelease = {
+  orderId: string;
+  draftOrderId: string;
+  /** Dry run: what Shopify shows now (`would-delete` for an open draft). */
+  outcome: DraftOutcome | "would-delete";
+  detail: Record<string, unknown>;
+  pointerCleared: boolean;
+};
+
+type DraftNow = { ok: false; error: string } | { ok: true; draft: { id: string; status: string; order: { id: string } | null } | null };
+
+async function draftNow(draftOrderId: string): Promise<DraftNow> {
+  const r = await read(HOLD_DRAFT_QUERY, { id: draftOrderId }, (d) => d?.draftOrder ?? null);
+  return r.ok ? { ok: true, draft: r.value } : { ok: false, error: r.error };
 }
 
-async function cancellationOwnsHold(orderId: VerifiedOrderId, submissionIds: readonly string[]): Promise<string | null> {
-  const ids = JSON.stringify(submissionIds);
+async function record(cap: SystemTarget, by: string, r: Omit<DraftRelease, "pointerCleared">): Promise<boolean> {
+  const clears = r.outcome === "deleted" || r.outcome === "already-gone";
   const [row] = rowsOf(
-    await readQuery(sql`
-      SELECT
-        (SELECT count(*) FROM return_submissions s
-          WHERE s.id IN (SELECT (jsonb_array_elements_text(${ids}::jsonb))::uuid)
-            AND s.order_id = ${orderId} AND s.state = 'accepted' AND s.holder = 'cancellation')::int AS held,
-        (SELECT count(*) FROM return_submissions s
-           JOIN submission_lines sl ON sl.submission_id = s.id
-          WHERE s.order_id = ${orderId} AND s.state = 'accepted'
-            AND s.id NOT IN (SELECT (jsonb_array_elements_text(${ids}::jsonb))::uuid)
-            AND sl.action = 'CAMBIO' AND sl.settled_at IS NULL)::int AS others
+    await writeDb(cap).execute(sql`
+      WITH u AS (
+        UPDATE orders SET exchange_reservation_id = NULL
+         WHERE ${clears}::boolean AND id = ${r.orderId} AND exchange_reservation_id = ${r.draftOrderId}
+        RETURNING 1
+      ),
+      ins AS (
+        INSERT INTO hold_draft_releases (id, order_id, draft_order_id, outcome, detail, released_by, pointer_cleared)
+        SELECT gen_random_uuid(), ${r.orderId}, ${r.draftOrderId}, ${r.outcome}, ${JSON.stringify(r.detail)}::jsonb, ${by},
+               EXISTS (SELECT 1 FROM u)
+        RETURNING pointer_cleared
+      )
+      SELECT (SELECT pointer_cleared FROM ins) AS cleared
     `)
   );
-  if (Number(row?.held) !== submissionIds.length) return "a named submission is not held by this cancellation";
-  if (Number(row?.others) > 0) return "another accepted submission on the order still owns an exchange";
-  return null;
+  return row?.cleared === true;
 }
 
-async function revertOwnsHold(orderId: VerifiedOrderId): Promise<string | null> {
-  const [row] = rowsOf(
+export async function releaseHoldDraftsForMigration(
+  cap: SystemTarget,
+  options: { write: boolean; by: string }
+): Promise<{ releases: DraftRelease[]; remainingPointers: number }> {
+  if (!options.by.trim()) throw new Error("releaseHoldDraftsForMigration: who (--by) is required");
+  const pointers = rowsOf(
     await readQuery(sql`
-      SELECT
-        (SELECT count(*) FROM productsorder p
-          WHERE p.order_id = ${orderId} AND p.confirmed = true
-            AND p.return_id IS NOT NULL AND p.refunded IS NOT TRUE)::int AS live,
-        (SELECT count(*) FROM settlement_operations o
-           JOIN return_submissions s ON s.id = o.submission_id
-          WHERE s.order_id = ${orderId}
-            AND o.kind IN ('exchange_order', 'release_hold') AND o.state <> 'done')::int AS settling
+      SELECT id, exchange_reservation_id FROM orders WHERE exchange_reservation_id IS NOT NULL ORDER BY id
     `)
   );
-  if (Number(row?.live) > 0) return "the order still carries a live Shopify return";
-  if (Number(row?.settling) > 0) return "settlement is still executing an exchange on this order";
-  return null;
-}
 
-async function release(orderId: VerifiedOrderId, by: HoldReleaseAuthority["by"], refusal: string | null): Promise<HoldRelease> {
-  try {
-    const draftOrderId = await heldDraftOf(orderId);
-    if (!draftOrderId) return { released: true };
-    if (refusal) return { released: false, reason: refusal };
-    const authority = { orderId: orderId as string, draftOrderId, by } as HoldReleaseAuthority;
-
-    const answer = await releaseHoldDraft(authority);
-    const deleted =
-      answer.kind === "answer" &&
-      !graphQLErrors(answer.body) &&
-      answer.body?.data?.draftOrderDelete?.deletedId === draftOrderId;
-    if (!deleted) {
-      // Refused, or no answer: Shopify decides whether the draft is gone.
-      const now = await read(DRAFT_ORDER_QUERY, { id: draftOrderId }, (d) => d?.draftOrder ?? null);
-      if (!now.ok) return { released: false, reason: `draft ${draftOrderId} unreadable: ${now.error}` };
-      if (now.value) return { released: false, reason: `draft ${draftOrderId} still exists` };
+  const releases: DraftRelease[] = [];
+  for (const p of pointers) {
+    const orderId = String(p.id);
+    const draftOrderId = String(p.exchange_reservation_id);
+    const before = await draftNow(draftOrderId);
+    let outcome: DraftRelease["outcome"];
+    const detail: Record<string, unknown> = {};
+    if (!before.ok) {
+      outcome = "unreadable";
+      detail.error = before.error;
+    } else if (!before.draft) {
+      outcome = "already-gone";
+    } else if (before.draft.status === "COMPLETED" || before.draft.order) {
+      outcome = "completed";
+      detail.status = before.draft.status;
+      detail.order = before.draft.order?.id ?? null;
+    } else if (!options.write) {
+      outcome = "would-delete";
+      detail.status = before.draft.status;
+    } else {
+      const authority = { orderId, draftOrderId, by: "migration" } as HoldReleaseAuthority;
+      const answer = await releaseHoldDraft(authority);
+      detail.answer = answer.kind === "answer" ? answer.body?.data?.draftOrderDelete ?? answer.body : answer;
+      // Whatever Shopify answered, its state decides.
+      const after = await draftNow(draftOrderId);
+      if (!after.ok) {
+        outcome = "unreadable";
+        detail.error = after.error;
+      } else {
+        outcome = after.draft ? "still-exists" : "deleted";
+      }
     }
-    await writeDb(orderId).execute(sql`
-      UPDATE orders SET exchange_reservation_id = NULL
-       WHERE id = ${orderId} AND exchange_reservation_id = ${draftOrderId}
-    `);
-    return { released: true };
-  } catch (error: any) {
-    return { released: false, reason: String(error?.message ?? error) };
+    const pointerCleared =
+      options.write && outcome !== "would-delete"
+        ? await record(cap, options.by, { orderId, draftOrderId, outcome, detail })
+        : false;
+    releases.push({ orderId, draftOrderId, outcome, detail, pointerCleared });
   }
-}
 
-/** A cancellation releases the hold of the submissions it holds. */
-export async function releaseHoldForCancellation(
-  orderId: VerifiedOrderId,
-  submissions: readonly VerifiedSubmission[]
-): Promise<HoldRelease> {
-  let refusal: string | null;
-  try {
-    refusal = submissions.some((s) => s.orderId !== orderId)
-      ? "a named submission is not this order's"
-      : await cancellationOwnsHold(orderId, submissions.map((s) => s.id));
-  } catch (error: any) {
-    return { released: false, reason: String(error?.message ?? error) };
-  }
-  return release(orderId, "cancellation", refusal);
-}
-
-/** A failed confirmation, reverted, releases the hold it placed. */
-export async function releaseHoldForRevert(orderId: VerifiedOrderId): Promise<HoldRelease> {
-  let refusal: string | null;
-  try {
-    refusal = await revertOwnsHold(orderId);
-  } catch (error: any) {
-    return { released: false, reason: String(error?.message ?? error) };
-  }
-  return release(orderId, "revert", refusal);
+  const [left] = rowsOf(
+    await readQuery(sql`SELECT count(*)::int AS n FROM orders WHERE exchange_reservation_id IS NOT NULL`)
+  );
+  return { releases, remainingPointers: Number(left?.n ?? 0) };
 }

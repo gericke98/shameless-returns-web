@@ -344,8 +344,8 @@ describe("standing records hold every payer (D1/D2 = A)", () => {
     // A legacy submission recorded before the reconciliation ran.
     await q(`INSERT INTO return_submissions (id, order_id, state, tender, return_method, return_leg_cents,
        outbound_leg_cents, charged_fee_cents, returned_value_cents, replacement_value_cents, net_cents,
-       stripe_charge_cents, waived_cents, owed_cents, residual_cents, provenance)
-       VALUES ('11111111-1111-1111-1111-111111111111', '100', 'accepted', 'refund', 'CORREOS', 0, 0, 0, 5000, 0, 5000, 0, 0, 5000, 0, 'legacy')`);
+       stripe_charge_cents, waived_cents, owed_cents, residual_cents, provenance, accepted_at)
+       VALUES ('11111111-1111-1111-1111-111111111111', '100', 'accepted', 'refund', 'CORREOS', 0, 0, 0, 5000, 0, 5000, 0, 0, 5000, 0, 'legacy', now())`);
     await q(`INSERT INTO submission_lines (submission_id, productsorder_id, shopify_line_item_id, quantity, action,
        returned_cents, replacement_cents, pay_cents, stripe_funded_cents, return_line_item_id)
        VALUES ('11111111-1111-1111-1111-111111111111', 8, '708', 1, 'DEVOLUCIÓN', 5000, 0, 5000, 0, 'gid://shopify/ReturnLineItem/8')`);
@@ -529,8 +529,8 @@ describe("an approved payment is the amount Santi stated (D1/D2, 30 Oct)", () =>
     await seedRow(24, { refunded: false });
     await q(`INSERT INTO return_submissions (id, order_id, state, tender, return_method, return_leg_cents,
        outbound_leg_cents, charged_fee_cents, returned_value_cents, replacement_value_cents, net_cents,
-       stripe_charge_cents, waived_cents, owed_cents, residual_cents, provenance)
-       VALUES ('33333333-3333-3333-3333-333333333333', '100', 'accepted', 'refund', 'CORREOS', 0, 0, 0, 5000, 0, 5000, 0, 0, 5000, 0, 'legacy')`);
+       stripe_charge_cents, waived_cents, owed_cents, residual_cents, provenance, accepted_at)
+       VALUES ('33333333-3333-3333-3333-333333333333', '100', 'accepted', 'refund', 'CORREOS', 0, 0, 0, 5000, 0, 5000, 0, 0, 5000, 0, 'legacy', now())`);
     await q(`INSERT INTO submission_lines (submission_id, productsorder_id, shopify_line_item_id, quantity, action,
        returned_cents, replacement_cents, pay_cents, stripe_funded_cents, fulfillment_line_item_id, return_line_item_id)
        VALUES ('33333333-3333-3333-3333-333333333333', 24, '724', 1, 'DEVOLUCIÓN', 5000, 0, 5000, 0,
@@ -1033,7 +1033,7 @@ describe("an operator funds one legacy exchange line from its pre-S1 session (Sa
     await refused({ orderId: "501", productsorderId: 5, fundedCents: 1 }, session(), "0 done reconciled exchange records name order 501");
     // An S2 submission's exchange is funded at submission, never by this path.
     await q(`UPDATE settlement_operations SET state = 'done' WHERE kind = 'exchange_order' AND 5 = ANY (members)`);
-    await q(`UPDATE return_submissions SET state = 'accepted'`);
+    await q(`UPDATE return_submissions SET state = 'accepted', accepted_at = COALESCE(accepted_at, now())`);
     await refused({ orderId: "501", productsorderId: 5, fundedCents: 1 }, session(), "0 done reconciled exchange records name order 501");
     expect(await q(`SELECT * FROM replacement_funding_decisions`)).toEqual([]);
     expect(await q(`SELECT * FROM replacement_lines`)).toEqual([]);

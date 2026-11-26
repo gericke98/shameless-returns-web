@@ -43,6 +43,10 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
   };
 });
 
+// Amphora covers every replacement here (A1 reads it before every orderCreate).
+const stock = vi.hoisted(() => ({ available: {} as Record<string, number>, reason: null as string | null, reads: 0 }));
+vi.mock("@/lib/server/amphoraStock", async () => (await import("./support/amphoraStockMock")).amphoraStockModule(stock));
+
 const ledger = () => import("@/lib/settlement/ledger");
 const q = async (sql: string, params: any[] = []) => (await env.pool.query(sql, params)).rows;
 const ROUNDS = 15;

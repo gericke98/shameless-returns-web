@@ -9,6 +9,7 @@ import { getOrderTotal } from "@/db/queries";
 import type { SubmissionLineInput } from "@/db/submissions";
 import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
 import { proposeSubmission } from "@/lib/server/submissionScope";
+import { acceptCoverage } from "@/lib/settlement/stockGate";
 import type { Agreement } from "@/lib/agreement";
 import { feeLegsForOrder } from "@/lib/feeLegs";
 import { resolveFulfillmentLineItems } from "@/lib/fulfillmentLines";
@@ -23,7 +24,14 @@ export type Proposal = {
 };
 
 /** Why there is no agreement to save. Values, not throws: the customer can act on each. */
-export type ProposalRefusal = "nothing-selected" | "payout-required" | "submission-in-progress";
+export type ProposalRefusal =
+  | "nothing-selected"
+  | "payout-required"
+  | "submission-in-progress"
+  /** FX §#1: Amphora cannot cover an exchange line of the agreement. */
+  | "replacement-unavailable"
+  /** FX §#1: Amphora could not be read; nothing was saved. */
+  | "stock-unreadable";
 
 /**
  * The agreement for the order's current selection, and each line's identity:
@@ -100,6 +108,20 @@ export async function proposeCurrentSelection(
 ): Promise<{ ok: true; proposal: Proposal } | { ok: false; reason: ProposalRefusal }> {
   const current = await currentAgreement(orderId, isCredit, method);
   if (!current.ok) return current;
+
+  // FX §#1, bound to the exact agreement about to be saved (Codex #1): its
+  // exchange lines, with each line's replacement as persisted, against
+  // Amphora — BEFORE anything is proposed or charged.
+  const replacementOf = new Map(current.lines.map((l) => [l.productsorderId, l.newVariantId]));
+  const basket = current.agreement.lines
+    .filter((l) => l.action === "CAMBIO")
+    .map((l) => ({ variantGid: String(replacementOf.get(l.id) ?? ""), quantity: l.quantity }));
+  if (basket.length > 0) {
+    const coverage = await acceptCoverage(basket);
+    if (coverage.kind === "unreadable") return { ok: false, reason: "stock-unreadable" };
+    if (coverage.kind === "short") return { ok: false, reason: "replacement-unavailable" };
+  }
+
   const proposed = await proposeSubmission(orderId, {
     returnMethod: method,
     agreement: current.agreement,

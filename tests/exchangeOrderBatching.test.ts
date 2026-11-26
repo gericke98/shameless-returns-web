@@ -63,25 +63,38 @@ describe("admission — one exchange order per submission", () => {
     expect(plan.ops.filter((o) => o.kind === "exchange_order")).toHaveLength(0);
   });
 
-  it("admits the whole exchange from EITHER row", async () => {
+  it("admits the whole exchange from ANY row of the submission — a sibling never goes without its gate (FX §#4)", async () => {
     const { expandAdmission } = await import("@/lib/settlement/admission");
     const lines = [...exchangeLines(), line(3)];
     expect(expandAdmission(lines, [1])).toEqual([1, 2]);
     expect(expandAdmission(lines, [2])).toEqual([1, 2]);
-    expect(expandAdmission(lines, [3])).toEqual([3]);
+    expect(expandAdmission(lines, [3])).toEqual([1, 2, 3]);
+    // An approved exchange line is money only (D1): it does not drag in.
+    expect(expandAdmission(lines, [3], new Set([1, 2]))).toEqual([3]);
+    expect(expandAdmission(lines, [])).toEqual([]);
   });
 
-  it("releases the stock hold only AFTER the replacement order exists", () => {
-    const plan = planAdmission(
-      planInput(exchangeLines(), { reservation: { draftOrderId: "gid://shopify/DraftOrder/5", existed: true } })
-    );
+  it("the exchange obeys the shop's inventory policy, and every other op waits for it (FX §#4)", () => {
+    const plan = planAdmission(planInput([...exchangeLines(), line(3)]));
     if (!plan.ok) throw new Error(plan.held);
     const order = plan.ops.find((o) => o.kind === "exchange_order")!;
-    const hold = plan.ops.find((o) => o.kind === "release_hold")!;
-    expect(hold.after).toBe(order.id);
-    // The held stock is already committed by the draft: the order must not
-    // be refused for it.
-    expect((order.request.variables as any).options.inventoryBehaviour).toBe("DECREMENT_IGNORING_POLICY");
+    expect(order.after).toBeNull();
+    expect((order.request.variables as any).options.inventoryBehaviour).toBe("DECREMENT_OBEYING_POLICY");
+    const others = plan.ops.filter((o) => o.kind !== "exchange_order");
+    expect(others.length).toBeGreaterThan(0);
+    for (const op of others) expect(op.after).toBe(order.id);
+    expect(plan.ops.some((o) => o.kind === "release_hold")).toBe(false);
+  });
+
+  it("siblings wait for an exchange op admitted earlier, too", () => {
+    const plan = planAdmission(
+      planInput([...exchangeLines(), line(3)], {
+        existing: [{ id: "op-x", kind: "exchange_order", scopeKey: `exchange:${submission().id}`, members: [1, 2] }],
+      })
+    );
+    if (!plan.ok) throw new Error(plan.held);
+    expect(plan.ops.length).toBeGreaterThan(0);
+    for (const op of plan.ops) expect(op.after).toBe("op-x");
   });
 
   it("holds the whole admission when a replacement variant was never recorded", () => {

@@ -208,6 +208,8 @@ export const es = {
     submissionInProgress: "Ya estamos procesando tu solicitud. Espera unos segundos antes de volver a intentarlo.",
     notEditable: "Este artículo ya no se puede cambiar. Recarga la página.",
     variantNotOffered: "Esa talla ya no está disponible. Elige otra.",
+    replacementUnavailable: "No nos queda stock de esa talla para enviarte. Elige otra talla u otro artículo, o devuélvelo en lugar de cambiarlo.",
+    stockUnreadable: "No hemos podido comprobar el stock ahora mismo. Inténtalo de nuevo en unos minutos.",
     incomplete: "Completa todos los campos obligatorios de la dirección.",
     invalidDelivery: "Revisa la dirección de entrega del cambio.",
   },

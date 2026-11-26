@@ -92,7 +92,6 @@ export function planInput(
       gateways: new Map([[TX, "shopify_payments"]]),
       transactionId: TX,
     },
-    reservation: null,
     order: ORDER,
     newId: () => `op-${++n}`,
     newGiftCardCode: () => `CODE${String(++c).padStart(12, "0")}`,

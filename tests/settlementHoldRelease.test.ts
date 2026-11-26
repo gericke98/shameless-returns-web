@@ -1,14 +1,12 @@
-import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { vid, vsub } from "./support/verified";
+import { sys } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
-import { seedSubmission } from "./support/settlementSeed";
-import { line } from "./support/planFixtures";
 
-// Finding 9: a cancellation or a reverted confirmation releases a stock hold
-// through the ONE draftOrderDelete in lib/settlement/effects.ts (2026-04,
-// the ledger's transport), and only with authority the database proves.
-// Real SQL in PGlite; Shopify mocked at the transport.
+// FX §#8: the stock-hold drafts placed before FX are released by ONE
+// migration authority, from the orders' persisted pointers, through the ONE
+// draftOrderDelete in lib/settlement/effects.ts. Every draft is read first;
+// every outcome is recorded with its conditional pointer clear in one
+// statement. Real SQL in PGlite; Shopify mocked at the transport.
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -17,8 +15,13 @@ vi.mock("react", async (importOriginal) => {
 const env = settlementDatabase();
 vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 
-const answers: Record<string, (variables: any) => any> = {};
+/** Draft id → what Shopify holds now (null = gone; "unreadable" = the read fails). */
+const drafts: Record<string, any> = {};
 const sent: Array<{ name: string; query: string; variables: any }> = [];
+/** Draft ids whose delete Shopify ignores (it still exists after). */
+const stubborn = new Set<string>();
+/** Something that happens in our database while Shopify deletes a draft. */
+const duringDelete: Record<string, () => Promise<unknown>> = {};
 vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/settlement/shopify")>();
   return {
@@ -26,106 +29,123 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
     shopifyGraphQL: async (query: string, variables: any) => {
       const name = /(?:query|mutation) (\w+)/.exec(query)![1];
       sent.push({ name, query, variables });
-      const answer = answers[name];
-      return answer ? { kind: "answer", body: answer(variables) } : { kind: "no-answer", error: "timeout" };
+      if (name === "SettlementHoldDraft") {
+        const now = drafts[variables.id];
+        if (now === "unreadable") return { kind: "no-answer", error: "timeout" };
+        return { kind: "answer", body: { data: { draftOrder: now ?? null } } };
+      }
+      if (name === "SettlementDraftOrderDelete") {
+        const id = variables.input.id;
+        await duringDelete[id]?.();
+        if (stubborn.has(id)) return { kind: "answer", body: { data: { draftOrderDelete: { deletedId: null, userErrors: [{ message: "no" }] } } } };
+        drafts[id] = null;
+        return { kind: "answer", body: { data: { draftOrderDelete: { deletedId: id, userErrors: [] } } } };
+      }
+      return { kind: "no-answer", error: "unexpected" };
     },
   };
 });
 
-const D = "gid://shopify/DraftOrder/5";
-const V = "gid://shopify/ProductVariant/11";
 const q = async (sql: string, params: any[] = []) => (await env.pg.query<any>(sql, params)).rows;
-const pointer = async () => (await q("SELECT exchange_reservation_id FROM orders WHERE id='100'"))[0].exchange_reservation_id;
-const hold = () => import("@/lib/settlement/holdRelease");
-
-async function exchangeHeldBy(holder: string | null) {
-  const seeded = await seedSubmission(env.pg, { lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
-  await env.pg.query("UPDATE return_submissions SET holder=$1 WHERE id=$2", [holder, seeded.id]);
-  await env.pg.query("UPDATE orders SET exchange_reservation_id=$1 WHERE id='100'", [D]);
-  return seeded;
-}
+const D = (n: number) => `gid://shopify/DraftOrder/${n}`;
+const open = (n: number) => ({ id: D(n), status: "OPEN", order: null });
+const migrate = async (write: boolean) =>
+  (await import("@/lib/settlement/holdRelease")).releaseHoldDraftsForMigration(sys, { write, by: "santi" });
+const pointers = async () =>
+  Object.fromEntries((await q(`SELECT id, exchange_reservation_id FROM orders ORDER BY id`)).map((r) => [r.id, r.exchange_reservation_id]));
 
 beforeAll(() => env.ready);
 beforeEach(async () => {
   await env.reset();
-  for (const k of Object.keys(answers)) delete answers[k];
+  for (const k of Object.keys(drafts)) delete drafts[k];
+  stubborn.clear();
+  for (const k of Object.keys(duringDelete)) delete duringDelete[k];
   sent.length = 0;
+  // One order per outcome, each pointing at its own draft; one order with none.
+  await q(`INSERT INTO orders (id, order_number, exchange_reservation_id) VALUES
+    ('1', '#1', '${D(1)}'), ('2', '#2', '${D(2)}'), ('3', '#3', '${D(3)}'),
+    ('4', '#4', '${D(4)}'), ('5', '#5', '${D(5)}'), ('6', '#6', '${D(6)}'), ('7', '#7', NULL)`);
+  drafts[D(1)] = open(1); // deleted
+  drafts[D(2)] = null; // already-gone
+  drafts[D(3)] = { id: D(3), status: "COMPLETED", order: { id: "gid://shopify/Order/9" } }; // completed
+  drafts[D(4)] = open(4); // still-exists
+  stubborn.add(D(4));
+  drafts[D(5)] = "unreadable";
+  drafts[D(6)] = { id: D(6), status: "OPEN", order: { id: "gid://shopify/Order/8" } }; // became an order: completed
 });
 
-describe("releaseHoldForCancellation", () => {
-  it("deletes the draft through the ledger's own document and clears the pointer", async () => {
-    const seeded = await exchangeHeldBy("cancellation");
-    answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: D, userErrors: [] } } });
-    expect(await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).toEqual({ released: true });
+describe("releaseHoldDraftsForMigration", () => {
+  it("dry run: reads every pointed draft, deletes and records nothing", async () => {
+    const out = await migrate(false);
+    expect(out.releases.map((r) => [r.orderId, r.outcome])).toEqual([
+      ["1", "would-delete"],
+      ["2", "already-gone"],
+      ["3", "completed"],
+      ["4", "would-delete"],
+      ["5", "unreadable"],
+      ["6", "completed"],
+    ]);
+    expect(sent.filter((s) => s.name === "SettlementDraftOrderDelete")).toEqual([]);
+    expect(await q(`SELECT * FROM hold_draft_releases`)).toEqual([]);
+    expect(out.remainingPointers).toBe(6);
+  });
+
+  it("write: each outcome recorded; the pointer cleared only for a draft that is gone", async () => {
+    const out = await migrate(true);
+    expect(out.releases.map((r) => [r.orderId, r.outcome, r.pointerCleared])).toEqual([
+      ["1", "deleted", true],
+      ["2", "already-gone", true],
+      ["3", "completed", false],
+      ["4", "still-exists", false],
+      ["5", "unreadable", false],
+      ["6", "completed", false],
+    ]);
     const { DRAFT_ORDER_DELETE } = await import("@/lib/settlement/effects");
-    expect(sent.map((s) => s.query)).toEqual([DRAFT_ORDER_DELETE]);
-    expect(sent[0].variables).toEqual({ input: { id: D } });
-    expect(await pointer()).toBeNull();
+    const deletes = sent.filter((s) => s.name === "SettlementDraftOrderDelete");
+    // Only open drafts are deleted, through the ledger's own document; never a completed one.
+    expect(deletes.map((s) => s.variables.input.id)).toEqual([D(1), D(4)]);
+    expect(deletes.every((s) => s.query === DRAFT_ORDER_DELETE)).toBe(true);
+    expect(await pointers()).toEqual({ "1": null, "2": null, "3": D(3), "4": D(4), "5": D(5), "6": D(6), "7": null });
+    const rows = await q(`SELECT order_id, outcome, pointer_cleared, released_by FROM hold_draft_releases ORDER BY order_id`);
+    expect(rows).toEqual([
+      { order_id: "1", outcome: "deleted", pointer_cleared: true, released_by: "santi" },
+      { order_id: "2", outcome: "already-gone", pointer_cleared: true, released_by: "santi" },
+      { order_id: "3", outcome: "completed", pointer_cleared: false, released_by: "santi" },
+      { order_id: "4", outcome: "still-exists", pointer_cleared: false, released_by: "santi" },
+      { order_id: "5", outcome: "unreadable", pointer_cleared: false, released_by: "santi" },
+      { order_id: "6", outcome: "completed", pointer_cleared: false, released_by: "santi" },
+    ]);
+    expect(out.remainingPointers).toBe(4);
   });
 
-  it("reports released with nothing sent when there is no hold", async () => {
-    const seeded = await exchangeHeldBy("cancellation");
-    await env.pg.query("UPDATE orders SET exchange_reservation_id=NULL");
-    expect(await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).toEqual({ released: true });
-    expect(sent).toEqual([]);
+  it("re-running is idempotent: a released draft is no longer pointed at; a recovered read is released", async () => {
+    await migrate(true);
+    drafts[D(5)] = open(5);
+    sent.length = 0;
+    const again = await migrate(true);
+    expect(again.releases.map((r) => [r.orderId, r.outcome])).toEqual([
+      ["3", "completed"],
+      ["4", "still-exists"],
+      ["5", "deleted"],
+      ["6", "completed"],
+    ]);
+    expect(sent.filter((s) => s.name === "SettlementDraftOrderDelete").map((s) => s.variables.input.id)).toEqual([D(4), D(5)]);
   });
 
-  it("KEEPS the pointer when the delete is refused and the draft still exists", async () => {
-    const seeded = await exchangeHeldBy("cancellation");
-    answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: null, userErrors: [{ message: "no" }] } } });
-    answers.SettlementDraftOrder = () => ({ data: { draftOrder: { id: D } } });
-    expect((await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).released).toBe(false);
-    expect(await pointer()).toBe(D);
+  it("a crash after the delete reads already-gone next time", async () => {
+    drafts[D(1)] = null; // deleted by a run that died before recording
+    const out = await migrate(true);
+    expect(out.releases.find((r) => r.orderId === "1")).toMatchObject({ outcome: "already-gone", pointerCleared: true });
   });
 
-  it("treats a refusal for a draft that is already gone as released", async () => {
-    const seeded = await exchangeHeldBy("cancellation");
-    answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: null, userErrors: [{ message: "gone" }] } } });
-    answers.SettlementDraftOrder = () => ({ data: { draftOrder: null } });
-    expect(await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).toEqual({ released: true });
-    expect(await pointer()).toBeNull();
-  });
-
-  it("sends nothing for a submission cancellation does not hold", async () => {
-    const seeded = await exchangeHeldBy("settlement");
-    expect((await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).released).toBe(false);
-    expect(sent).toEqual([]);
-    expect(await pointer()).toBe(D);
-  });
-
-  it("sends nothing when ANOTHER accepted submission on the order still owns an exchange", async () => {
-    const mine = await exchangeHeldBy("cancellation");
-    const other = await seedSubmission(env.pg, { lines: [line(2, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
-    expect(other.id).not.toBe(mine.id);
-    expect((await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", mine.id)])).released).toBe(false);
-    expect(sent).toEqual([]);
-  });
-});
-
-describe("releaseHoldForRevert", () => {
-  it("sends nothing while the order still carries a live Shopify return", async () => {
-    await exchangeHeldBy(null); // seeded rows are confirmed with a return id
-    expect((await (await hold()).releaseHoldForRevert(vid("100"))).released).toBe(false);
-    expect(sent).toEqual([]);
-  });
-
-  it("releases once no live return and no settlement exchange owns the hold", async () => {
-    await exchangeHeldBy(null);
-    await env.pg.query("UPDATE productsorder SET confirmed=false, return_id=NULL");
-    answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: D, userErrors: [] } } });
-    expect(await (await hold()).releaseHoldForRevert(vid("100"))).toEqual({ released: true });
-    expect(await pointer()).toBeNull();
-  });
-
-  it("sends nothing while settlement is still executing an exchange on the order", async () => {
-    const seeded = await exchangeHeldBy(null);
-    await env.pg.query("UPDATE productsorder SET confirmed=false, return_id=NULL");
-    await env.pg.query(
-      `INSERT INTO settlement_operations (id, submission_id, kind, scope_key, request)
-       VALUES ($1, $2, 'exchange_order', $3, '{}'::jsonb)`,
-      [randomUUID(), seeded.id, `exchange:${seeded.id}`]
-    );
-    expect((await (await hold()).releaseHoldForRevert(vid("100"))).released).toBe(false);
-    expect(sent).toEqual([]);
+  it("a pointer that changed meanwhile is reported, never overwritten", async () => {
+    duringDelete[D(1)] = () => q(`UPDATE orders SET exchange_reservation_id = '${D(99)}' WHERE id = '1'`);
+    const out = await migrate(true);
+    expect(out.releases.find((r) => r.orderId === "1")).toMatchObject({ outcome: "deleted", pointerCleared: false });
+    expect((await pointers())["1"]).toBe(D(99));
+    expect((await q(`SELECT outcome, pointer_cleared FROM hold_draft_releases WHERE order_id='1'`))[0]).toEqual({
+      outcome: "deleted",
+      pointer_cleared: false,
+    });
   });
 });

@@ -21,13 +21,16 @@ import {
 import {
   claim,
   dispatch,
+  loadSubmission,
   recordDone,
   recordRejected,
   recordUnresolved,
+  returnClaimForStock,
   takeOver,
   type DoneExtras,
   type Fence,
 } from "./ledger";
+import { exchangeCoverage } from "./stockGate";
 import {
   DRAFT_ORDER_QUERY,
   GIFT_CARD_SEARCH_QUERY,
@@ -49,7 +52,11 @@ export type RunResult =
   /** Sent, no verdict yet: stays dispatched for recovery. */
   | "in-flight"
   /** Someone else holds it, its dependency is not done, or it is not claimable. */
-  | "not-claimed";
+  | "not-claimed"
+  /** A1: Amphora is short for a fresh orderCreate — not sent; a hold now blocks the submission. */
+  | "held"
+  /** A1: Amphora is unreadable — not sent, back to pending for the next run. */
+  | "wait";
 
 type Judged = Verdict & { lines?: CreatedReplacementLine[] };
 
@@ -63,9 +70,58 @@ function fenceOf(op: Operation): Fence {
 
 /** Run one operation from the top. */
 export async function run(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunResult> {
+  return (await runOutcome(cap, opId, me)).result;
+}
+
+/** A run's result, and why — for `wait`, the reason Amphora could not be read (A1). */
+export type RunOutcome = { result: RunResult; reason?: string };
+
+/** `run`, keeping the reason a fresh exchange send waits (recovery reports and digests it). */
+export async function runOutcome(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunOutcome> {
   const claimed = await claim(cap, opId, me);
-  if (!claimed) return "not-claimed";
-  return dispatchAndSend(cap, claimed, me);
+  if (!claimed) return { result: "not-claimed" };
+  if (claimed.kind === "exchange_order") {
+    const authorized = await authorizeExchangeSend(cap, claimed, me);
+    if (authorized.result !== "covered") return authorized as RunOutcome;
+  }
+  return { result: await dispatchAndSend(cap, claimed, me) };
+}
+
+/**
+ * A1 (FX amendment): Amphora authorizes EVERY fresh orderCreate — a claim
+ * from `pending` (first send, recovered after a crash) or from `rejected`
+ * (after an operator's `--release`). `claim` never returns an op that has
+ * dispatched, so a takeover of an unanswered send never reaches here: that
+ * stays evidence-only (`recoverDispatched`), never a fresh order.
+ *
+ * Demand is the FROZEN request's lines — never re-derived from rows — and
+ * `earlier` is the open demand of submissions accepted at or before this one.
+ */
+async function authorizeExchangeSend(
+  cap: WriteCapability,
+  op: Operation,
+  me: string
+): Promise<{ result: "covered" | "held" | "not-claimed" } | { result: "wait"; reason: string }> {
+  const request = op.request;
+  if (request.kind !== "exchange_order") return { result: "covered" };
+  const loaded = await loadSubmission(op.submissionId);
+  const coverage = loaded
+    ? await exchangeCoverage(
+        op.submissionId,
+        request.check.lines.map((l) => ({ variantGid: l.variantGid, quantity: l.quantity }))
+      )
+    : ({ kind: "unreadable", reason: "no-submission" } as const);
+  if (coverage.kind === "covered") return { result: "covered" };
+  if (coverage.kind === "unreadable") {
+    return (await returnClaimForStock(cap, op, me, null))
+      ? { result: "wait", reason: coverage.reason }
+      : { result: "not-claimed" };
+  }
+  const held = await returnClaimForStock(cap, op, me, {
+    seenSeq: loaded!.submission.admissionSeq,
+    short: coverage.short,
+  });
+  return { result: held ? "held" : "not-claimed" };
 }
 
 async function dispatchAndSend(cap: WriteCapability, claimed: Operation, me: string): Promise<RunResult> {
@@ -223,14 +279,24 @@ const hoursSince = (date: Date | null) =>
 /**
  * Recovery for an operation that has dispatched before and nobody heard back
  * from — dispatched over a lease ago, or a takeover claim whose lease ran out:
- * re-read the evidence, then follow the L5 table. Only a takeover row
- * authorises a re-send, and it keeps the op's attempt (its idempotency key)
- * and first-dispatch time.
+ * re-read the evidence, then follow the L5 table. Evidence is always applied
+ * (an effect that appeared is recorded, whatever the op's shape). Only a
+ * takeover row authorises a re-send — never for a legacy shape, before its
+ * exchange is done, under a blocking hold or a manual holder (`takeOver`) —
+ * and it keeps the op's attempt (its idempotency key) and first-dispatch time.
  */
 export async function recoverDispatched(cap: WriteCapability, op: Operation, me: string = randomUUID()): Promise<RunResult> {
   // A gift card is re-sent with its frozen code: the re-send IS the probe
-  // (created, or TAKEN → evidence). Every other kind is read first.
-  if (op.kind === "gift_card") return resend(cap, op, me);
+  // (created, or TAKEN → evidence). Every other kind is read first. When the
+  // re-send is not authorized (review #1: legacy shape, its exchange not done,
+  // a blocking hold, a manual holder — or another worker), it is observed only.
+  if (op.kind === "gift_card") {
+    const taken = await takeOver(cap, op, me);
+    if (taken.kind === "taken") return dispatchAndSend(cap, taken.op, me);
+    if (taken.kind === "not-ours") return "not-claimed";
+    const seen = await readEvidence(op);
+    return seen.v === "absent" ? replayRefused(cap, op, seen.detail) : apply(cap, op, fenceOf(op), seen);
+  }
 
   const verdict = await readEvidence(op);
   if (verdict.v !== "absent") return apply(cap, op, fenceOf(op), verdict);
@@ -246,14 +312,34 @@ export async function recoverDispatched(cap: WriteCapability, op: Operation, me:
           error: `no refund carries [${op.id}] ${ROOT_REFUND_REPLAY_HOURS} h after dispatch; its idempotency key has expired`,
         });
       }
-      return resend(cap, op, me);
+      return resend(cap, op, me, verdict.detail);
     default:
-      return resend(cap, op, me);
+      return resend(cap, op, me, verdict.detail);
   }
 }
 
-async function resend(cap: WriteCapability, op: Operation, me: string): Promise<RunResult> {
+async function resend(cap: WriteCapability, op: Operation, me: string, absence: string): Promise<RunResult> {
   const taken = await takeOver(cap, op, me);
-  if (!taken) return "not-claimed";
-  return dispatchAndSend(cap, taken, me);
+  if (taken.kind === "not-ours") return "not-claimed";
+  if (taken.kind === "refused") return replayRefused(cap, op, absence);
+  return dispatchAndSend(cap, taken.op, me);
+}
+
+/**
+ * As built #10 (Codex fix check): evidence shows no effect and a re-send is not
+ * authorized (legacy shape, `after` not done, a blocking hold, a manual holder).
+ * Absence is never proof of completion, and never authorizes a replay, so only
+ * a human decides: the op goes `unresolved` on its own fence, with the existing
+ * "NEEDS A HUMAN" outbox alert, and `resolve-operation --done|--rejected` takes
+ * it from there. Left `dispatched`, it would be in flight forever: `--take`
+ * refuses in-flight ops and `resolve-operation` only takes `unresolved` ones.
+ * A legacy-plan hold recorded by `takeOver` stays.
+ */
+async function replayRefused(cap: WriteCapability, op: Operation, absence: string): Promise<RunResult> {
+  return apply(cap, op, fenceOf(op), {
+    v: "unresolved",
+    error:
+      `Shopify shows no effect (${absence}) and a re-send is not authorized ` +
+      `(a legacy shape, its exchange not done, a settlement hold, or an operator holds the submission)`,
+  });
 }

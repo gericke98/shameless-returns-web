@@ -88,14 +88,6 @@ vi.mock("@/lib/server/replacementOrder", () => ({
   refundSourceFor: async () => ({ transactionId: "t", transactionAmount: "50.00" }),
 }));
 
-const reserved = vi.fn(async (_id: string, _lines: any[]) => {});
-vi.mock("@/lib/server/exchangeReservation", () => ({
-  reserveExchangeStock: (id: string, lines: any[]) => reserved(id, lines),
-}));
-vi.mock("@/lib/settlement/holdRelease", () => ({
-  releaseHoldForRevert: async () => ({ released: true }),
-  releaseHoldForCancellation: async () => ({ released: true }),
-}));
 
 const recorded = vi.fn(async (_input: any) => [7]);
 vi.mock("@/lib/server/submissionScope", () => ({
@@ -124,7 +116,6 @@ beforeEach(() => {
   ];
   state.refundable = new Map([[AGREED_FLI, 1]]);
   createReturn.mockClear();
-  reserved.mockClear();
   recorded.mockClear();
 });
 
@@ -142,17 +133,14 @@ describe("confirmSubmission works from the submission, not the rows", () => {
     ]);
   });
 
-  it("holds the replacement that was paid for, though the row no longer asks for one", async () => {
+  it("creates NO stock-hold draft for the paid replacement (FX): its only Shopify write is the return", async () => {
     await confirm();
-
-    expect(reserved).toHaveBeenCalledWith(ORDER_ID, [
-      expect.objectContaining({
-        action: "CAMBIO",
-        new_variant_id: "gid://shopify/ProductVariant/999",
-        quantity: 1,
-        confirmed: true,
-      }),
-    ]);
+    expect(createReturn).toHaveBeenCalledOnce();
+    // No code path can create one: the document is gone from the app.
+    const { spawnSync } = await import("node:child_process");
+    const grep = spawnSync("grep", ["-rl", "draftOrderCreate", "lib", "db", "app", "actions"], { encoding: "utf8" });
+    expect(grep.status).toBe(1); // grep: no match
+    expect(grep.stdout).toBe("");
   });
 
   it("refuses, before creating anything, when Shopify no longer has the agreed garment", async () => {

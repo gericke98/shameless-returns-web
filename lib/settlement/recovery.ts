@@ -15,16 +15,20 @@ import {
   recoverableOperations,
   stuckCancellations,
   submissionsToFinalize,
+  takenHoldsNotDone,
 } from "./ledger";
-import { recoverDispatched, run, type RunResult } from "./run";
+import { recoverDispatched, runOutcome, type RunResult } from "./run";
 import type { WriteCapability } from "@/lib/server/identity";
 
 export type RecoveryReport = {
-  ran: Array<{ op: string; kind: string; from: string; result: RunResult }>;
+  /** `reason`: why a fresh exchange send waits (A1: Amphora unreadable). */
+  ran: Array<{ op: string; kind: string; from: string; result: RunResult; reason?: string }>;
   /** Approved legacy payments whose admission never ran or was held (S3). */
   admittedApprovals: Array<{ submission: string; lines: number[]; outcome: string }>;
   finalized: Array<{ submission: string; lines: number[] }>;
   stuckCancellations: number;
+  /** A2: holds an operator took to settle by hand over 24 h ago and never recorded as done. */
+  takenHoldsNotDone: number;
   budgetExhausted: boolean;
 };
 
@@ -35,6 +39,7 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
     admittedApprovals: [],
     finalized: [],
     stuckCancellations: 0,
+    takenHoldsNotDone: 0,
     budgetExhausted: false,
   };
 
@@ -72,10 +77,29 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
       report.budgetExhausted = true;
       break;
     }
-    const result =
-      hasDispatched(op) ? await recoverDispatched(cap, op, me) : await run(cap, op.id, me);
-    report.ran.push({ op: op.id, kind: op.kind, from: op.state, result });
+    const outcome = hasDispatched(op)
+      ? { result: await recoverDispatched(cap, op, me) }
+      : await runOutcome(cap, op.id, me);
+    report.ran.push({ op: op.id, kind: op.kind, from: op.state, ...outcome });
   }
+
+  // A1 (review #6): a replacement order not sent because Amphora could not be
+  // read is transient — no hold — but it must reach a human while it repeats:
+  // once a day per operation, through this digest, as the taken-hold one below.
+  const day = new Date().toISOString().slice(0, 10);
+  const unreadable = report.ran.filter((r) => r.result === "wait");
+  await enqueueOpsAlerts(
+    unreadable.map((r) => ({
+      dedupeKey: `exchange-stock-unreadable:${r.op}:${day}`,
+      subject: `[returns] REPLACEMENT NOT SENT — Amphora stock unreadable (${r.reason})`,
+      body: [
+        `The replacement order of settlement operation ${r.op} was not sent: Amphora's stock could not be read (${r.reason}).`,
+        `No hold was recorded (a failed read may be transient); recovery reads again every 15 minutes and sends it`,
+        `as soon as Amphora covers it. This alert repeats once a day while the read keeps failing. A reason such as`,
+        `no-sku, not-at-amphora, ambiguous or bad-count is not transient: fix the variant's SKU or Amphora's item.`,
+      ].join("\n"),
+    }))
+  );
 
   for (const submission of await submissionsToFinalize()) {
     const lines = await finalize(cap, submission);
@@ -91,8 +115,23 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
       body: [
         `A customer cancellation took submission ${s.id} (order ${s.orderId}) over an hour ago and never finished.`,
         `Settlement can never take this submission while cancellation holds it, so nothing will be paid automatically.`,
-        `Check the Amphora return, the Shopify return, the stock hold and the Stripe refund for this order by hand,`,
+        `Check the Amphora return, the Shopify return and the Stripe refund for this order by hand,`,
         `then finish or release the cancellation.`,
+      ].join("\n"),
+    }))
+  );
+
+  // A2: a hold taken to settle by hand stays in this digest, once a day, until --done.
+  const taken = await takenHoldsNotDone();
+  report.takenHoldsNotDone = taken.length;
+  await enqueueOpsAlerts(
+    taken.map((h) => ({
+      dedupeKey: `hold-taken-not-done:${h.id}:${day}`,
+      subject: `[returns] HOLD TAKEN BY HAND, NOT DONE — submission ${h.submissionId}`,
+      body: [
+        `${h.takenBy} took settlement hold ${h.id} (submission ${h.submissionId}) at ${h.takenAt.toISOString()} to settle it by hand,`,
+        `and it is not recorded as done. Nothing automated will ever touch this submission. Once it is settled:`,
+        `  npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/resolve-hold.ts --hold ${h.id} --done --evidence "<what was done>" --write`,
       ].join("\n"),
     }))
   );

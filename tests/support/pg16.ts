@@ -72,6 +72,7 @@ export async function startPg16() {
 
   async function reset() {
     await pool.query(`
+      DELETE FROM hold_draft_releases; DELETE FROM settlement_holds;
       DELETE FROM replacement_lines; DELETE FROM settlement_operations;
       DELETE FROM submission_lines; DELETE FROM return_submissions;
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);

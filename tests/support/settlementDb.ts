@@ -4,7 +4,8 @@
 // `orders` and `productsorder` predate the hand-written migrations, so their
 // columns are generated from db/schema.ts (names and types only — no FKs, no
 // defaults beyond the primary key). Everything settlement owns comes from the
-// migration files themselves: 0004 (ops_alerts), 0006, 0007, 0008.
+// migration files themselves: 0004 (ops_alerts), 0006–0012, 0014 (0015 is
+// applied only by the test that proves it).
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -30,6 +31,7 @@ export const MIGRATIONS = [
   "drizzle/0010_settlement_approvals.sql",
   "drizzle/0011_reconciliation_identity.sql",
   "drizzle/0012_reconciliation_void.sql",
+  "drizzle/0014_settlement_holds.sql",
 ];
 
 /**
@@ -69,7 +71,7 @@ export function settlementDatabase() {
       DELETE FROM line_action_decisions; DELETE FROM settlement_approvals;
       DELETE FROM reconciliation_effect_decisions; DELETE FROM legacy_replacement_orders;
       DELETE FROM legacy_replacement_census; DELETE FROM replacement_funding_decisions; DELETE FROM reconciliation_voids;
-      DELETE FROM replacement_lines; DELETE FROM settlement_operations;
+      DELETE FROM hold_draft_releases; DELETE FROM settlement_holds; DELETE FROM replacement_lines; DELETE FROM settlement_operations;
       DELETE FROM submission_lines; DELETE FROM return_submissions;
       DELETE FROM ops_alerts; DELETE FROM productsorder; DELETE FROM orders;`);
   }

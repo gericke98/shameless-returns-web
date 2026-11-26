@@ -696,21 +696,35 @@ export async function takeOver(cap: WriteCapability, op: Operation, me: string):
  * Only a returned row authorises the send: the claim must still be ours, at
  * this lease generation, and its lease alive. `dispatched_at` is kept across a
  * root_refund re-send so its 23 h replay window is measured from the first.
+ *
+ * FX §#7 (review #2): dispatch takes part in the submission's serialization,
+ * the F1 §10 pattern (`claimForCancellation`). ONE transaction: (1) locks the
+ * submission row — the lock every hold writer takes through its
+ * `admission_seq` bump; (2) runs on a fresh READ COMMITTED snapshot taken
+ * after that lock, so a hold committed after this op was claimed (A3 on a
+ * sibling, a rejected exchange, A1 short, an operator's --take) is seen and
+ * the claim is NOT turned into a send. A hold writer that comes second waits
+ * on (1) and commits after the send was authorized, which is its true order.
  */
 export async function dispatch(cap: WriteCapability, op: Operation, me: string): Promise<DispatchToken | null> {
-  const rows = rowsOf(
-    await writeDb(cap).execute(sql`
-      UPDATE settlement_operations
-         SET state = 'dispatched', dispatched_at = COALESCE(dispatched_at, now()), updated_at = now()
-       WHERE id = ${op.id}
-         AND owner = ${me}
-         AND lease_gen = ${op.leaseGen}
-         AND state = 'claimed'
-         AND lease_until > now()
-      RETURNING *
-    `)
-  );
-  return rows[0] ? (toOperation(rows[0]) as DispatchToken) : null;
+  const [, rows] = await writeDb(cap).transact([
+    sql`
+      SELECT rs.id FROM return_submissions rs
+       WHERE rs.id = (SELECT so.submission_id FROM settlement_operations so WHERE so.id = ${op.id})
+       FOR UPDATE`,
+    sql`
+      UPDATE settlement_operations o
+         SET state = 'dispatched', dispatched_at = COALESCE(o.dispatched_at, now()), updated_at = now()
+       WHERE o.id = ${op.id}
+         AND o.owner = ${me}
+         AND o.lease_gen = ${op.leaseGen}
+         AND o.state = 'claimed'
+         AND o.lease_until > now()
+         AND NOT ${blockingHold(sql`o.submission_id`)}
+         AND NOT ${takenByHand(sql`o.submission_id`)}
+      RETURNING o.*`,
+  ]);
+  return rows?.[0] ? (toOperation(rows[0]) as DispatchToken) : null;
 }
 
 /** Which row a record may change: the worker's, at this lease generation, in

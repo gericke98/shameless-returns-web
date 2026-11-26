@@ -15,6 +15,7 @@
 //             reads Amphora afresh (and may hold it again, with a new id).
 //
 // Counts are compared after the write, the way voidForeignReconciliation does.
+// Each verb first locks the submission row (F1 §10 pattern), as dispatch does.
 // NOT "use server".
 import { sql } from "drizzle-orm";
 import { readQuery, writeDb } from "@/db/drizzle";
@@ -160,8 +161,15 @@ export async function resolveHold(
         SELECT (SELECT count(*) FROM s)::int AS s, (SELECT count(*) FROM h)::int AS h`;
 
   // The submission and the hold move together or not at all (one statement);
-  // what was voided or marked is reported as the write counted it.
-  const [row] = rowsOf(await writeDb(cap).execute(statement));
+  // what was voided or marked is reported as the write counted it. It runs
+  // after (1) locks the submission row — dispatch's lock (review #2) — so its
+  // in-flight check reads a fresh snapshot: a claim that a dispatch turned
+  // into a send while this waited is seen, never voided as if unsent.
+  const [, rows] = await writeDb(cap).transact([
+    sql`SELECT id FROM return_submissions WHERE id = ${hold.submissionId} FOR UPDATE`,
+    statement,
+  ]);
+  const [row] = rows ?? [];
   if (Number(row?.s) !== 1 || Number(row?.h) !== 1) {
     return { ok: false, reason: `not written: submission ${hold.submissionId} or hold ${hold.id} changed meanwhile` };
   }

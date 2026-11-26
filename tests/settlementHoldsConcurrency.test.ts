@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sys, vsub } from "./support/verified";
 import { pg16Available, startPg16 } from "./support/pg16";
-import { planFor, seedSubmission } from "./support/settlementSeed";
+import { insertFrozenReleaseHold, planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 
 // FX holds raced between CONNECTIONS on a real PostgreSQL 16 (the pattern of
@@ -156,6 +156,141 @@ describe.skipIf(!pg16Available)("FX hold races on PostgreSQL 16", () => {
       const [s] = await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]);
       expect(s.holder).toBe(taken.ok ? "manual" : "cancellation");
       if (taken.ok) expect(cancelled).toBe("settled");
+    }
+  });
+
+  // ── Review #2/#7: a hold committed after a claim revokes that claim's send ──
+
+  /** An admitted submission whose exchange is done, and a refund sibling claimed by worker A. */
+  async function claimedSibling() {
+    const seeded = await seedSubmission(env.pool as any, { lines: exchangeLines() });
+    const plan = planFor(seeded);
+    const { insertAdmission, claim } = await ledger();
+    await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: plan.reverseFulfillment });
+    const exchange = plan.ops.find((o) => o.kind === "exchange_order")!;
+    const sibling = plan.ops.find((o) => o.kind === "process_refund")!;
+    await q("UPDATE settlement_operations SET state='done' WHERE id=$1", [exchange.id]);
+    const me = randomUUID();
+    const claimed = (await claim(sys, sibling.id, me))!;
+    expect(claimed).not.toBeNull();
+    return { seeded, exchange, sibling, me, claimed };
+  }
+  const seqOf = async (id: string) => Number((await q("SELECT admission_seq FROM return_submissions WHERE id=$1", [id]))[0].admission_seq);
+  const stateOf = async (id: string) => (await q("SELECT state FROM settlement_operations WHERE id=$1", [id]))[0].state;
+
+  it("(6) claim → A3 hold (another worker meets a historical release_hold) → dispatch: no send", async () => {
+    const { seeded, exchange, sibling, me, claimed } = await claimedSibling();
+    const { claim, dispatch } = await ledger();
+    const legacy = await insertFrozenReleaseHold(env.pool as any, {
+      submissionId: seeded.id, orderId: seeded.orderId, after: exchange.id, draftOrderId: "gid://shopify/DraftOrder/5",
+    });
+    expect(await claim(sys, legacy.id, randomUUID())).toBeNull();
+    expect(await q("SELECT cause FROM settlement_holds")).toEqual([{ cause: "legacy-plan" }]);
+    expect(await dispatch(sys, claimed, me)).toBeNull();
+    expect(await stateOf(sibling.id)).toBe("claimed");
+  });
+
+  it("(7) claim → stock-short hold → dispatch: no send", async () => {
+    const { seeded, sibling, me, claimed } = await claimedSibling();
+    const { insertHold, dispatch } = await ledger();
+    expect((await insertHold(sys, { submissionId: seeded.id, seenSeq: await seqOf(seeded.id), short: SHORT })).held).toBe(true);
+    expect(await dispatch(sys, claimed, me)).toBeNull();
+    expect(await stateOf(sibling.id)).toBe("claimed");
+  });
+
+  it("(8) a hold writer holding the submission lock: dispatch waits for it and then sees its hold", async () => {
+    const { seeded, sibling, me, claimed } = await claimedSibling();
+    const { dispatch } = await ledger();
+    // A hold writer's transaction, paused after its admission_seq bump (the
+    // lock every hold writer takes) and its hold row, not yet committed.
+    const writer = await env.pool.connect();
+    try {
+      await writer.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      await writer.query("UPDATE return_submissions SET admission_seq = admission_seq + 1 WHERE id=$1", [seeded.id]);
+      await writer.query(
+        `INSERT INTO settlement_holds (id, submission_id, cause, detail) VALUES ($1, $2, 'stock-short', '{}'::jsonb)`,
+        [randomUUID(), seeded.id]
+      );
+      let settled = false;
+      const pending = dispatch(sys, claimed, me).finally(() => {
+        settled = true;
+      });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(settled).toBe(false); // blocked on the submission row lock
+      await writer.query("COMMIT");
+      expect(await pending).toBeNull();
+    } finally {
+      writer.release();
+    }
+    expect(await stateOf(sibling.id)).toBe("claimed");
+  });
+
+  it("(9) the same lock held without a hold (rolled back): dispatch waits, then sends", async () => {
+    const { seeded, sibling, me, claimed } = await claimedSibling();
+    const { dispatch } = await ledger();
+    const writer = await env.pool.connect();
+    try {
+      await writer.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+      await writer.query("UPDATE return_submissions SET admission_seq = admission_seq + 1 WHERE id=$1", [seeded.id]);
+      const pending = dispatch(sys, claimed, me);
+      await new Promise((r) => setTimeout(r, 300));
+      await writer.query("ROLLBACK");
+      expect(await pending).not.toBeNull();
+    } finally {
+      writer.release();
+    }
+    expect(await stateOf(sibling.id)).toBe("dispatched");
+  });
+
+  it("(10) dispatch vs two hold writers at once: no deadlock, and the op is what dispatch answered", async () => {
+    const { claim, dispatch, insertHold } = await ledger();
+    for (let i = 0; i < ROUNDS; i += 1) {
+      await env.reset();
+      const { seeded, exchange, sibling, me, claimed } = await claimedSibling();
+      const legacy = await insertFrozenReleaseHold(env.pool as any, {
+        submissionId: seeded.id, orderId: seeded.orderId, after: exchange.id, draftOrderId: "gid://shopify/DraftOrder/5",
+      });
+      const seq = await seqOf(seeded.id);
+      // Serialized on the submission row: no deadlock, no error, and the op's
+      // state is exactly what dispatch answered. (Which order won is (6)–(9).)
+      const [token] = await Promise.all([
+        dispatch(sys, claimed, me),
+        insertHold(sys, { submissionId: seeded.id, seenSeq: seq, short: SHORT }),
+        claim(sys, legacy.id, randomUUID()),
+      ]);
+      const holds = await q("SELECT id FROM settlement_holds");
+      expect(holds.length).toBeGreaterThanOrEqual(1);
+      expect(await stateOf(sibling.id)).toBe(token ? "dispatched" : "claimed");
+    }
+  });
+
+  it("(11) --take vs (release → claim → dispatch): never a send on a submission held by hand", async () => {
+    for (let i = 0; i < ROUNDS; i += 1) {
+      await env.reset();
+      const seeded = await seedSubmission(env.pool as any, { lines: exchangeLines() });
+      const plan = planFor(seeded);
+      const { insertAdmission, insertHold, claim, dispatch } = await ledger();
+      await insertAdmission(sys, { submissionId: seeded.id, seenSeq: 0, ops: plan.ops, reverseFulfillment: plan.reverseFulfillment });
+      const exchange = plan.ops.find((o) => o.kind === "exchange_order")!;
+      const sibling = plan.ops.find((o) => o.kind === "process_refund")!;
+      await q("UPDATE settlement_operations SET state='done' WHERE id=$1", [exchange.id]);
+      const { holdId } = await insertHold(sys, { submissionId: seeded.id, seenSeq: await seqOf(seeded.id), short: SHORT });
+      const worker = async () => {
+        const released = await resolve(holdId, "release");
+        if (!released.ok) return null;
+        const me = randomUUID();
+        const claimed = await claim(sys, sibling.id, me);
+        return claimed ? dispatch(sys, claimed, me) : null;
+      };
+      const [token, taken] = await Promise.all([worker(), resolve(holdId, "take")]);
+      const [s] = await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]);
+      const sent = await q("SELECT id FROM settlement_operations WHERE state='dispatched'");
+      if (taken.ok) {
+        expect(s.holder).toBe("manual");
+        expect(token).toBeNull();
+        expect(sent).toHaveLength(0);
+      }
+      expect(Boolean(token) && s.holder === "manual").toBe(false);
     }
   });
 });

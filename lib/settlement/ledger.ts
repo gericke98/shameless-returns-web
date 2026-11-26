@@ -6,6 +6,7 @@
 // the submission row lock. No interactive transaction is ever opened.
 //
 // NOT "use server": nothing here may be callable from a browser.
+import { randomUUID } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import db, { readQuery, writeDb } from "@/db/drizzle";
 import type { WriteCapability } from "@/lib/server/identity";
@@ -62,6 +63,75 @@ const notReconciliation = sql`NOT EXISTS (SELECT 1 FROM return_submissions rs
                                            WHERE rs.id = o.submission_id AND rs.state IN ('reconciled', 'voided'))`;
 const replayWindow = sql.raw(`interval '${ROOT_REFUND_REPLAY_HOURS} hours'`);
 
+/**
+ * FX §#7: a hold that blocks settlement of a submission — open, or resolved by
+ * hand (`manual`: Santi settled it himself; nothing of it is ever planned or
+ * sent again). A `release`d hold blocks nothing.
+ */
+const blockingHold = (submissionId: SQL) => sql`EXISTS (
+  SELECT 1 FROM settlement_holds bh
+   WHERE bh.submission_id = ${submissionId}
+     AND (bh.resolved_at IS NULL OR bh.resolution = 'manual'))`;
+
+/** A2: an operator owns the submission (`holder = 'manual'`): nothing automated touches it. */
+const takenByHand = (submissionId: SQL) => sql`EXISTS (
+  SELECT 1 FROM return_submissions th WHERE th.id = ${submissionId} AND th.holder = 'manual')`;
+
+/**
+ * A3: an operation frozen in a shape FX no longer runs — read from its frozen
+ * request (explicit data), never from deploy timing:
+ *   - an exchange_order not obeying the shop's inventory policy;
+ *   - a release_hold (no stock-hold draft exists any more);
+ *   - any other op of a submission that has an exchange_order, whose own
+ *     `after` is not that exchange (it could move before the order exists).
+ * `o` is the settlement_operations alias the predicate is evaluated on.
+ */
+const legacyShape = (o: SQL) => sql`(
+  (${o}.kind = 'exchange_order'
+     AND (${o}.request #>> '{variables,options,inventoryBehaviour}') IS DISTINCT FROM 'DECREMENT_OBEYING_POLICY')
+  OR ${o}.kind = 'release_hold'
+  OR (${o}.kind <> 'exchange_order'
+      AND EXISTS (SELECT 1 FROM settlement_operations lx
+                   WHERE lx.submission_id = ${o}.submission_id AND lx.kind = 'exchange_order'
+                     AND ${o}.after IS DISTINCT FROM lx.id)))`;
+
+/** The order number for a hold's alert, read in the statement that writes it. */
+const orderNumberOf = (submissionId: SQL) => sql`COALESCE(
+  (SELECT ho.order_number FROM return_submissions hs JOIN orders ho ON ho.id = hs.order_id
+    WHERE hs.id = ${submissionId}), '(unknown order)')`;
+
+export type HoldCause = "stock-short" | "exchange-rejected" | "legacy-plan";
+
+/**
+ * The durable alert a hold writes in its own statement (outbox key
+ * `settlement-held:<hold id>`): the order, the submission, the cause, what
+ * is short or what Shopify said, and the commands that resolve it. `{order}`
+ * is filled in SQL with the order number.
+ */
+export function holdAlert(holdId: string, submissionId: string, cause: HoldCause, detail: string[]) {
+  return {
+    dedupeKey: `settlement-held:${holdId}`,
+    subject: `[returns] SETTLEMENT HELD — ${cause} — order {order}`,
+    body: [
+      `Settlement of order {order} (submission ${submissionId}) is HELD: ${cause}.`,
+      ...detail,
+      ``,
+      `Nothing of this submission is planned or sent until the hold is resolved:`,
+      `  release (re-check Amphora on the next run):`,
+      `    npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/resolve-hold.ts --hold ${holdId} --release --evidence "<why>" --write`,
+      `  settle it by hand — take it FIRST, before touching Shopify or Stripe, then record it:`,
+      `    npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/resolve-hold.ts --hold ${holdId} --take --by <you> --write`,
+      `    npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/resolve-hold.ts --hold ${holdId} --done --evidence "<what was done>" --write`,
+    ].join("\n"),
+  };
+}
+
+/** The alert columns of a hold's outbox row, with `{order}` resolved in SQL. */
+const holdAlertColumns = (alert: ReturnType<typeof holdAlert>, submissionId: SQL) => sql`
+  ${alert.dedupeKey},
+  replace(${alert.subject}, '{order}', ${orderNumberOf(submissionId)}),
+  replace(${alert.body}, '{order}', ${orderNumberOf(submissionId)})`;
+
 // ── reads ──────────────────────────────────────────────────────────────────
 
 export async function getOperation(id: string): Promise<Operation | null> {
@@ -88,6 +158,8 @@ export type SubmissionForAdmission = {
   holder: string | null;
   admissionSeq: number;
   provenance: string;
+  /** When it was accepted: total for an accepted submission (drizzle/0014). D2 orders by it. */
+  acceptedAt: Date | null;
 };
 
 export type SubmissionLineRow = {
@@ -129,6 +201,7 @@ export async function loadSubmission(
       holder: s.holder ?? null,
       admissionSeq: Number(s.admission_seq),
       provenance: String(s.provenance),
+      acceptedAt: s.accepted_at ? new Date(s.accepted_at) : null,
     },
     lines: lines.map((l) => ({
       productsorderId: Number(l.productsorder_id),
@@ -262,8 +335,9 @@ export type NewOperation = {
 
 /**
  * Take the submission for settlement and write every operation in ONE
- * statement. Zero rows from `s` means a concurrent admission bumped the
- * sequence, or a cancellation holds the submission: nothing is written.
+ * statement. Zero rows from `s` means a concurrent admission (or hold) bumped
+ * the sequence, a cancellation or an operator holds the submission, or a hold
+ * blocks it (FX §#7): nothing is written.
  */
 export async function insertAdmission(cap: WriteCapability, input: {
   submissionId: string;
@@ -280,7 +354,8 @@ export async function insertAdmission(cap: WriteCapability, input: {
        WHERE id = ${input.submissionId}
          AND admission_seq = ${input.seenSeq}
          AND state = 'accepted'
-         AND holder IS DISTINCT FROM 'cancellation'
+         AND (holder IS NULL OR holder = 'settlement')
+         AND NOT ${blockingHold(sql`return_submissions.id`)}
       RETURNING id
     ),
     rfo AS (
@@ -311,6 +386,166 @@ export async function insertAdmission(cap: WriteCapability, input: {
   return { admitted: Number(row.admitted) === 1, inserted: Number(row.inserted ?? 0) };
 }
 
+// ── FX §#7: holds, on the admission fence ─────────────────────────────────
+
+export type ShortfallDetail = Array<{ sku: string; need: number; available: number; earlier: number }>;
+
+const shortfallLines = (short: ShortfallDetail) =>
+  short.map((x) => `  ${x.sku}: need ${x.need}, Amphora available ${x.available}, promised earlier ${x.earlier}`);
+
+/**
+ * Admission found Amphora short: hold the submission instead of planning it.
+ * ONE statement: the submission CAS (exactly insertAdmission's), the hold
+ * row, its outbox row. A worker that read "enough" and one that recorded
+ * "short" on the same seen sequence cannot both win.
+ */
+export async function insertHold(cap: WriteCapability, input: {
+  submissionId: string;
+  seenSeq: number;
+  short: ShortfallDetail;
+}): Promise<{ held: boolean; holdId: string }> {
+  const holdId = randomUUID();
+  const alert = holdAlert(holdId, input.submissionId, "stock-short", [
+    `Amphora cannot cover the replacement:`,
+    ...shortfallLines(input.short),
+  ]);
+  const result = await writeDb(cap).execute(sql`
+    WITH s AS (
+      UPDATE return_submissions
+         SET admission_seq = admission_seq + 1
+       WHERE id = ${input.submissionId}
+         AND admission_seq = ${input.seenSeq}
+         AND state = 'accepted'
+         AND (holder IS NULL OR holder = 'settlement')
+      RETURNING id
+    ),
+    h AS (
+      INSERT INTO settlement_holds (id, submission_id, cause, detail)
+      SELECT ${holdId}, s.id, 'stock-short', ${JSON.stringify({ short: input.short })}::jsonb FROM s
+      ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+      RETURNING id, submission_id
+    ),
+    a AS (
+      INSERT INTO ops_alerts (dedupe_key, subject, body)
+      SELECT ${holdAlertColumns(alert, sql`h.submission_id`)} FROM h
+      ON CONFLICT (dedupe_key) DO NOTHING
+      RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM h)::int AS held
+  `);
+  return { held: Number(rowsOf(result)[0]?.held ?? 0) === 1, holdId };
+}
+
+export type Hold = {
+  id: string;
+  submissionId: string;
+  cause: HoldCause;
+  exchangeOperationId: string | null;
+  detail: unknown;
+  createdAt: Date;
+  takenBy: string | null;
+  takenAt: Date | null;
+  resolution: "release" | "manual" | null;
+  resolvedAt: Date | null;
+};
+
+function toHold(row: any): Hold {
+  return {
+    id: String(row.id),
+    submissionId: String(row.submission_id),
+    cause: row.cause,
+    exchangeOperationId: row.exchange_operation_id ? String(row.exchange_operation_id) : null,
+    detail: typeof row.detail === "string" ? JSON.parse(row.detail) : row.detail,
+    createdAt: new Date(row.created_at),
+    takenBy: row.taken_by ?? null,
+    takenAt: row.taken_at ? new Date(row.taken_at) : null,
+    resolution: row.resolution ?? null,
+    resolvedAt: row.resolved_at ? new Date(row.resolved_at) : null,
+  };
+}
+
+/** The hold that blocks this submission now — the open one, else one resolved by hand — or null. */
+export async function holdOf(submissionId: string): Promise<Hold | null> {
+  const rows = rowsOf(
+    await readQuery(sql`
+      SELECT * FROM settlement_holds
+       WHERE submission_id = ${submissionId}
+         AND (resolved_at IS NULL OR resolution = 'manual')
+       ORDER BY (resolved_at IS NULL) DESC, created_at DESC
+       LIMIT 1
+    `)
+  );
+  return rows[0] ? toHold(rows[0]) : null;
+}
+
+export async function getHold(holdId: string): Promise<Hold | null> {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(holdId)) return null;
+  const rows = rowsOf(await readQuery(sql`SELECT * FROM settlement_holds WHERE id = ${holdId}`));
+  return rows[0] ? toHold(rows[0]) : null;
+}
+
+/** A2: holds an operator took to settle by hand and has not recorded as done for a day. */
+export async function takenHoldsNotDone(): Promise<Array<{ id: string; submissionId: string; takenBy: string; takenAt: Date }>> {
+  const rows = rowsOf(
+    await readQuery(sql`
+      SELECT id, submission_id, taken_by, taken_at FROM settlement_holds
+       WHERE resolved_at IS NULL AND taken_at IS NOT NULL AND taken_at < now() - interval '24 hours'
+       ORDER BY taken_at
+    `)
+  );
+  return rows.map((r) => ({
+    id: String(r.id),
+    submissionId: String(r.submission_id),
+    takenBy: String(r.taken_by),
+    takenAt: new Date(r.taken_at),
+  }));
+}
+
+/** One open replacement promise (FX §#2, D2). */
+export type OpenDemand = { submissionId: string; acceptedAt: Date; variantGid: string; quantity: number };
+
+/**
+ * Every replacement still promised to a customer: CAMBIO lines of accepted
+ * submissions not being cancelled, not settled (in the ledger, or outside it:
+ * `refunded`), not covered by an approval (money only, D1), whose
+ * submission's exchange order is not done (or voided), and not settled by
+ * hand. An open hold's demand still counts (decision 3).
+ *
+ * `before`: settlement's earlier demand — submissions accepted at or before
+ * this one, itself excluded. Equal stamps count both ways (no tie-breaker).
+ */
+export async function openExchangeDemand(
+  before?: { submissionId: string; acceptedAt: Date }
+): Promise<OpenDemand[]> {
+  const rows = rowsOf(
+    await readQuery(sql`
+      SELECT sl.submission_id::text AS submission_id, s.accepted_at, sl.new_variant_id, sl.quantity
+        FROM submission_lines sl
+        JOIN return_submissions s ON s.id = sl.submission_id
+        JOIN productsorder p ON p.id = sl.productsorder_id
+       WHERE sl.action = 'CAMBIO'
+         AND s.state = 'accepted'
+         AND s.holder IS DISTINCT FROM 'cancellation'
+         AND sl.settled_at IS NULL
+         AND p.refunded IS NOT TRUE
+         AND NOT EXISTS (SELECT 1 FROM settlement_approvals a
+                          WHERE a.productsorder_id = sl.productsorder_id AND a.submission_id = sl.submission_id)
+         AND NOT EXISTS (SELECT 1 FROM settlement_operations o
+                          WHERE o.submission_id = s.id AND o.kind = 'exchange_order' AND o.state IN ('done', 'void'))
+         AND NOT EXISTS (SELECT 1 FROM settlement_holds h
+                          WHERE h.submission_id = s.id AND h.resolution = 'manual')
+         ${before ? sql`AND s.accepted_at <= ${before.acceptedAt.toISOString()}::timestamptz AND s.id <> ${before.submissionId}` : sql``}
+       ORDER BY s.accepted_at, sl.submission_id, sl.productsorder_id
+    `)
+  );
+  return rows.map((r) => ({
+    submissionId: String(r.submission_id),
+    acceptedAt: new Date(r.accepted_at),
+    variantGid: String(r.new_variant_id),
+    quantity: Number(r.quantity),
+  }));
+}
+
 // ── L4: claim → dispatch → record ──────────────────────────────────────────
 
 /**
@@ -321,23 +556,76 @@ export async function insertAdmission(cap: WriteCapability, input: {
  * keeps its attempt. Anything that ever dispatched is NOT claimable here: it
  * goes back through evidence and replay via `takeOver` (finding 1).
  * Every claim moves `lease_gen`, the worker fence.
+ *
+ * FX: never while a hold blocks the submission (§#7) or an operator holds it
+ * (A2). An op frozen in a legacy shape (A3) is never claimed: the same
+ * statement records a `legacy-plan` hold for its submission (naming every
+ * such op), bumps its admission sequence, and writes the hold's outbox row.
  */
 export async function claim(cap: WriteCapability, opId: string, me: string): Promise<Operation | null> {
+  const holdId = randomUUID();
+  const alert = holdAlert(holdId, "{submission}", "legacy-plan", [
+    `An operation was admitted in a shape this code no longer runs (an exchange that ignores the`,
+    `inventory policy, a stock-hold release, or a sibling not gated on the exchange). Nothing was sent.`,
+    `Void those operations (or settle by hand with --take/--done) before releasing.`,
+  ]);
   const rows = rowsOf(
     await writeDb(cap).execute(sql`
-      UPDATE settlement_operations o
-         SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
-             attempt = CASE WHEN o.state IN ('pending', 'rejected') THEN o.attempt + 1 ELSE o.attempt END,
-             dispatched_at = CASE WHEN o.state IN ('pending', 'rejected') THEN NULL ELSE o.dispatched_at END,
-             lease_until = now() + ${lease}, updated_at = now()
-       WHERE o.id = ${opId}
-         AND (o.state IN ('pending', 'rejected')
-              OR (o.state = 'claimed' AND o.lease_until < now() AND o.dispatched_at IS NULL))
-         AND ${notReconciliation}
-         AND (o.after IS NULL
-              OR EXISTS (SELECT 1 FROM settlement_operations d
-                          WHERE d.id = o.after AND d.state = 'done'))
-      RETURNING o.*
+      WITH legacy AS (
+        SELECT o.id, o.submission_id FROM settlement_operations o
+         WHERE o.id = ${opId}
+           AND (o.state IN ('pending', 'rejected')
+                OR (o.state = 'claimed' AND o.lease_until < now() AND o.dispatched_at IS NULL))
+           AND ${notReconciliation}
+           AND ${legacyShape(sql`o`)}
+      ),
+      c AS (
+        UPDATE settlement_operations o
+           SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
+               attempt = CASE WHEN o.state IN ('pending', 'rejected') THEN o.attempt + 1 ELSE o.attempt END,
+               dispatched_at = CASE WHEN o.state IN ('pending', 'rejected') THEN NULL ELSE o.dispatched_at END,
+               lease_until = now() + ${lease}, updated_at = now()
+         WHERE o.id = ${opId}
+           AND (o.state IN ('pending', 'rejected')
+                OR (o.state = 'claimed' AND o.lease_until < now() AND o.dispatched_at IS NULL))
+           AND ${notReconciliation}
+           AND (o.after IS NULL
+                OR EXISTS (SELECT 1 FROM settlement_operations d
+                            WHERE d.id = o.after AND d.state = 'done'))
+           AND NOT ${blockingHold(sql`o.submission_id`)}
+           AND NOT ${takenByHand(sql`o.submission_id`)}
+           AND NOT EXISTS (SELECT 1 FROM legacy)
+        RETURNING o.*
+      ),
+      h AS (
+        INSERT INTO settlement_holds (id, submission_id, cause, detail)
+        SELECT ${holdId}, l.submission_id, 'legacy-plan',
+               jsonb_build_object('operations',
+                 (SELECT jsonb_agg(x.id ORDER BY x.created_at, x.scope_key) FROM settlement_operations x
+                   WHERE x.submission_id = l.submission_id AND x.state NOT IN ('done', 'void')
+                     AND ${legacyShape(sql`x`)}))
+          FROM legacy l
+         WHERE NOT ${blockingHold(sql`l.submission_id`)}
+           AND NOT ${takenByHand(sql`l.submission_id`)}
+        ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+        RETURNING id, submission_id
+      ),
+      seq AS (
+        UPDATE return_submissions rs SET admission_seq = rs.admission_seq + 1
+          FROM h WHERE rs.id = h.submission_id
+        RETURNING 1
+      ),
+      a AS (
+        INSERT INTO ops_alerts (dedupe_key, subject, body)
+        SELECT ${alert.dedupeKey},
+               replace(${alert.subject}, '{order}', ${orderNumberOf(sql`h.submission_id`)}),
+               replace(replace(${alert.body}, '{order}', ${orderNumberOf(sql`h.submission_id`)}),
+                       '{submission}', h.submission_id::text)
+          FROM h
+        ON CONFLICT (dedupe_key) DO NOTHING
+        RETURNING 1
+      )
+      SELECT * FROM c
     `)
   );
   return rows[0] ? toOperation(rows[0]) : null;
@@ -414,18 +702,61 @@ function fenceSql(id: string, fence: Fence): SQL {
  * the next settlement, or by recovery regardless of admission gates. The state
  * and a durable alert (one per op) are ONE statement, so a refusal that keeps
  * repeating is in front of a human, not only in the ledger.
+ *
+ * FX §#4: a rejected `exchange_order` is NOT re-sent every recovery run. The
+ * same statement writes an `exchange-rejected` hold for its submission (so
+ * `claim` refuses every op of it), bumps the submission's admission sequence,
+ * and writes the hold's outbox row in place of the generic one. Only an
+ * operator's `--release` makes it claimable again (and then A1 re-checks
+ * Amphora before the new attempt).
  */
 export async function recordRejected(cap: WriteCapability, op: Operation, fence: Fence, error: string, resolvedBy?: string) {
-  const rows = rowsOf(
-    await writeDb(cap).execute(sql`
-      WITH r AS (
+  const update = sql`
+      r AS (
         UPDATE settlement_operations
            SET state = 'rejected', error = ${error.slice(0, 2000)}, updated_at = now(),
                resolved_by = COALESCE(${resolvedBy ?? null}, resolved_by),
                evidence = COALESCE(${resolvedBy ? JSON.stringify({ operator: error }) : null}::jsonb, evidence)
          WHERE ${fenceSql(op.id, fence)}
-        RETURNING id
-      ),
+        RETURNING id, submission_id
+      )`;
+  if (op.kind === "exchange_order") {
+    const holdId = randomUUID();
+    const alert = holdAlert(holdId, op.submissionId, "exchange-rejected", [
+      `Shopify refused the replacement order (operation ${op.id}), so it does not exist:`,
+      `  ${error.slice(0, 1000)}`,
+      `No goods or money of this submission move while it is held.`,
+    ]);
+    const rows = rowsOf(
+      await writeDb(cap).execute(sql`
+        WITH ${update},
+        h AS (
+          INSERT INTO settlement_holds (id, submission_id, cause, exchange_operation_id, detail)
+          SELECT ${holdId}, r.submission_id, 'exchange-rejected', r.id,
+                 ${JSON.stringify({ error: error.slice(0, 2000) })}::jsonb
+            FROM r
+          ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+          RETURNING id, submission_id
+        ),
+        seq AS (
+          UPDATE return_submissions rs SET admission_seq = rs.admission_seq + 1
+            FROM r WHERE rs.id = r.submission_id
+          RETURNING 1
+        ),
+        a AS (
+          INSERT INTO ops_alerts (dedupe_key, subject, body)
+          SELECT ${holdAlertColumns(alert, sql`h.submission_id`)} FROM h
+          ON CONFLICT (dedupe_key) DO NOTHING
+          RETURNING 1
+        )
+        SELECT (SELECT count(*) FROM r)::int AS changed
+      `)
+    );
+    return Number(rows[0]?.changed ?? 0) === 1;
+  }
+  const rows = rowsOf(
+    await writeDb(cap).execute(sql`
+      WITH ${update},
       a AS (
         INSERT INTO ops_alerts (dedupe_key, subject, body)
         SELECT 'settlement-rejected:' || r.id,
@@ -438,6 +769,72 @@ export async function recordRejected(cap: WriteCapability, op: Operation, fence:
                  `if the cause is permanent, fix it in Shopify or resolve the operation by hand.`,
                ].join("\n")}
           FROM r
+        ON CONFLICT (dedupe_key) DO NOTHING
+        RETURNING 1
+      )
+      SELECT (SELECT count(*) FROM r)::int AS changed
+    `)
+  );
+  return Number(rows[0]?.changed ?? 0) === 1;
+}
+
+/**
+ * A1 (FX amendment): Amphora could not authorize a fresh orderCreate this
+ * worker claimed. ONE statement, fenced on the claim (owner, lease_gen, never
+ * dispatched): the op goes back to `pending` with its owner and lease cleared
+ * and the attempt it took returned (so nothing is consumed). With `short`,
+ * the same statement also passes the submission's admission CAS, writes a
+ * `stock-short` hold and its outbox row — the open hold then blocks `claim`.
+ * Without it (Amphora unreadable: transient), nothing else is written.
+ */
+export async function returnClaimForStock(
+  cap: WriteCapability,
+  op: Operation,
+  me: string,
+  short: { seenSeq: number; short: ShortfallDetail } | null
+): Promise<boolean> {
+  const back = (from: SQL) => sql`
+      r AS (
+        UPDATE settlement_operations o
+           SET state = 'pending', owner = NULL, lease_until = NULL,
+               attempt = GREATEST(o.attempt - 1, 0), updated_at = now()
+          ${from}
+         WHERE o.id = ${op.id} AND o.state = 'claimed' AND o.owner = ${me}
+           AND o.lease_gen = ${op.leaseGen} AND o.dispatched_at IS NULL
+        RETURNING o.id, o.submission_id
+      )`;
+  if (!short) {
+    const rows = rowsOf(
+      await writeDb(cap).execute(sql`WITH ${back(sql``)} SELECT (SELECT count(*) FROM r)::int AS changed`)
+    );
+    return Number(rows[0]?.changed ?? 0) === 1;
+  }
+  const holdId = randomUUID();
+  const alert = holdAlert(holdId, op.submissionId, "stock-short", [
+    `Amphora cannot cover the replacement order (operation ${op.id}) at the moment it was about to be sent:`,
+    ...shortfallLines(short.short),
+    `It was NOT sent.`,
+  ]);
+  const rows = rowsOf(
+    await writeDb(cap).execute(sql`
+      WITH s AS (
+        UPDATE return_submissions
+           SET admission_seq = admission_seq + 1
+         WHERE id = ${op.submissionId} AND admission_seq = ${short.seenSeq}
+        RETURNING id
+      ),
+      ${back(sql`FROM s`)},
+      h AS (
+        INSERT INTO settlement_holds (id, submission_id, cause, detail)
+        SELECT ${holdId}, r.submission_id, 'stock-short',
+               ${JSON.stringify({ operation: op.id, short: short.short })}::jsonb
+          FROM r
+        ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+        RETURNING id, submission_id
+      ),
+      a AS (
+        INSERT INTO ops_alerts (dedupe_key, subject, body)
+        SELECT ${holdAlertColumns(alert, sql`h.submission_id`)} FROM h
         ON CONFLICT (dedupe_key) DO NOTHING
         RETURNING 1
       )
@@ -661,7 +1058,10 @@ export async function recoverableOperations(limit: number): Promise<Operation[]>
        WHERE ((o.state IN ('pending', 'rejected')
                AND (o.after IS NULL
                     OR EXISTS (SELECT 1 FROM settlement_operations d
-                                WHERE d.id = o.after AND d.state = 'done')))
+                                WHERE d.id = o.after AND d.state = 'done'))
+               -- FX §#7 / A2: a held submission, or one an operator took, is not moved.
+               AND NOT ${blockingHold(sql`o.submission_id`)}
+               AND NOT ${takenByHand(sql`o.submission_id`)})
            OR (o.state = 'claimed' AND o.lease_until < now())
            OR (o.state = 'dispatched' AND o.updated_at < now() - ${lease}))
          AND ${notReconciliation}

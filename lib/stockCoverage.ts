@@ -10,6 +10,7 @@
 // Covered ⇔ available − earlier ≥ need, per SKU, where `earlier` is demand
 // already promised (open exchange lines of earlier-accepted submissions). An
 // unreadable stock read is a value of its own — never 0, never "enough".
+import { variantGid } from "@/lib/shopifyIds";
 
 export type StockRow = { productId: string; locationId: string; available: number };
 
@@ -42,7 +43,8 @@ export function need(
 ): { ok: true; bySku: Map<string, number> } | { ok: false; reason: string } {
   const bySku = new Map<string, number>();
   for (const line of lines) {
-    const sku = skuOf.get(line.variantGid);
+    // Either stored shape of a variant id (bare or gid) names the same variant.
+    const sku = skuOf.get(variantGid(line.variantGid) ?? "");
     if (!sku) return { ok: false, reason: `no-sku:${line.variantGid}` };
     bySku.set(sku, (bySku.get(sku) ?? 0) + line.quantity);
   }

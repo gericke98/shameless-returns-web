@@ -4,13 +4,7 @@
 // NOT "use server".
 import { pickRefundTransaction } from "@/lib/refundTransaction";
 import type { MoneySet } from "@/lib/returnPayload";
-import {
-  ADMISSION_PAYING_ORDER_QUERY,
-  ADMISSION_RETURN_QUERY,
-  DRAFT_ORDER_QUERY,
-  read,
-  type ReadResult,
-} from "./reads";
+import { ADMISSION_PAYING_ORDER_QUERY, ADMISSION_RETURN_QUERY, read, type ReadResult } from "./reads";
 import type { PayingOrder, ReturnFacts } from "./plan";
 
 const moneySetOf = (set: any): MoneySet | null =>
@@ -105,9 +99,4 @@ export async function readPayingOrder(
       transactionId: transactionId ?? pickRefundTransaction(transactions)?.id ?? null,
     },
   };
-}
-
-/** Does the stock-hold draft order exist right now? */
-export async function readDraftExists(draftOrderId: string): Promise<ReadResult<boolean>> {
-  return read(DRAFT_ORDER_QUERY, { id: draftOrderId }, (data) => !!data?.draftOrder);
 }

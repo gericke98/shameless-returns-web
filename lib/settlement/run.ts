@@ -21,13 +21,16 @@ import {
 import {
   claim,
   dispatch,
+  loadSubmission,
   recordDone,
   recordRejected,
   recordUnresolved,
+  returnClaimForStock,
   takeOver,
   type DoneExtras,
   type Fence,
 } from "./ledger";
+import { exchangeCoverage } from "./stockGate";
 import {
   DRAFT_ORDER_QUERY,
   GIFT_CARD_SEARCH_QUERY,
@@ -49,7 +52,11 @@ export type RunResult =
   /** Sent, no verdict yet: stays dispatched for recovery. */
   | "in-flight"
   /** Someone else holds it, its dependency is not done, or it is not claimable. */
-  | "not-claimed";
+  | "not-claimed"
+  /** A1: Amphora is short for a fresh orderCreate — not sent; a hold now blocks the submission. */
+  | "held"
+  /** A1: Amphora is unreadable — not sent, back to pending for the next run. */
+  | "wait";
 
 type Judged = Verdict & { lines?: CreatedReplacementLine[] };
 
@@ -65,7 +72,46 @@ function fenceOf(op: Operation): Fence {
 export async function run(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunResult> {
   const claimed = await claim(cap, opId, me);
   if (!claimed) return "not-claimed";
+  if (claimed.kind === "exchange_order") {
+    const authorized = await authorizeExchangeSend(cap, claimed, me);
+    if (authorized !== "covered") return authorized;
+  }
   return dispatchAndSend(cap, claimed, me);
+}
+
+/**
+ * A1 (FX amendment): Amphora authorizes EVERY fresh orderCreate — a claim
+ * from `pending` (first send, recovered after a crash) or from `rejected`
+ * (after an operator's `--release`). `claim` never returns an op that has
+ * dispatched, so a takeover of an unanswered send never reaches here: that
+ * stays evidence-only (`recoverDispatched`), never a fresh order.
+ *
+ * Demand is the FROZEN request's lines — never re-derived from rows — and
+ * `earlier` is the open demand of submissions accepted at or before this one.
+ */
+async function authorizeExchangeSend(
+  cap: WriteCapability,
+  op: Operation,
+  me: string
+): Promise<"covered" | "held" | "wait" | "not-claimed"> {
+  const request = op.request;
+  if (request.kind !== "exchange_order") return "covered";
+  const loaded = await loadSubmission(op.submissionId);
+  const coverage = loaded
+    ? await exchangeCoverage(
+        { id: op.submissionId, acceptedAt: loaded.submission.acceptedAt },
+        request.check.lines.map((l) => ({ variantGid: l.variantGid, quantity: l.quantity }))
+      )
+    : ({ kind: "unreadable", reason: "no-submission" } as const);
+  if (coverage.kind === "covered") return "covered";
+  if (coverage.kind === "unreadable") {
+    return (await returnClaimForStock(cap, op, me, null)) ? "wait" : "not-claimed";
+  }
+  const held = await returnClaimForStock(cap, op, me, {
+    seenSeq: loaded!.submission.admissionSeq,
+    short: coverage.short,
+  });
+  return held ? "held" : "not-claimed";
 }
 
 async function dispatchAndSend(cap: WriteCapability, claimed: Operation, me: string): Promise<RunResult> {

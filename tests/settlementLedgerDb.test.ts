@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { vid, vsub, sys } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
-import { planFor, seedSubmission } from "./support/settlementSeed";
+import { insertFrozenReleaseHold, planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import { giftCardObject, orderObject, refundObject, returnObject } from "./support/shopifyEvidence";
 
@@ -34,6 +34,9 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
   };
 });
 vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
+// Amphora covers every replacement here (A1 reads it before every orderCreate).
+const stock = vi.hoisted(() => ({ available: {} as Record<string, number>, reason: null as string | null, reads: 0 }));
+vi.mock("@/lib/server/amphoraStock", async () => (await import("./support/amphoraStockMock")).amphoraStockModule(stock));
 
 const ledger = () => import("@/lib/settlement/ledger");
 const runner = () => import("@/lib/settlement/run");
@@ -59,6 +62,7 @@ beforeEach(async () => {
   await env.reset();
   for (const k of Object.keys(answers)) delete answers[k];
   sent.length = 0;
+  (await import("./support/amphoraStockMock")).resetStock(stock);
 });
 
 describe("admission — one statement", () => {
@@ -163,13 +167,11 @@ describe("claim → dispatch → record, fenced on (owner, lease_gen)", () => {
 
   it("does not claim an op whose dependency is not done", async () => {
     const V = "gid://shopify/ProductVariant/11";
-    const { plan } = await admitted(
-      { lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] },
-      { reservation: { draftOrderId: "gid://shopify/DraftOrder/5", existed: true } }
-    );
-    const hold = plan.ops.find((o) => o.kind === "release_hold")!;
+    const { plan } = await admitted({ lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 }), line(2)] });
+    const sibling = plan.ops.find((o) => o.kind !== "exchange_order")!;
+    expect(sibling.after).toBe(plan.ops.find((o) => o.kind === "exchange_order")!.id);
     const { claim } = await ledger();
-    expect(await claim(sys, hold.id, randomUUID())).toBeNull();
+    expect(await claim(sys, sibling.id, randomUUID())).toBeNull();
   });
 });
 
@@ -417,13 +419,18 @@ describe("the exchange order", () => {
 
   it("an operator's done of a hold release clears the order's reservation pointer (finding 5)", async () => {
     const D = "gid://shopify/DraftOrder/5";
-    const { seeded, plan } = await admitted(
-      { lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] },
-      { reservation: { draftOrderId: D, existed: true } }
-    );
+    const { seeded, plan } = await admitted({ lines: [line(1, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
     await env.pg.query("UPDATE orders SET exchange_reservation_id=$1 WHERE id=$2", [D, seeded.orderId]);
-    const hold = plan.ops.find((o) => o.kind === "release_hold")! as any;
-    await env.pg.query("UPDATE settlement_operations SET state='unresolved' WHERE id=$1", [hold.id]);
+    const exchange = plan.ops.find((o) => o.kind === "exchange_order")!;
+    await env.pg.query("UPDATE settlement_operations SET state='done' WHERE id=$1", [exchange.id]);
+    // A release_hold frozen before FX, left unresolved: the operator path still handles it.
+    const hold = await insertFrozenReleaseHold(env.pg, {
+      submissionId: seeded.id,
+      orderId: seeded.orderId,
+      after: exchange.id,
+      draftOrderId: D,
+      state: "unresolved",
+    });
     const { getOperation } = await ledger();
     const { resolveOperation } = await import("@/lib/settlement/operator");
     answers.SettlementDraftOrder = () => ({ data: { draftOrder: { id: D } } });

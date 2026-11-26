@@ -188,8 +188,8 @@ describe("ownership changes never touch the financial attempt (finding 1)", () =
     expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
     const firstDispatch = (await opState(op.id)).dispatched_at;
     await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 hour'");
-    const taken = (await takeOver(sys, (await getOperation(op.id))!, randomUUID()))!;
-    expect(taken.attempt).toBe(1);
+    const taken = await takeOver(sys, (await getOperation(op.id))!, randomUUID());
+    expect(taken.kind === "taken" && taken.op.attempt).toBe(1);
     await env.pg.query("UPDATE settlement_operations SET lease_until = now() - interval '1 minute'");
     return { op, firstDispatch };
   }
@@ -483,7 +483,7 @@ describe("the exchange order", () => {
     expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
     await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 day'");
     const { getOperation, takeOver } = await ledger();
-    expect(await takeOver(sys, (await getOperation(op.id))!, randomUUID())).toBeNull();
+    expect(await takeOver(sys, (await getOperation(op.id))!, randomUUID())).toEqual({ kind: "not-ours" });
   });
 
   it("is never re-sent by recovery — an unanswered order is only ever searched for", async () => {

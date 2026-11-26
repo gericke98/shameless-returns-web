@@ -406,7 +406,7 @@ describe("recovery never replays what claim would refuse (review #1)", () => {
   };
   const stateOf = async (opId: string) => (await q(`SELECT state FROM settlement_operations WHERE id=$1`, [opId]))[0].state;
 
-  it("a legacy sibling (after NULL) dispatched, evidence absent, exchange pending → observed only: no returnProcess, one legacy-plan hold", async () => {
+  it("Codex's walk: legacy sibling dispatched + evidence absent → unresolved + alert, never re-sent; resolve-operation --done, then --take/--done succeed", async () => {
     const s = await seeded();
     const planned = await admittedDirectly(s, (p) => {
       for (const o of p) if (o.kind !== "exchange_order") o.after = null;
@@ -417,22 +417,49 @@ describe("recovery never replays what claim would refuse (review #1)", () => {
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
     answers.SettlementReturnProcess = () => ({ data: { returnProcess: { return: returnObject(refund.request.check), userErrors: [] } } });
 
-    expect(await recover(refund.id)).toBe("not-claimed");
-    expect(await recover(refund.id)).toBe("not-claimed");
-    expect(sends("SettlementReturnEvidence")).toHaveLength(2);
+    // (1) absent → the legacy-plan hold AND the op leaves `dispatched` for `unresolved` (absence is not done).
+    expect(await recover(refund.id)).toBe("unresolved");
     expect(sends("SettlementReturnProcess")).toHaveLength(0);
-    expect(await stateOf(refund.id)).toBe("dispatched");
+    expect(await stateOf(refund.id)).toBe("unresolved");
     expect(await stateOf(exchange.id)).toBe("pending");
     const [hold] = await holds(s.id);
     expect(hold.cause).toBe("legacy-plan");
     expect(hold.detail.operations).toContain(refund.id);
-    expect((await holds(s.id))).toHaveLength(1);
-    expect((await alerts()).map((a) => a.dedupe_key)).toEqual([`settlement-held:${hold.id}`]);
+    const keys = (await alerts()).map((a) => a.dedupe_key);
+    expect(keys.sort()).toEqual([`settlement-held:${hold.id}`, `settlement-unresolved:${refund.id}`].sort());
+    expect((await alerts()).find((a) => a.dedupe_key.startsWith("settlement-unresolved:"))!.body).toContain("resolve-operation");
+    // Nothing touches an unresolved op: no re-send on a later run either.
+    const { recoverSettlements } = await import("@/lib/settlement/recovery");
+    await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
+    expect(sends("SettlementReturnProcess")).toHaveLength(0);
 
-    // The effect appears in Shopify: it is completed from evidence, held or not.
+    // (2)–(3) the trap is gone: --take refuses only while the op is in flight; resolve-operation now takes it.
+    expect(await resolve(hold.id, "take")).toMatchObject({ ok: false, reason: expect.stringMatching(/in flight/) });
+    const { getOperation } = await ledger();
+    const { resolveOperation } = await import("@/lib/settlement/operator");
+    expect(
+      await resolveOperation(sys, (await getOperation(refund.id))!, { verdict: "done", evidence: "refunded by hand in Shopify", by: "santi" }, { write: true })
+    ).toMatchObject({ ok: true, written: true });
+    expect(await stateOf(refund.id)).toBe("done");
+
+    // (4) the hold resolves.
+    expect(await resolve(hold.id, "take", { by: "santi" })).toMatchObject({ ok: true, written: true });
+    expect(await resolve(hold.id, "done", { evidence: "replacement sent by hand" })).toMatchObject({ ok: true, written: true });
+    expect((await holds(s.id))[0]).toMatchObject({ resolution: "manual" });
+    expect(sends("SettlementReturnProcess")).toHaveLength(0);
+  });
+
+  it("the same legacy sibling with positive evidence → done from evidence, never re-sent, never unresolved", async () => {
+    const s = await seeded();
+    const planned = await admittedDirectly(s, (p) => {
+      for (const o of p) if (o.kind !== "exchange_order") o.after = null;
+    });
+    const refund = planned.find((o) => o.kind === "process_refund");
+    await sentLongAgo(refund.id);
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check) } });
     expect(await recover(refund.id)).toBe("done");
     expect(sends("SettlementReturnProcess")).toHaveLength(0);
+    expect((await alerts()).filter((a) => a.dedupe_key.startsWith("settlement-unresolved:"))).toEqual([]);
   });
 
   it("a legacy gift card dispatched → not re-sent (its re-send is no probe here): observed, and a search that cannot prove it is a human's", async () => {
@@ -465,19 +492,20 @@ describe("recovery never replays what claim would refuse (review #1)", () => {
     expect(sends("SettlementGiftCardCreate")).toHaveLength(0);
   });
 
-  it("a gated sibling is not replayed while its exchange is not done (no hold: its shape is current)", async () => {
+  it("a gated sibling whose exchange is not done, evidence absent → unresolved (no hold: its shape is current), never re-sent", async () => {
     const s = await seeded();
     const planned = await admittedDirectly(s);
     const refund = planned.find((o) => o.kind === "process_refund");
     await sentLongAgo(refund.id);
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
     answers.SettlementReturnProcess = () => ({ data: { returnProcess: { return: returnObject(refund.request.check), userErrors: [] } } });
-    expect(await recover(refund.id)).toBe("not-claimed");
+    expect(await recover(refund.id)).toBe("unresolved");
     expect(sends("SettlementReturnProcess")).toHaveLength(0);
+    expect(await stateOf(refund.id)).toBe("unresolved");
     expect(await holds(s.id)).toEqual([]);
   });
 
-  it("a gated sibling is not replayed under a blocking hold; after --release it is", async () => {
+  it("a gated sibling under a blocking hold, evidence absent → unresolved, never re-sent; the hold stays", async () => {
     const s = await seeded();
     const planned = await admittedDirectly(s);
     const refund = planned.find((o) => o.kind === "process_refund");
@@ -488,12 +516,26 @@ describe("recovery never replays what claim would refuse (review #1)", () => {
     const { holdId } = await insertHold(sys, { submissionId: s.id, seenSeq: await seqOf(s.id), short: [{ sku: V, need: 1, available: 0, earlier: 0 }] });
     answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
     answers.SettlementReturnProcess = () => ({ data: { returnProcess: { return: returnObject(refund.request.check), userErrors: [] } } });
-    expect(await recover(refund.id)).toBe("not-claimed");
+    expect(await recover(refund.id)).toBe("unresolved");
     expect(sends("SettlementReturnProcess")).toHaveLength(0);
-    expect(await resolve(holdId, "release", { evidence: "checked" })).toMatchObject({ ok: true });
-    expect(await recover(refund.id)).toBe("done");
-    expect(sends("SettlementReturnProcess")).toHaveLength(1);
-    expect((await q(`SELECT attempt FROM settlement_operations WHERE id=$1`, [refund.id]))[0].attempt).toBe(1);
+    expect(await stateOf(refund.id)).toBe("unresolved");
+    expect((await holds(s.id)).map((h) => h.id)).toEqual([holdId]);
+  });
+
+  it("a takeover lost to another worker is not turned into unresolved", async () => {
+    const s = await seeded();
+    const planned = await admittedDirectly(s, (p) => {
+      for (const o of p) if (o.kind !== "exchange_order") o.after = null;
+    });
+    const refund = planned.find((o) => o.kind === "process_refund");
+    await sentLongAgo(refund.id);
+    const { getOperation } = await ledger();
+    const stale = (await getOperation(refund.id))!;
+    await q(`UPDATE settlement_operations SET lease_gen = lease_gen + 1 WHERE id=$1`, [refund.id]);
+    answers.SettlementReturnEvidence = () => ({ data: { return: returnObject(refund.request.check, { processed: 0, refunds: [] }) } });
+    const { recoverDispatched } = await import("@/lib/settlement/run");
+    expect(await recoverDispatched(sys, stale, crypto.randomUUID())).toBe("not-claimed");
+    expect(await stateOf(refund.id)).toBe("dispatched");
   });
 });
 

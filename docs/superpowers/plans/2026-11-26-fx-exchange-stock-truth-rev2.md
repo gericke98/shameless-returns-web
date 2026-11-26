@@ -355,9 +355,16 @@ left open or a deviation the code forced. Coordinator: review each.
     authorizes its replay. A gift card (whose re-send was its probe) is read instead when its re-send is refused; a
     search miss is `unresolved` (the existing `judgeGiftCardSearch` rule). The hold's `detail.operations` lists every
     not-done legacy op of the submission; no hold is added if a blocking hold or a manual holder already exists. The
-    legacy alert's body names the submission. **Open (coordinator):** a legacy op that stays `dispatched` with absent
-    evidence has no operator verb today — `resolve-operation.ts` takes only `unresolved` ops and `--take` refuses
-    while an op is in flight — so the hold stays until the effect appears in Shopify. Not decided here.
+    legacy alert's body names the submission. **Absent evidence + refused re-send → `unresolved`** (Codex fix check,
+    2026-11-26): left `dispatched`, such an op was a dead end (`--take` refuses in-flight ops, `resolve-operation`
+    takes only `unresolved` ones, `--release` just let recovery re-create the hold). `takeOver` now answers
+    `taken | refused | not-ours` (`refused` = same fence, aged, replayable kind, but not authorized: legacy shape,
+    `after` not done, blocking hold, manual holder). On `refused` with absent evidence, `recoverDispatched` records
+    the op `unresolved` through the existing `recordUnresolved` on its own fence, with its atomic "SETTLEMENT NEEDS A
+    HUMAN" outbox alert naming `resolve-operation`. Absence is never recorded as done and never authorizes a replay;
+    the legacy-plan hold stays. The operator resolves the op with `resolve-operation --done|--rejected`; then
+    `--take` (nothing in flight) or `--release` works. Positive evidence still records `done`. `not-ours` (another
+    worker moved the fence) changes nothing.
 11. **A2 CLI** (`scripts/resolve-hold.ts`, `lib/settlement/holdResolution.ts:68`): `--take [--by]`,
     `--done --evidence [--by]` (resolved_by = `--by` or the taker), `--release --evidence [--by]`. §#7's `--manual`
     is replaced by `--take`/`--done` per A2. Every verb is ONE statement whose first CTE is the submission seq CAS.
@@ -404,10 +411,14 @@ left open or a deviation the code forced. Coordinator: review each.
       `SubmissionForAdmission.acceptedAt` is removed; `exchangeCoverage(submissionId, lines)`; a submission with no
       `accepted_at` (or none at all) → `unreadable:no-accepted-at`. `openExchangeDemand()` (accept time) keeps all
       open demand.
-    - **#1, #4, #6**: items 10, 14, 9 above. **#5**: item 3 (Santi's decision, no change).
+    - **#1, #4, #6**: items 10, 14, 9 above. **#5**: item 3 (Santi's decision, no change). **Fix check (#10
+      blocker):** a dispatched op whose re-send is refused and whose evidence is absent goes `unresolved` (item 10),
+      so every recovery dead end lands on the existing operator path. This also covers a non-legacy op under a
+      blocking hold or with its exchange not done: it no longer waits silently for the hold to clear.
     - **#7 interleavings** (pg16 `settlementHoldsConcurrency` 6–11): claim → A3 hold → dispatch; claim →
       stock-short hold → dispatch; a paused hold writer holding the lock (dispatch blocks, then refuses); the same
       lock rolled back (dispatch blocks, then sends); dispatch vs two hold writers at once (15 rounds); `--take` vs
-      release → claim → dispatch (15 rounds). PGlite (`settlementHolds`): legacy dispatched sibling with absent
-      evidence, legacy gift card, gated sibling before its exchange is done, under a blocking hold until
-      `--release`; D2 microsecond-equal / -earlier; the unreadable digest. Migration: each NULL field alone.
+      release → claim → dispatch (15 rounds). PGlite (`settlementHolds`): Codex's 4-step walk ending resolvable
+      (dispatched + absent → unresolved + alert → `resolve-operation --done` → `--take`/`--done`), the same op with
+      positive evidence → done, legacy gift card, gated sibling before its exchange is done and under a blocking hold
+      (both → unresolved, never re-sent), a takeover lost to another worker (unchanged); D2 microsecond-equal / -earlier; the unreadable digest. Migration: each NULL field alone.

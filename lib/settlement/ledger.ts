@@ -694,7 +694,15 @@ export async function claim(cap: WriteCapability, opId: string, me: string): Pro
  * its replay. The same statement records the `legacy-plan` hold (as `claim`
  * does); the op stays `dispatched`, observed and completed from evidence only.
  */
-export async function takeOver(cap: WriteCapability, op: Operation, me: string): Promise<Operation | null> {
+/**
+ * What a takeover found. `taken`: this worker may re-send. `refused`: the op
+ * is ours to take over (same fence, aged, replayable kind) but a re-send is not
+ * authorized — legacy shape, `after` not done, a blocking hold, a manual
+ * holder. `not-ours`: another worker moved it, or it is not takeover-eligible.
+ */
+export type TakeOverResult = { kind: "taken"; op: Operation } | { kind: "refused" } | { kind: "not-ours" };
+
+export async function takeOver(cap: WriteCapability, op: Operation, me: string): Promise<TakeOverResult> {
   const legacyHold = legacyHoldCtes([
     `An operation in a shape this code no longer runs (a stock-hold release, or a sibling not gated on`,
     `the exchange) was sent before and Shopify shows no effect. It is NOT re-sent: recovery keeps`,
@@ -731,10 +739,15 @@ export async function takeOver(cap: WriteCapability, op: Operation, me: string):
         RETURNING o.*
       ),
       ${legacyHold}
-      SELECT * FROM t
+      SELECT t.*, true AS taken FROM t
+      UNION ALL
+      SELECT o.*, false AS taken FROM settlement_operations o
+       WHERE ${replayable} AND NOT EXISTS (SELECT 1 FROM t)
     `)
   );
-  return rows[0] ? toOperation(rows[0]) : null;
+  const row = rows[0];
+  if (!row) return { kind: "not-ours" };
+  return row.taken === true ? { kind: "taken", op: toOperation(row) } : { kind: "refused" };
 }
 
 /**

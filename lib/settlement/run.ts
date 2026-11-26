@@ -292,9 +292,10 @@ export async function recoverDispatched(cap: WriteCapability, op: Operation, me:
   // a blocking hold, a manual holder — or another worker), it is observed only.
   if (op.kind === "gift_card") {
     const taken = await takeOver(cap, op, me);
-    if (taken) return dispatchAndSend(cap, taken, me);
+    if (taken.kind === "taken") return dispatchAndSend(cap, taken.op, me);
+    if (taken.kind === "not-ours") return "not-claimed";
     const seen = await readEvidence(op);
-    return seen.v === "absent" ? "not-claimed" : apply(cap, op, fenceOf(op), seen);
+    return seen.v === "absent" ? replayRefused(cap, op, seen.detail) : apply(cap, op, fenceOf(op), seen);
   }
 
   const verdict = await readEvidence(op);
@@ -311,14 +312,34 @@ export async function recoverDispatched(cap: WriteCapability, op: Operation, me:
           error: `no refund carries [${op.id}] ${ROOT_REFUND_REPLAY_HOURS} h after dispatch; its idempotency key has expired`,
         });
       }
-      return resend(cap, op, me);
+      return resend(cap, op, me, verdict.detail);
     default:
-      return resend(cap, op, me);
+      return resend(cap, op, me, verdict.detail);
   }
 }
 
-async function resend(cap: WriteCapability, op: Operation, me: string): Promise<RunResult> {
+async function resend(cap: WriteCapability, op: Operation, me: string, absence: string): Promise<RunResult> {
   const taken = await takeOver(cap, op, me);
-  if (!taken) return "not-claimed";
-  return dispatchAndSend(cap, taken, me);
+  if (taken.kind === "not-ours") return "not-claimed";
+  if (taken.kind === "refused") return replayRefused(cap, op, absence);
+  return dispatchAndSend(cap, taken.op, me);
+}
+
+/**
+ * As built #10 (Codex fix check): evidence shows no effect and a re-send is not
+ * authorized (legacy shape, `after` not done, a blocking hold, a manual holder).
+ * Absence is never proof of completion, and never authorizes a replay, so only
+ * a human decides: the op goes `unresolved` on its own fence, with the existing
+ * "NEEDS A HUMAN" outbox alert, and `resolve-operation --done|--rejected` takes
+ * it from there. Left `dispatched`, it would be in flight forever: `--take`
+ * refuses in-flight ops and `resolve-operation` only takes `unresolved` ones.
+ * A legacy-plan hold recorded by `takeOver` stays.
+ */
+async function replayRefused(cap: WriteCapability, op: Operation, absence: string): Promise<RunResult> {
+  return apply(cap, op, fenceOf(op), {
+    v: "unresolved",
+    error:
+      `Shopify shows no effect (${absence}) and a re-send is not authorized ` +
+      `(a legacy shape, its exchange not done, a settlement hold, or an operator holds the submission)`,
+  });
 }

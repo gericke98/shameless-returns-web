@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const basketLines = vi.hoisted(() => ({ value: [] as any[] }));
 const proposeSubmission = vi.hoisted(() => vi.fn());
 
+// FX §#1: Amphora covers every replacement here; refusals are tested in tests/submissionStockRefusal.test.ts.
+vi.mock("@/lib/settlement/stockGate", () => ({ acceptCoverage: async () => ({ kind: "covered" }) }));
 vi.mock("@/db/fees", () => ({ getFeeTable: vi.fn(async () => ({})) }));
 vi.mock("@/db/queries", () => ({ getOrderTotal: vi.fn(async () => ({})) }));
 vi.mock("@/lib/server/submissionScope", () => ({ proposeSubmission }));

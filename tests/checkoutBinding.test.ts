@@ -9,6 +9,8 @@ import * as schema from "@/db/schema";
 // the REAL createStripeUrl → proposal → db/submissions chain against the REAL
 // migration, mocking only Shopify, Stripe and the basket.
 
+// FX §#1: Amphora covers every replacement here; refusals are tested in tests/submissionStockRefusal.test.ts.
+vi.mock("@/lib/settlement/stockGate", () => ({ acceptCoverage: async () => ({ kind: "covered" }) }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };

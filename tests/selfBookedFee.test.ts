@@ -6,6 +6,8 @@ import { vid, vsub } from "./support/verified";
 // coming back and the replacement going out. SELF drops the first and keeps the
 // second, because we still ship the replacement on an exchange.
 
+// FX §#1: Amphora covers every replacement here; refusals are tested in tests/submissionStockRefusal.test.ts.
+vi.mock("@/lib/settlement/stockGate", () => ({ acceptCoverage: async () => ({ kind: "covered" }) }));
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };

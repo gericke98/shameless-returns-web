@@ -81,6 +81,8 @@ export const AsyncButton = ({
           if (result.reason === "no-session") return;
           if (result.reason === "nothing-selected") return setMessage(t.action.nothingSelected);
           if (result.reason === "submission-in-progress") return setMessage(t.action.submissionInProgress);
+          if (result.reason === "replacement-unavailable") return setMessage(t.action.replacementUnavailable);
+          if (result.reason === "stock-unreadable") return setMessage(t.action.stockUnreadable);
           setMessage(t.action[sharedRefusalKey(result.reason) ?? "failed"]);
         });
       }}

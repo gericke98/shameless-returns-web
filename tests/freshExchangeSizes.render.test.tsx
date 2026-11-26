@@ -2,7 +2,7 @@
 
 // A fresh same-product exchange (Codex review of F1, finding 1). The dialog
 // starts on the garment being returned, read by `getProduct`, and offers a
-// size only when `isOfferedReplacement` sees an ACTIVE product with stock. So
+// size only when `isOfferedProduct` sees an ACTIVE product and Shopify shows stock (a display hint, FX decision 2). So
 // the product reader must select `status`: the fake Shopify below answers
 // ONLY the fields the real query selects, as GraphQL does, so a reader that
 // forgets one hands the dialog the same broken shape it would in production.

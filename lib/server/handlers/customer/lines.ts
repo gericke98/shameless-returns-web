@@ -28,7 +28,9 @@ export const clearLineSelectionInput = z.object({ expectedOrderId: z.string(), r
 export async function setLineSelectionHandler(
   ctx: CustomerContext,
   input: Omit<z.infer<typeof setLineSelectionInput>, "expectedOrderId">
-): Promise<HandlerResult<{}, "not-editable" | "variant-not-offered">> {
+): Promise<
+  HandlerResult<{}, "not-editable" | "variant-not-offered" | "replacement-unavailable" | "stock-unreadable">
+> {
   const result = await ctx.order.setLineSelection(
     input.rowId,
     input.action === "CAMBIO"

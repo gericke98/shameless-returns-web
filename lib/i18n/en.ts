@@ -199,6 +199,8 @@ export const en: Dictionary = {
     submissionInProgress: "We are already processing your request. Wait a few seconds before trying again.",
     notEditable: "This item can no longer be changed. Please reload the page.",
     variantNotOffered: "That size is no longer available. Please choose another.",
+    replacementUnavailable: "We have no stock left of that size to send you. Choose another size or item, or return it instead of exchanging it.",
+    stockUnreadable: "We could not check our stock just now. Please try again in a few minutes.",
     incomplete: "Please fill in every required address field.",
     invalidDelivery: "Please check the delivery address for the exchange.",
   },

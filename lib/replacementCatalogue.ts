@@ -1,4 +1,4 @@
-// Which replacement garments the portal offers (F1 spec §3).
+// Which replacement garments the portal offers (F1 spec §3; FX §#1).
 //
 // ONE predicate, used by both sides: the exchange dialog decides what it lets
 // the customer pick with it (app/[id]/components/dialogForm.tsx, over the
@@ -7,23 +7,20 @@
 // back from Shopify). So a variant the dialog would never show cannot be saved
 // by calling the action directly.
 //
-// The policy is exactly what the dialog offered before it was written down:
-// `getProducts()` lists only ACTIVE products, and a size is selectable only
-// while it has stock. Any product counts, not only the one being returned:
-// cross-product exchanges are a feature.
+// The offer rule is the product's status only: an ACTIVE product. Any product
+// counts, not only the one being returned: cross-product exchanges are a
+// feature. Whether a size can be SHIPPED is not an offer rule: Amphora's stock
+// decides it on the server (lib/server/amphoraStock.ts, at save and submit),
+// and Shopify's `inventoryQuantity` is a display hint for the picker only
+// (FX decision 2).
 //
 // Pure, so client components can import it.
 
-export type OfferableVariant = {
+export type OfferableProduct = {
   /** The variant's product status in Shopify ("ACTIVE", "DRAFT", "ARCHIVED"). */
   productStatus: string | null | undefined;
-  inventoryQuantity: number | null | undefined;
 };
 
-export function isOfferedReplacement(variant: OfferableVariant): boolean {
-  return (
-    variant.productStatus === "ACTIVE" &&
-    typeof variant.inventoryQuantity === "number" &&
-    variant.inventoryQuantity > 0
-  );
+export function isOfferedProduct(variant: OfferableProduct): boolean {
+  return variant.productStatus === "ACTIVE";
 }

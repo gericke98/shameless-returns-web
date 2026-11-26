@@ -9,7 +9,7 @@ import { Product } from "@/types";
 import { productsOrder } from "@/db/schema";
 import { clearLineSelection, setLineSelection } from "@/actions/lines";
 import { sharedRefusalKey, useCallAction } from "@/lib/callAction";
-import { isOfferedReplacement } from "@/lib/replacementCatalogue";
+import { isOfferedProduct } from "@/lib/replacementCatalogue";
 import type { ReasonKey } from "@/placeholder";
 import { ACTIONS, REASON_KEYS } from "@/placeholder";
 import { useT } from "@/lib/i18n/context";
@@ -20,9 +20,15 @@ import {
   type PricedLine,
 } from "@/lib/replacementPricing";
 
-/** The dialog offers exactly what the server accepts (`isOfferedReplacement`). */
+/**
+ * What the picker lets the customer choose: a product the server offers
+ * (`isOfferedProduct`, ACTIVE), in a size Shopify's mirror shows in stock.
+ * The stock number is a DISPLAY HINT only (FX decision 2): the server checks
+ * Amphora at save and at submit and refuses what it cannot ship
+ * (`replacement-unavailable`, `stock-unreadable`).
+ */
 const offered = (product: Product, variant: { inventoryQuantity: number }) =>
-  isOfferedReplacement({ productStatus: product.status, inventoryQuantity: variant.inventoryQuantity });
+  isOfferedProduct({ productStatus: product.status }) && variant.inventoryQuantity > 0;
 
 type Props = {
   product: Product;
@@ -236,6 +242,8 @@ export const FormProduct = ({
     if (reason === "no-session") return;
     if (reason === "not-editable") return setSaveError(t.action.notEditable);
     if (reason === "variant-not-offered") return setSaveError(t.action.variantNotOffered);
+    if (reason === "replacement-unavailable") return setSaveError(t.action.replacementUnavailable);
+    if (reason === "stock-unreadable") return setSaveError(t.action.stockUnreadable);
     setSaveError(t.action[sharedRefusalKey(reason) ?? "failed"]);
   };
 

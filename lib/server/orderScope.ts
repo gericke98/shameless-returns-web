@@ -12,7 +12,8 @@ import db, { writeDb } from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { getVariantsByIds } from "@/db/queries";
 import type { ReasonKey } from "@/placeholder";
-import { isOfferedReplacement } from "@/lib/replacementCatalogue";
+import { isOfferedProduct } from "@/lib/replacementCatalogue";
+import { lineCoverage } from "@/lib/settlement/stockGate";
 import { variantGid } from "@/lib/shopifyIds";
 import { rowNotHeldBySettlement } from "./submissionScope";
 import type { DeliveryInput } from "@/lib/deliveryAddressInput";
@@ -69,13 +70,19 @@ export function orderScope(id: VerifiedOrderId) {
     /**
      * Save the customer's choice for one line. For an exchange the variant is
      * read back from Shopify and must be one the dialog offers
-     * (`isOfferedReplacement`); its title is Shopify's, never the client's.
+     * (`isOfferedProduct`); its title is Shopify's, never the client's. Then
+     * Amphora must cover it (FX §#1): this row's quantity plus the order's
+     * other unconfirmed exchange rows on the same SKU, net of every promise
+     * already accepted — `replacement-unavailable` when it cannot,
+     * `stock-unreadable` when Amphora cannot be read (never "enough").
      * The line's own identity (`variant_id`, `line_item`) is never written.
      */
     async setLineSelection(
       rowId: number,
       selection: LineSelection
-    ): Promise<HandlerResult<{}, "not-editable" | "variant-not-offered">> {
+    ): Promise<
+      HandlerResult<{}, "not-editable" | "variant-not-offered" | "replacement-unavailable" | "stock-unreadable">
+    > {
       let replacement: { new_variant_id: string | null; new_variant_title: string | null } = {
         new_variant_id: null,
         new_variant_title: null,
@@ -84,7 +91,30 @@ export function orderScope(id: VerifiedOrderId) {
         const gid = variantGid(selection.newVariantId);
         if (!gid) return refuse("variant-not-offered");
         const variant = (await getVariantsByIds([gid]))[gid];
-        if (!variant || !isOfferedReplacement(variant)) return refuse("variant-not-offered");
+        if (!variant || !isOfferedProduct(variant)) return refuse("variant-not-offered");
+
+        const rows = await db
+          .select({ id: productsOrder.id, quantity: productsOrder.quantity, newVariantId: productsOrder.new_variant_id })
+          .from(productsOrder)
+          .where(
+            and(
+              eq(productsOrder.orderId, id),
+              sql`${productsOrder.confirmed} IS NOT TRUE`,
+              eq(productsOrder.action, "CAMBIO"),
+              sql`${productsOrder.new_variant_id} IS NOT NULL`
+            )
+          );
+        const self = await db
+          .select({ quantity: productsOrder.quantity })
+          .from(productsOrder)
+          .where(editableLine(rowId));
+        if (self.length !== 1) return refuse("not-editable");
+        const others = rows
+          .filter((r) => r.id !== rowId)
+          .map((r) => ({ variantGid: String(r.newVariantId), quantity: Number(r.quantity) }));
+        const coverage = await lineCoverage({ variantGid: gid, quantity: Number(self[0].quantity) }, others);
+        if (coverage.kind === "unreadable") return refuse("stock-unreadable");
+        if (coverage.kind === "short") return refuse("replacement-unavailable");
         replacement = { new_variant_id: gid, new_variant_title: variant.variantTitle };
       }
 

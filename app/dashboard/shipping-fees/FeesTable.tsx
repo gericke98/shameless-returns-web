@@ -2,6 +2,16 @@
 
 import { saveShippingFee } from "@/actions/shippingFees";
 import { useState } from "react";
+import { useCallAction } from "@/lib/callAction";
+
+const REFUSAL_TEXT: Record<string, string> = {
+  "unsupported-destination": "Unsupported destination",
+  "invalid-band": "Weight band is missing or invalid",
+  "invalid-amount": "Fees must be a non-negative amount with at most 2 decimals",
+  "not-admin": "Not authorised",
+  "invalid-input": "Invalid input",
+  failed: "Could not save this fee. Please try again.",
+};
 
 type Row = {
   countryCode: string;
@@ -35,6 +45,7 @@ const rowKey = (row: Pick<Row, "countryCode" | "maxGrams">) =>
 export const FeesTable = ({ rows }: { rows: Row[] }) => {
   const [saving, setSaving] = useState<Record<string, boolean>>({});
   const [status, setStatus] = useState<Record<string, string>>({});
+  const callAction = useCallAction();
 
   const onSave =
     (key: string) => async (e: React.FormEvent<HTMLFormElement>) => {
@@ -47,11 +58,19 @@ export const FeesTable = ({ rows }: { rows: Row[] }) => {
       const formData = new FormData(e.currentTarget);
       setSaving((prev) => ({ ...prev, [key]: true }));
       try {
-        const result = await saveShippingFee(formData);
-        setStatus((prev) => ({
-          ...prev,
-          [key]: result.ok ? "Saved" : result.error ?? "Failed",
-        }));
+        const outcome = await callAction(saveShippingFee, {
+          country: String(formData.get("countryCode") ?? ""),
+          band: Number(formData.get("maxGrams")),
+          returnFee: String(formData.get("returnFee") ?? ""),
+          exchangeFee: String(formData.get("exchangeFee") ?? ""),
+        });
+        const text =
+          outcome.kind === "unknown"
+            ? "No answer from the server — refresh to see whether it saved."
+            : outcome.result.ok
+              ? "Saved"
+              : REFUSAL_TEXT[outcome.result.reason] ?? "Failed";
+        setStatus((prev) => ({ ...prev, [key]: text }));
       } finally {
         setSaving((prev) => ({ ...prev, [key]: false }));
       }

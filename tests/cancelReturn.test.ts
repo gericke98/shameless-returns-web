@@ -65,7 +65,7 @@ function oneMember() {
   return {
     ok: true,
     members: [
-      { submissionId: "sub-1", returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_stored" } },
+      { submission: { id: "sub-1", orderId: "13217168851270" }, returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_stored" } },
     ],
   };
 }
@@ -86,7 +86,20 @@ function freshOrder(): Record<string, any> {
   };
 }
 
-vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => behaviour.access }));
+// The portal session (F1: read by `customerAction`, not by the handler).
+vi.mock("@/lib/orderAccess", () => ({ currentOrderId: async () => (behaviour.access ? ORDER.id : null) }));
+// The handler reads the order through its scope, fresh.
+vi.mock("@/lib/server/orderScope", () => ({
+  orderScope: (id: string) => ({
+    id,
+    read: async () => {
+      calls.orderRead.push(id);
+      return ORDER;
+    },
+  }),
+}));
+vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlert: async () => true }));
+vi.mock("@/lib/requireAdmin", () => ({ adminEmail: async () => null }));
 vi.mock("@/db/queries", () => ({
   // Present so an accidental revert to the memoized read doesn't crash the
   // module load — it would instead get called and caught by the assertion in
@@ -106,10 +119,6 @@ vi.mock("@/lib/submissionCancellation", () => ({
     calls.sequence.push("claim");
     return behaviour.claim;
   },
-  releaseCancellation: async (id: string) => {
-    calls.release.push(id);
-    calls.sequence.push("release-claim");
-  },
   cancelShopifyReturn: async (id: string) => {
     calls.shopifyCancel.push(id);
     calls.sequence.push("shopify");
@@ -119,6 +128,12 @@ vi.mock("@/lib/submissionCancellation", () => ({
   // the in-memory row, so a SECOND cancellation of the same order sees what the
   // first one left behind. `refunded` is left alone on purpose — that is what
   // the real one does.
+}));
+vi.mock("@/lib/server/submissionScope", () => ({
+  releaseCancellation: async (sub: { id: string }) => {
+    calls.release.push(sub.id);
+    calls.sequence.push("release-claim");
+  },
   finishCancellation: async (id: string) => {
     calls.reset.push(id);
     calls.sequence.push("reset");
@@ -136,13 +151,13 @@ vi.mock("@/lib/submissionCancellation", () => ({
     }));
   },
 }));
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   readCarrierMovement: async (locator: string | null | undefined, carrier?: string | null) => {
     calls.carrierRead.push(`${locator}/${carrier ?? ""}`);
     return behaviour.movement;
   },
 }));
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   cancelAmphoraReturn: async (id: string) => {
     if (behaviour.amphoraFails) {
@@ -164,7 +179,7 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
     return behaviour.releaseFails ? { released: false, reason: "draft still exists" } : { released: true };
   },
 }));
-vi.mock("@/actions/refundPayment", () => ({
+vi.mock("@/lib/server/refundPayment", () => ({
   refundOrderPayment: async (order: any, submissionKey: string) => {
     calls.refund.push(order.id);
     calls.refundIntent.push(order.stripePaymentIntent);
@@ -173,7 +188,7 @@ vi.mock("@/actions/refundPayment", () => ({
     return behaviour.refundOutcome;
   },
 }));
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     calls.opsAlert.push(`${subject}::${body}`);
   },
@@ -192,8 +207,8 @@ vi.mock("axios", () => ({
 }));
 
 async function cancel() {
-  const { cancelReturnFunction } = await import("@/actions/cancelReturn");
-  return cancelReturnFunction(ORDER.id);
+  const { cancelReturn } = await import("@/actions/cancelReturn");
+  return cancelReturn({ expectedOrderId: ORDER.id });
 }
 
 beforeEach(() => {
@@ -215,7 +230,7 @@ beforeEach(() => {
 
 describe("cancelling an eligible return", () => {
   it("reports success", async () => {
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
   });
 
   it("reads the order fresh, not through the memoized cache", async () => {
@@ -271,7 +286,7 @@ describe("cancelling an eligible return", () => {
 describe("when the return may not be cancelled", () => {
   it("refuses a caller with no session, and touches nothing at all", async () => {
     behaviour.access = false;
-    expect(await cancel()).toEqual({ ok: false, reason: "forbidden" });
+    expect(await cancel()).toEqual({ ok: false, reason: "no-session" });
     expect(calls.orderRead).toHaveLength(0);
     expect(calls.memoizedRead).toHaveLength(0);
     expect(calls.carrierRead).toHaveLength(0);
@@ -347,12 +362,12 @@ describe("ownership of the submission (S2 plan L2)", () => {
     behaviour.claim = {
       ok: true,
       members: [
-        { submissionId: "sub-a", returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_a" } },
-        { submissionId: "sub-b", returnId: "gid://shopify/Return/2", payment: { kind: "intent", paymentIntent: "pi_b" } },
-        { submissionId: "sub-c", returnId: "gid://shopify/Return/3", payment: { kind: "none" } },
+        { submission: { id: "sub-a", orderId: "13217168851270" }, returnId: "gid://shopify/Return/1", payment: { kind: "intent", paymentIntent: "pi_a" } },
+        { submission: { id: "sub-b", orderId: "13217168851270" }, returnId: "gid://shopify/Return/2", payment: { kind: "intent", paymentIntent: "pi_b" } },
+        { submission: { id: "sub-c", orderId: "13217168851270" }, returnId: "gid://shopify/Return/3", payment: { kind: "none" } },
       ],
     };
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.shopifyCancel).toEqual(["gid://shopify/Return/1", "gid://shopify/Return/2", "gid://shopify/Return/3"]);
     expect(calls.refundKey).toEqual(["sub-a", "sub-b"]);
     expect(calls.refundIntent).toEqual(["pi_a", "pi_b"]);
@@ -364,7 +379,7 @@ describe("ownership of the submission (S2 plan L2)", () => {
   it("a legacy submission's refund is resolved from the order's payment", async () => {
     behaviour.claim = {
       ok: true,
-      members: [{ submissionId: "sub-l", returnId: "gid://shopify/Return/1", payment: { kind: "order-payment" } }],
+      members: [{ submission: { id: "sub-l", orderId: "13217168851270" }, returnId: "gid://shopify/Return/1", payment: { kind: "order-payment" } }],
     };
     await cancel();
     expect(calls.refundKey).toEqual(["sub-l"]);
@@ -396,7 +411,7 @@ describe("when a step fails", () => {
     behaviour.amphoraFails = true;
     behaviour.amphoraFailureStatus = 404;
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.amphoraCancel).toHaveLength(0);
     expect(calls.refund).toEqual([ORDER.id]);
     expect(calls.reset).toEqual([ORDER.id]);
@@ -431,7 +446,7 @@ describe("when a step fails", () => {
     // customer with no return and no money.
     behaviour.shopifyFails = true;
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.refund).toEqual([ORDER.id]);
     expect(calls.opsAlert.length).toBeGreaterThan(0);
   });
@@ -441,7 +456,7 @@ describe("when a step fails", () => {
     // dashboard moments later — the alert is the only remaining record.
     behaviour.releaseFails = true;
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.opsAlert.some((entry) => entry.includes(ORDER.id))).toBe(true);
     expect(calls.refund).toEqual([ORDER.id]);
     expect(calls.reset).toEqual([ORDER.id]);
@@ -450,7 +465,7 @@ describe("when a step fails", () => {
   it("alerts a human when the refund cannot be issued", async () => {
     behaviour.refundOutcome = { refunded: false, reason: "error" };
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.opsAlert.length).toBeGreaterThan(0);
     expect(calls.reset).toEqual(["13217168851270"]);
   });
@@ -475,7 +490,7 @@ describe("when a step fails", () => {
     // the garment on top of the fee.
     behaviour.resetFails = true;
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.customerEmail).toHaveLength(1);
     expect(calls.opsAlert.some((entry) => entry.includes("13217168851270"))).toBe(true);
   });
@@ -484,7 +499,7 @@ describe("when a step fails", () => {
     // A free return has nothing to refund; that is not a failure.
     behaviour.refundOutcome = { refunded: false, reason: "not-found" };
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.opsAlert).toHaveLength(0);
   });
 
@@ -493,7 +508,7 @@ describe("when a step fails", () => {
     // announce it; a dead Postmark call must not undo that or skip the reset.
     behaviour.emailFails = true;
 
-    expect(await cancel()).toEqual({ ok: true });
+    expect(await cancel()).toEqual({ ok: true, value: {} });
     expect(calls.customerEmail).toHaveLength(0);
     expect(calls.reset).toEqual([ORDER.id]);
   });
@@ -510,7 +525,7 @@ describe("cancelling the same return twice", () => {
     const first = await cancel();
     const second = await cancel();
 
-    expect(first).toEqual({ ok: true });
+    expect(first).toEqual({ ok: true, value: {} });
     // The second click reads the row the first one reset: no confirmed line,
     // so there is no return to cancel. It is refused at the gate, before
     // anything destructive or anything that moves money.

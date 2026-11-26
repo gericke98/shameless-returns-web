@@ -1,0 +1,337 @@
+import "server-only";
+import axios from "axios";
+
+/**
+ * Amphora Logistics Company API client (international returns/exchanges).
+ *
+ * Auth: `x-api-key` header; the tenant id is a path segment
+ * (`{base}/{tenant}/...`). The key is Company-API-scoped only — the
+ * E-Commerce API host returns 403 for it.
+ *
+ * Amphora arranges the carrier + garment COLLECTION, so there is no label to
+ * render: a created return exposes `carrier` / `carrier_number` / `carrier_url`
+ * (a tracking URL) which we surface in the customer confirmation email.
+ *
+ * Server-only: reads secret env vars. Do not import from a client component.
+ */
+
+const DEFAULT_BASE = "https://api.amphoralogistics.com/prod-integrations-api";
+const DEFAULT_SHOP_NAME = "shameless-collective-madrid.myshopify.com";
+
+type AmphoraConfig = {
+  base: string;
+  tenant: string;
+  apiKey: string;
+  shopName: string;
+};
+
+function getConfig(): AmphoraConfig {
+  const apiKey = process.env.AMPHORA_API_KEY;
+  const tenant = process.env.AMPHORA_TENANT_ID;
+  if (!apiKey || !tenant) {
+    throw new Error("Amphora is not configured (AMPHORA_API_KEY / AMPHORA_TENANT_ID missing)");
+  }
+  return {
+    apiKey,
+    tenant,
+    base: process.env.AMPHORA_COMPANY_API_URL || DEFAULT_BASE,
+    shopName: process.env.AMPHORA_SHOP_NAME || DEFAULT_SHOP_NAME,
+  };
+}
+
+async function amphoraRequest<T = any>(
+  method: "GET" | "POST" | "PATCH",
+  path: string,
+  opts: { query?: Record<string, string>; body?: unknown } = {},
+): Promise<T> {
+  const cfg = getConfig();
+  const url = `${cfg.base}/${encodeURIComponent(cfg.tenant)}${path}`;
+  const res = await axios.request<T>({
+    method,
+    url,
+    params: opts.query,
+    data: opts.body,
+    headers: {
+      "x-api-key": cfg.apiKey,
+      Accept: "application/json",
+      ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+    },
+    // Let callers decide on non-2xx via thrown error (axios throws by default).
+  });
+  return res.data;
+}
+
+// ── Types (subset of the fields we use) ──────────────────────────────────────
+
+export type AmphoraLineItem = { sku: string; quantity: number };
+
+export type AmphoraReturn = {
+  id: string;
+  /** Amphora's order reference, `SHP <shopify order id>`: the order link. The
+   *  return `id` is NOT one (API-created returns are `RET <n>`). */
+  order_id?: string | null;
+  external_id: string | null;
+  internal_status: string;
+  name: string | null;
+  warehouse_id?: string;
+  exchange_order_id?: string | null;
+  carrier?: string | null;
+  carrier_number?: string | null;
+  carrier_url?: string | null;
+  /** Creation stamp. */
+  time?: string | null;
+  /** Set when the parcel reaches the warehouse / when the count is finished.
+   *  Bare local stamps or offset-aware; read with `parseAmphoraStamp`. */
+  time_received?: string | null;
+  time_processed?: string | null;
+  /** Counts arrive as STRINGS ("0" is truthy); read with `amphoraCount`. */
+  items?: Array<{
+    sku: string | null;
+    quantity: number | string;
+    quantity_received?: number | string;
+    product_id?: string;
+  }>;
+  exchange_items?: Array<{ sku: string | null; quantity: number; product_id?: string }>;
+  shipping_address_country_code?: string | null;
+};
+
+export type CreateReturnInput = {
+  /** Amphora-internal order id (resolve via resolveAmphoraOrderId). */
+  orderId: string;
+  items: AmphoraLineItem[];
+  /** Our own reference for idempotency/reconciliation (e.g. our return id). */
+  externalId: string;
+  /** ISO-8601 timestamp. */
+  time: string;
+  name?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  shippingAddress?: string;
+  shippingAddress2?: string;
+  shippingCity?: string;
+  shippingCountryCode?: string;
+  shippingZip?: string;
+  shippingName?: string;
+  /** Move straight to APPROVED so the collection is arranged immediately. */
+  autoApprove?: boolean;
+};
+
+export type CreateOrderInput = {
+  /** Order id we assign (must be unique in Amphora). */
+  id: string;
+  name?: string;
+  time: string;
+  price: number;
+  currency: string;
+  items: Array<{ sku: string; quantity: number; price: string }>;
+  customerEmail?: string;
+  customerPhone?: string;
+  shippingAddress: string;
+  shippingAddress2?: string;
+  shippingCity: string;
+  shippingCountryCode: string;
+  shippingZip: string;
+  shippingName: string;
+  /** Free-form; candidate mechanism for linking an exchange to its return. */
+  metadata?: Record<string, unknown>;
+};
+
+// ── Order id ─────────────────────────────────────────────────────────────────
+
+/**
+ * Amphora's internal order id for a standard order is `"SHP " + the Shopify
+ * legacyResourceId` (verified against live data: #39613 → "SHP 12952047911238",
+ * #310443 → "SHP 13125264638278"). Our `orders.id` IS that Shopify id, so we can
+ * derive the Amphora order id with no network call and no dependence on
+ * Amphora's `/orders` retention window. Prefer this over `resolveAmphoraOrderId`.
+ */
+export function amphoraOrderIdFromShopifyId(shopifyOrderId: string): string {
+  return `SHP ${shopifyOrderId}`;
+}
+
+// ── Reads (safe to run against production) ───────────────────────────────────
+
+/**
+ * Map a Shopify order name (e.g. "#310228") to Amphora's internal order id via
+ * `/orders`. Fallback for when only the name is known — note `/orders` has a
+ * retention window, so orders long past their return window may not be found
+ * (use `amphoraOrderIdFromShopifyId` when you have the Shopify order id).
+ * Returns null if Amphora has no matching order.
+ */
+export async function resolveAmphoraOrderId(orderName: string): Promise<string | null> {
+  // `order_names` is a selective server-side filter, but /orders applies a
+  // narrow default time window when `created_after` is omitted — so an older
+  // order (whose return arrives weeks later) wouldn't be found. Widen the
+  // window generously; the name filter still returns only the match(es).
+  const createdAfter = new Date(Date.now() - 730 * 24 * 60 * 60 * 1000).toISOString();
+  const data = await amphoraRequest<{ orders?: Array<{ id: string; name?: string }> }>(
+    "GET",
+    "/orders",
+    { query: { order_names: orderName, created_after: createdAfter } },
+  );
+  const orders = data.orders ?? [];
+  // Prefer an exact name match; fall back to the first result.
+  const match = orders.find((o) => o.name === orderName) ?? orders[0];
+  return match?.id ?? null;
+}
+
+/**
+ * Fetch the Amphora return(s) for an order name — used after creation to read
+ * back the assigned carrier + tracking for the confirmation email.
+ */
+/**
+ * Every return on the tenant, newest page first.
+ *
+ * Used by the status-sync cron, which has no order name to look up — it is
+ * discovering which of OUR returns (the ones carrying `external_id`) have moved
+ * since we last saw them. Amphora's own Shopify-channel returns come back with
+ * `external_id: null` and are not ours to act on.
+ */
+export async function getAmphoraReturns(createdAfter?: string): Promise<AmphoraReturn[]> {
+  const data = await amphoraRequest<{ return_orders?: AmphoraReturn[]; returns?: AmphoraReturn[] }>(
+    "GET",
+    "/returns",
+    { query: createdAfter ? { created_after: createdAfter } : undefined },
+  );
+  return data.return_orders ?? data.returns ?? [];
+}
+
+export async function getAmphoraReturnsByOrderName(orderName: string): Promise<AmphoraReturn[]> {
+  const data = await amphoraRequest<{ return_orders?: AmphoraReturn[]; returns?: AmphoraReturn[] }>(
+    "GET",
+    "/returns",
+    { query: { order_names: orderName } },
+  );
+  return data.return_orders ?? data.returns ?? [];
+}
+
+// ── Writes (create real returns/collections — never call during discovery) ───
+
+/**
+ * Build the `POST /{company_id}/returns` body.
+ *
+ * Pure and exported so the shape is unit-testable without a network call — the
+ * shape is the whole risk here. Amphora validates strictly: any property it
+ * does not recognise fails the ENTIRE request with a 422 listing the offenders,
+ * so a field in the wrong place is indistinguishable from an unsupported one
+ * unless you know the schema.
+ *
+ * `auto_approve` is a SIBLING of `return_order`, not a member of it (Company
+ * API v1.3.0). Nesting it produced 422 "Invalid properties: {'auto_approve'}",
+ * which was misread as Amphora lacking auto-approval at all; the flag was
+ * dropped and every international return then sat unapproved at PENDING, with
+ * no carrier and no collection ever scheduled.
+ */
+export function buildCreateReturnBody(
+  input: CreateReturnInput,
+  shopName: string
+) {
+  const return_order = {
+    order_id: input.orderId,
+    items: input.items.map((i) => ({ sku: i.sku, quantity: i.quantity })),
+    shop_name: shopName,
+    external_id: input.externalId,
+    time: input.time,
+    ...(input.name ? { name: input.name } : {}),
+    ...(input.customerEmail ? { customer_email: input.customerEmail } : {}),
+    ...(input.customerPhone ? { customer_phone: input.customerPhone } : {}),
+    ...(input.shippingAddress ? { shipping_address: input.shippingAddress } : {}),
+    ...(input.shippingAddress2 ? { shipping_address2: input.shippingAddress2 } : {}),
+    ...(input.shippingCity ? { shipping_address_city: input.shippingCity } : {}),
+    ...(input.shippingCountryCode
+      ? { shipping_address_country_code: input.shippingCountryCode }
+      : {}),
+    ...(input.shippingZip ? { shipping_address_zip: input.shippingZip } : {}),
+    ...(input.shippingName ? { shipping_address_name: input.shippingName } : {}),
+  };
+
+  return {
+    return_order,
+    ...(input.autoApprove ? { auto_approve: true } : {}),
+  };
+}
+
+/** Create a return (Amphora arranges carrier + garment collection). */
+export async function createAmphoraReturn(input: CreateReturnInput): Promise<AmphoraReturn> {
+  const cfg = getConfig();
+  const data = await amphoraRequest<{ return_order: AmphoraReturn }>("POST", "/returns", {
+    body: buildCreateReturnBody(input, cfg.shopName),
+  });
+  return data.return_order;
+}
+
+/**
+ * Transition an existing return to APPROVED — `PATCH /returns/{id}/approve`.
+ *
+ * Until this happens the return sits at PENDING with no warehouse and no
+ * carrier, and no collection is ever scheduled ("it needs to be approved in
+ * order to be processed"). `createAmphoraReturn` with `autoApprove` covers the
+ * normal path; this is the recovery route for returns already stranded at
+ * PENDING.
+ *
+ * Omit `carrierData` and Amphora assigns the warehouse and arranges the
+ * collection — the international path.
+ *
+ * Pass `carrierData` and the return becomes EXTERNAL: one shipped on a carrier
+ * we arranged, which Amphora records and expects but does not transport. That
+ * is the Spanish path, where the parcel travels on our own Correos label.
+ *
+ * This is the ONLY endpoint that accepts it. `POST /returns` takes just
+ * `return_order` and `auto_approve` (company-api.yaml); `carrier_data` sent
+ * there is accepted and silently ignored — a probe on 2026-08-11 returned 201
+ * with `carrier: null`, which reads exactly like success.
+ */
+export type AmphoraCarrierData = {
+  carrier: string;
+  carrier_number: string;
+  carrier_url: string;
+};
+
+export async function approveAmphoraReturn(
+  returnId: string,
+  carrierData?: AmphoraCarrierData
+): Promise<AmphoraReturn> {
+  const data = await amphoraRequest<{ return_order: AmphoraReturn }>(
+    "PATCH",
+    `/returns/${encodeURIComponent(returnId)}/approve`,
+    { body: carrierData ? { carrier_data: carrierData } : {} },
+  );
+  return data.return_order;
+}
+
+/**
+ * Cancel a return. Verified live 2026-08-11: the record then disappears from
+ * `GET /returns` entirely.
+ *
+ * Throws on a non-2xx (axios default), deliberately — `cancelReturnFunction`
+ * treats a failure here as fatal and aborts before any money moves.
+ */
+export async function cancelAmphoraReturn(returnId: string): Promise<AmphoraReturn> {
+  const data = await amphoraRequest<{ return_order: AmphoraReturn }>(
+    "PATCH",
+    `/returns/${encodeURIComponent(returnId)}/cancel`,
+  );
+  return data.return_order;
+}
+
+/** Create an outbound order (the replacement leg of an exchange). */
+export async function createAmphoraOrder(input: CreateOrderInput): Promise<unknown> {
+  const order = {
+    id: input.id,
+    time: input.time,
+    price: input.price,
+    currency: input.currency,
+    items: input.items.map((i) => ({ sku: i.sku, quantity: i.quantity, price: i.price })),
+    shipping_address: input.shippingAddress,
+    shipping_address_city: input.shippingCity,
+    shipping_address_country_code: input.shippingCountryCode,
+    shipping_address_zip: input.shippingZip,
+    shipping_address_name: input.shippingName,
+    ...(input.name ? { name: input.name } : {}),
+    ...(input.shippingAddress2 ? { shipping_address2: input.shippingAddress2 } : {}),
+    ...(input.customerEmail ? { customer_email: input.customerEmail } : {}),
+    ...(input.customerPhone ? { customer_phone: input.customerPhone } : {}),
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  };
+  return amphoraRequest("POST", "/orders", { body: { order } });
+}

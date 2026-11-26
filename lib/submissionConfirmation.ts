@@ -3,12 +3,14 @@
 //
 // NOT a "use server" module. Every export of one is a callable endpoint, and
 // neither of these may be: anyone who knew an order id could revert it and
-// release its stock hold. They are reached only through the gated portal
-// action (actions/return.ts) and the signature-verified Stripe webhook.
-import db from "@/db/drizzle";
+// release its stock hold. They take a verified identity (F1), so they are
+// reached only through the customer's submit handler (portal session) and the
+// signature-verified Stripe webhook.
+import db, { writeDb } from "@/db/drizzle";
 import { createReturn, getOrderById, getOrderTotal } from "@/db/queries";
 import { productsOrder } from "@/db/schema";
-import { getSubmission, recordConfirmation } from "@/db/submissions";
+import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
+import { loadSubmission, recordConfirmation } from "@/lib/server/submissionScope";
 import { centsToEuros } from "@/lib/fees";
 import { refundableQuantities } from "@/lib/fulfillmentLines";
 import {
@@ -17,10 +19,10 @@ import {
   presentmentRateFromOrder,
   type ReturnableLine,
 } from "@/lib/returnPayload";
-import { reserveExchangeStock } from "@/actions/exchangeReservation";
+import { reserveExchangeStock } from "@/lib/server/exchangeReservation";
 import { releaseHoldForRevert } from "@/lib/settlement/holdRelease";
-import { alertOps } from "@/actions/opsAlert";
-import { refundSourceFor } from "@/actions/replacementOrder";
+import { alertOps } from "@/lib/server/opsAlert";
+import { refundSourceFor } from "@/lib/server/replacementOrder";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
@@ -36,7 +38,7 @@ import { revalidatePath } from "next/cache";
  * would succeed and the return would never be created. The gate belongs on the
  * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
  */
-export async function revertFinalOrder(id: string) {
+export async function revertFinalOrder(id: VerifiedOrderId) {
   {
     // Deliberately NOT `getOrderProductsById` — that is wrapped in React
     // `cache()`, so a revert following a create in the SAME request would read
@@ -68,7 +70,7 @@ export async function revertFinalOrder(id: string) {
         if (product.confirmed) {
           // By row id: two rows can share a variant, and only this one is
           // being reverted.
-          await db
+          await writeDb(id)
             .update(productsOrder)
             .set({ confirmed: false, return_id: null })
             .where(eq(productsOrder.id, product.id));
@@ -118,15 +120,16 @@ export async function revertFinalOrder(id: string) {
  * submission is confirmed, and only the free path and a verified payment
  * accept one (db/submissions.ts).
  */
-export async function confirmSubmission(submissionId: string) {
-  const loaded = await getSubmission(submissionId);
+export async function confirmSubmission(sub: VerifiedSubmission) {
+  const submissionId = sub.id;
+  const loaded = await loadSubmission(sub);
   if (!loaded || loaded.submission.state !== "accepted") {
     throw new Error(
       `confirmSubmission: submission ${submissionId} is ${loaded?.submission.state ?? "missing"}, not accepted`
     );
   }
-  const { submission, lines: agreed } = loaded;
-  const id = submission.orderId;
+  const { lines: agreed, submission } = loaded;
+  const id = sub.orderId;
 
   // Idempotency. Reachable twice for one parcel: the Stripe webhook is
   // redelivered, or the free path is retried. Shopify would reject the second
@@ -291,8 +294,7 @@ export async function confirmSubmission(submissionId: string) {
     ];
   });
 
-  await recordConfirmation({
-    submissionId,
+  await recordConfirmation(sub, {
     returnId: result.data.id,
     transactionId: refundSource.transactionId,
     transactionAmount: refundSource.transactionAmount,

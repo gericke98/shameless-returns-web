@@ -1,0 +1,388 @@
+import "server-only";
+import type { VerifiedOrderId } from "./identity";
+// Server-only module (reads secret env, hits the Amphora API + DB). Imported
+// only by server actions / route handlers — NOT a "use server" action module,
+// because it also exports the sync helper `isInternationalOrder`.
+import db, { writeDb } from "@/db/drizzle";
+import { getOrderById, getVariantSkusByIds } from "@/db/queries";
+import { orders } from "@/db/schema";
+import axios from "axios";
+import { eq } from "drizzle-orm";
+import { normalizeCountry } from "@/lib/countries";
+import { buildAmphoraEmail, type ExchangeInfo } from "@/lib/emails";
+import { exchangeFromProducts } from "@/lib/exchange";
+import { readLocale, type Locale } from "@/lib/i18n";
+import { alertOps } from "./opsAlert";
+import {
+  amphoraOrderIdFromShopifyId,
+  approveAmphoraReturn,
+  createAmphoraReturn,
+  getAmphoraReturnsByOrderName,
+  type AmphoraReturn,
+} from "./amphora";
+import { describeError } from "@/lib/describeError";
+
+const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
+
+/** Spain (incl. Canarias/Ceuta/Melilla) stays on the Correos flow; everything
+ *  else is routed to Amphora. Re-exported from lib/countries.ts, which is pure
+ *  — the return-method screen is a client component and needs the same rule,
+ *  and must not import this module (Neon client, Amphora API). */
+export { isInternationalOrder } from "@/lib/countries";
+
+async function sendAmphoraConfirmationEmail(
+  recipientEmail: string,
+  name: string,
+  // Optional on purpose: this used to be dereferenced through a `!`, so a
+  // missing record threw straight into the caller's revert path — turning a
+  // cosmetic gap (no tracking yet) into a lost return.
+  ret: AmphoraReturn | undefined,
+  locale: Locale,
+  exchange: ExchangeInfo | null
+): Promise<{ status: number; error?: string }> {
+  const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
+  if (!postmarkToken) {
+    return { status: 500, error: "POSTMARK_SERVER_TOKEN is not set" };
+  }
+
+  const emailData = {
+    ...buildAmphoraEmail(
+      name,
+      locale,
+      { number: ret?.carrier_number, url: ret?.carrier_url },
+      exchange
+    ),
+    To: recipientEmail,
+    MessageStream: "outbound",
+  };
+
+  try {
+    const res = await axios.post(POSTMARK_API_URL, emailData, {
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "X-Postmark-Server-Token": postmarkToken,
+      },
+    });
+    return { status: res.status };
+  } catch (error: any) {
+    // Postmark's own words, carried up to the alert. A bare 500 is what made
+    // the August 2026 outage undiagnosable after the logs expired.
+    const detail = describeError(error);
+    console.error("Amphora email error:", detail);
+    return { status: 500, error: `Postmark refused the message: ${detail}` };
+  }
+}
+
+/**
+ * Create an international return via Amphora (carrier + garment collection),
+ * persist tracking, and email the customer a collection confirmation.
+ * Returns an HTTP-style status (200 = success) to mirror `createShippingLabel`
+ * so it slots into the same dispatch point in the return flow.
+ */
+/**
+ * NOT session-gated, deliberately.
+ *
+ * Reached from two callers: `returnFunction` (a customer with a portal session)
+ * and the Stripe webhook (`app/api/webhooks/stripe/route.ts`), which is an
+ * inbound request from Stripe with NO cookies, authenticated by signature
+ * verification instead.
+ *
+ * Adding a portal-session check here would break every PAID return: the payment
+ * would succeed and the return would never be created. The gate belongs on the
+ * customer entry points — see docs/superpowers/specs/2026-07-27-portal-session-design.md
+ */
+export async function createInternationalReturn(id: VerifiedOrderId): Promise<number> {
+  const order = await getOrderById(id);
+  if (!order) return 404;
+
+  const products = (order as any).products ?? [];
+  const returnedProducts = products.filter(
+    (p: any) => p.variant_id && Number(p.quantity) > 0
+  );
+  if (returnedProducts.length === 0) {
+    console.error(`Amphora return: no returnable products for order ${id}`);
+    return 500;
+  }
+
+  // Map variant ids -> Amphora/Shopify SKUs.
+  const skusById = await getVariantSkusByIds(
+    returnedProducts.map((p: any) => String(p.variant_id))
+  );
+  const items = returnedProducts
+    .map((p: any) => ({ sku: skusById[String(p.variant_id)], quantity: Number(p.quantity) }))
+    .filter((i: any) => i.sku);
+
+  if (items.length === 0) {
+    console.error(`Amphora return: could not resolve any SKUs for order ${id}`);
+    return 500;
+  }
+  if (items.length !== returnedProducts.length) {
+    console.error(
+      `Amphora return: resolved ${items.length}/${returnedProducts.length} SKUs for order ${id}`
+    );
+  }
+
+  /** Ask Amphora whether a collection for THIS order exists right now. */
+  const findBooked = async (): Promise<AmphoraReturn | undefined> => {
+    const all = await getAmphoraReturnsByOrderName(order.orderNumber);
+    return all.find((r) => r.external_id === order.id);
+  };
+
+  // ── Phase 1: book the collection ──────────────────────────────────────────
+  // The only phase whose failure is safe to report. Until Amphora holds a
+  // return for this order, nothing external exists and the caller's revert is
+  // both correct and harmless.
+  // Captured BEFORE phase 2 writes it: whether the customer has already been
+  // given tracking for this parcel.
+  const hadTracking = !!order.locator;
+
+  let ret: AmphoraReturn | undefined;
+  let alreadyExisted = false;
+  try {
+    // Idempotency guard: don't book a second collection if one already exists
+    // for this order. We match on our own `external_id` (= order.id) rather than
+    // trusting Amphora to dedupe — a double-submit (retry, refresh, webhook +
+    // action race) must never result in two physical garment collections.
+    ret = await findBooked();
+    alreadyExisted = !!ret;
+
+    if (ret) {
+      console.warn(
+        `Amphora return already exists for order ${id} (external_id match) — reusing, not booking a new collection.`
+      );
+    } else {
+      ret = await createAmphoraReturn({
+        orderId: amphoraOrderIdFromShopifyId(order.id),
+        items,
+        externalId: order.id,
+        time: new Date().toISOString(),
+        name: order.orderNumber,
+        customerEmail: order.email,
+        autoApprove: true,
+      });
+    }
+  } catch (error: any) {
+    // The POST can fail on the RESPONSE while Amphora has already committed the
+    // return — a timeout or a dropped socket looks identical to a rejected
+    // request from here. Reverting on that assumption strands a real courier
+    // pickup, so ask Amphora before concluding nothing happened.
+    let recovered: AmphoraReturn | undefined;
+    try {
+      recovered = await findBooked();
+    } catch {
+      // Can't reach Amphora to check either. Fall through and report failure:
+      // the caller reverts, which is the recoverable direction when we have no
+      // evidence a collection exists.
+    }
+
+    if (!recovered) {
+      console.error(
+        `Amphora return failed for order ${id} (${order.shippingCountry}) — no collection booked:`,
+        error?.response?.data || error?.message || error
+      );
+      return 501;
+    }
+
+    console.error(
+      `Amphora return for order ${id}: create call failed but Amphora HAS the collection (${recovered.id}) — treating as booked, not reverting. Original error:`,
+      error?.response?.data || error?.message || error
+    );
+    ret = recovered;
+    alreadyExisted = true;
+  }
+
+  // ── Phase 2: everything after the collection exists ───────────────────────
+  // The point of no easy return. Both callers revert the database whenever this
+  // function returns anything but 200, and that revert cannot un-book a courier
+  // or close the Shopify return — it only makes our records disagree with
+  // reality and hides the order from the dashboard. So from here every failure
+  // is logged for follow-up and swallowed: the return HAS been created, which
+  // is what the status code reports.
+  try {
+    // The carrier/tracking may not be assigned synchronously on a fresh create;
+    // fall back to a read-back by order name (a ReturnTravelling webhook can
+    // update it later). The reuse path already holds the latest record.
+    if (!ret?.carrier_number && !alreadyExisted) {
+      const back = await getAmphoraReturnsByOrderName(order.orderNumber);
+      ret = back.find((r) => r.external_id === order.id) ?? back[0] ?? ret;
+    }
+
+    console.log(
+      `[amphora] return booked for order ${id}:`,
+      JSON.stringify({
+        return_id: ret?.id,
+        external_id: ret?.external_id,
+        internal_status: ret?.internal_status,
+        carrier: ret?.carrier ?? null,
+        carrier_number: ret?.carrier_number ?? null,
+        carrier_url: ret?.carrier_url ?? null,
+        reused_existing: alreadyExisted,
+      })
+    );
+
+    await writeDb(id)
+      .update(orders)
+      .set({
+        locator: ret?.carrier_number ?? null,
+        carrier: ret?.carrier ?? null,
+        carrierUrl: ret?.carrier_url ?? null,
+      })
+      .where(eq(orders.id, id));
+
+    // Only notify on the transition from "no tracking" to "tracking" — the same
+    // rule `decideWebhookActions` applies, so the poller and this path cannot
+    // both tell the customer about one collection.
+    //
+    // Order #311201 resubmitted five minutes later on 2026-08-11. Amphora
+    // correctly reused the collection; we emailed her about it twice anyway.
+    // Five minutes apart is a deliberate resubmit, so no button state prevents
+    // it — the server has to know it has already spoken.
+    //
+    // `hadTracking`, not `alreadyExisted`: a collection we booked but never
+    // managed to email leaves us with no locator, and a resubmit is then the
+    // customer's only way to hear anything. That case must still send.
+    if (alreadyExisted && hadTracking) {
+      console.warn(
+        `Amphora return for order ${id}: collection ${ret?.id} already booked and the customer already has tracking ${order.locator} — not emailing again.`
+      );
+      return 200;
+    }
+
+    // Language the customer chose in the portal, persisted on the order when the
+    // return was created (see actions/return.ts). `readLocale` falls back to "es".
+    const emailResult = await sendAmphoraConfirmationEmail(
+      order.email,
+      order.shippingName,
+      ret,
+      readLocale(order.locale),
+      exchangeFromProducts(products)
+    );
+    if (emailResult.status !== 200) {
+      // Best-effort: log loudly for manual follow-up, but the return succeeded.
+      console.error(
+        `Amphora return ${id}: collection booked but confirmation email failed (status ${emailResult.status}). Customer needs a manual collection/tracking notice.`
+      );
+
+      // "Log loudly" was not loud enough: Vercel drops the line within the
+      // hour, and four international customers went unnoticed for three days
+      // in August 2026 behind exactly this branch. Amphora usually emails the
+      // customer their own label, so this is rarely an emergency — but nobody
+      // can make that call if nobody hears about it.
+      await alertOps(
+        `[returns] COLLECTION BUT NO EMAIL — ${order.orderNumber}`,
+        [
+          `An Amphora collection is booked and our confirmation never reached the customer.`,
+          ``,
+          `Order:      ${order.orderNumber} (id ${id})`,
+          `Customer:   ${order.email}`,
+          `Country:    ${order.shippingCountry}`,
+          `Collection: ${ret?.id ?? "(unknown)"}`,
+          `Carrier:    ${ret?.carrier ?? "(not assigned yet)"} ${ret?.carrier_number ?? ""}`.trim(),
+          ``,
+          `Failure:    ${emailResult.error ?? `email status ${emailResult.status}`}`,
+          ``,
+          `The return is fine. Amphora normally emails the customer the label`,
+          `and QR directly, so check whether they already have it before`,
+          `sending anything — and do not book a second collection.`,
+        ].join("\n")
+      );
+    }
+  } catch (error: any) {
+    console.error(
+      `Amphora return ${id}: COLLECTION IS BOOKED but post-booking steps failed — tracking and/or the customer email may be missing. Needs manual follow-up. Error:`,
+      error?.response?.data || error?.message || error
+    );
+  }
+
+  return 200;
+}
+
+/**
+ * Tell Amphora a Spanish return is on its way, without asking them to ship it.
+ *
+ * Spanish returns travel on our own Correos label, so Amphora used to learn
+ * about one only when the box arrived at the warehouse: nothing expected,
+ * nothing to reconcile against. Registering it as an EXTERNAL return records
+ * the return and its tracking while leaving the transport to us.
+ *
+ * Two calls, in this order, because their API says so (company-api.yaml):
+ *
+ *   POST /returns              — accepts only `return_order` and `auto_approve`.
+ *                                `carrier_data` is NOT in this schema; sent here
+ *                                it is accepted and silently ignored, which
+ *                                looks exactly like success (201, carrier null).
+ *   PATCH /returns/{id}/approve — accepts `carrier_data`, "to be used for the
+ *                                external return".
+ *
+ * `auto_approve` is deliberately never sent. That is the whole safety argument:
+ * an unapproved return has no warehouse and no carrier, so the auto-assign
+ * setting Amphora enabled for us cannot book a courier against a parcel the
+ * customer is about to drop at a Correos office. Approval and the external
+ * carrier arrive together, in one call.
+ *
+ * Best-effort by construction. It runs only after the Correos label exists and
+ * the customer has been emailed, so every failure here is an ops problem to be
+ * logged — never a reason to fail a return that is already real.
+ */
+export async function preregisterDomesticReturn(
+  order: {
+    id: string;
+    orderNumber: string;
+    email: string;
+    locator?: string | null;
+    products?: any;
+  },
+  locator: string
+): Promise<void> {
+  if (String(process.env.AMPHORA_DOMESTIC_PREREGISTER ?? "").toLowerCase() === "off") {
+    return;
+  }
+
+  try {
+    const returned = (order.products ?? []).filter(
+      (p: any) => p.action !== "CAMBIO" || p.new_variant_id
+    );
+    const skusById = await getVariantSkusByIds(
+      returned.map((p: any) => String(p.variant_id))
+    );
+    const items = returned
+      .map((p: any) => ({
+        sku: skusById[String(p.variant_id)],
+        quantity: Number(p.quantity) || 1,
+      }))
+      .filter((i: any) => i.sku);
+
+    if (items.length === 0) {
+      console.error(
+        `Amphora pre-registration for order ${order.id}: no SKUs resolved — the warehouse will not be expecting this parcel.`
+      );
+      return;
+    }
+
+    const created = await createAmphoraReturn({
+      orderId: amphoraOrderIdFromShopifyId(order.id),
+      items,
+      externalId: order.id,
+      time: new Date().toISOString(),
+      name: order.orderNumber,
+      customerEmail: order.email,
+      // NOT auto-approved. See above — this is what stops a courier being sent.
+    });
+
+    await approveAmphoraReturn(created.id, {
+      carrier: "CORREOS",
+      carrier_number: locator,
+      carrier_url: `https://www.correos.es/es/es/herramientas/localizador/envios/detalle?tracking-number=${encodeURIComponent(locator)}`,
+    });
+
+    console.log(
+      `[amphora] domestic return pre-registered for order ${order.id} as EXTERNAL (Correos ${locator})`
+    );
+  } catch (error: any) {
+    console.error(
+      `Amphora pre-registration FAILED for order ${order.id} (Correos ${locator}). The customer's return is fine; the warehouse just will not be expecting it. Error:`,
+      error?.response?.data || error?.message || error
+    );
+  }
+}

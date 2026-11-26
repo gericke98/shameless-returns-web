@@ -13,7 +13,8 @@
 //
 // Shopify is only READ. NOT "use server".
 import { sql } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import { read } from "./reads";
 import type { Read } from "./reconcile";
 
@@ -70,7 +71,7 @@ export function censusRows(
 
 /** Our orders by the exact tag the pre-S2 code wrote for them. */
 export async function ourOrderTags(): Promise<Map<string, string[]>> {
-  const rows = rowsOf(await db.execute(sql`SELECT id, order_number FROM orders WHERE order_number IS NOT NULL`));
+  const rows = rowsOf(await readQuery(sql`SELECT id, order_number FROM orders WHERE order_number IS NOT NULL`));
   const map = new Map<string, string[]>();
   for (const r of rows) {
     const k = `Order ${r.order_number}`;
@@ -81,10 +82,11 @@ export async function ourOrderTags(): Promise<Map<string, string[]>> {
 
 /** One transaction: every found order's identity, then the census record. */
 export async function recordCensus(
+  cap: WriteCapability,
   rows: ReadonlyArray<{ order_id: string; source_order_id: string | null }>,
   runBy: string
 ): Promise<void> {
-  await transact([
+  await writeDb(cap).transact([
     sql`INSERT INTO legacy_replacement_orders (order_id, source_order_id, found_by)
         SELECT r.order_id, r.source_order_id, 'census'
           FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS r(order_id text, source_order_id text)
@@ -95,6 +97,6 @@ export async function recordCensus(
 
 /** Cutover coverage: has a complete census been recorded? */
 export async function censusComplete(): Promise<boolean> {
-  const [r] = rowsOf(await db.execute(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
+  const [r] = rowsOf(await readQuery(sql`SELECT id FROM legacy_replacement_census LIMIT 1`));
   return !!r;
 }

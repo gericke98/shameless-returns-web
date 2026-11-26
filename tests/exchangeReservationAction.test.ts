@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The reservation runs AFTER the customer has paid, and often after a courier
 // collection or a Correos label already exists. So it may never throw: order
@@ -33,7 +34,7 @@ const ORDER = {
 const state = { order: { ...ORDER } };
 const updates: any[] = [];
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: unknown) => {
@@ -44,7 +45,7 @@ vi.mock("@/db/drizzle", () => {
     query: { orders: { findFirst: async () => state.order } },
   };
   return { default: chain };
-});
+})()));
 
 const fetchMock = vi.fn();
 
@@ -72,9 +73,9 @@ describe("reserveExchangeStock", () => {
         reserveInventoryUntil: "2026-08-29T12:00:00.000Z",
       })
     );
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", state.order.products);
+    await reserveExchangeStock(vid("13161229386054"), state.order.products);
 
     expect(updates).toContainEqual({
       exchangeReservationId: "gid://shopify/DraftOrder/1",
@@ -94,9 +95,9 @@ describe("reserveExchangeStock", () => {
         { variant_id: "111", new_variant_id: null, action: "DEVOLUCIÓN", quantity: 1, confirmed: true, refunded: false },
       ],
     };
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", paid);
+    await reserveExchangeStock(vid("13161229386054"), paid);
 
     const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(sent.variables.input.lineItems).toEqual([
@@ -107,9 +108,9 @@ describe("reserveExchangeStock", () => {
   it("does not place a second hold when one already exists", async () => {
     // A Stripe webhook retry must not freeze the stock twice.
     state.order = { ...state.order, exchangeReservationId: "gid://shopify/DraftOrder/1" };
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", state.order.products);
+    await reserveExchangeStock(vid("13161229386054"), state.order.products);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -121,9 +122,9 @@ describe("reserveExchangeStock", () => {
         { variant_id: "111", new_variant_id: null, action: "DEVOLUCIÓN", quantity: 1, confirmed: true, refunded: false },
       ],
     };
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await reserveExchangeStock("13161229386054", state.order.products);
+    await reserveExchangeStock(vid("13161229386054"), state.order.products);
 
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -139,17 +140,17 @@ describe("reserveExchangeStock", () => {
         },
       }),
     });
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
+    await expect(reserveExchangeStock(vid("13161229386054"), state.order.products)).resolves.toBeUndefined();
     expect(updates).toHaveLength(0);
   });
 
   it("survives the network being down", async () => {
     fetchMock.mockRejectedValue(new Error("ECONNRESET"));
-    const { reserveExchangeStock } = await import("@/actions/exchangeReservation");
+    const { reserveExchangeStock } = await import("@/lib/server/exchangeReservation");
 
-    await expect(reserveExchangeStock("13161229386054", state.order.products)).resolves.toBeUndefined();
+    await expect(reserveExchangeStock(vid("13161229386054"), state.order.products)).resolves.toBeUndefined();
   });
 });
 

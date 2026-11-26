@@ -40,6 +40,7 @@ import {
 } from "./reads";
 import { graphQLErrors } from "./shopify";
 import { ROOT_REFUND_REPLAY_HOURS, type Operation } from "./types";
+import type { WriteCapability } from "@/lib/server/identity";
 
 export type RunResult =
   | "done"
@@ -61,19 +62,19 @@ function fenceOf(op: Operation): Fence {
 }
 
 /** Run one operation from the top. */
-export async function run(opId: string, me: string = randomUUID()): Promise<RunResult> {
-  const claimed = await claim(opId, me);
+export async function run(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunResult> {
+  const claimed = await claim(cap, opId, me);
   if (!claimed) return "not-claimed";
-  return dispatchAndSend(claimed, me);
+  return dispatchAndSend(cap, claimed, me);
 }
 
-async function dispatchAndSend(claimed: Operation, me: string): Promise<RunResult> {
-  const token = await dispatch(claimed, me);
+async function dispatchAndSend(cap: WriteCapability, claimed: Operation, me: string): Promise<RunResult> {
+  const token = await dispatch(cap, claimed, me);
   if (!token) return "not-claimed";
   const answer = await send(token, token);
   if (answer.kind === "no-answer") return "in-flight";
   const verdict = await judgeAnswer(token, answer.body);
-  return apply(token, fenceOf(token), verdict);
+  return apply(cap, token, fenceOf(token), verdict);
 }
 
 /** Judge what the mutation itself answered. */
@@ -196,16 +197,16 @@ function unresolvedAlert(op: Operation, error: string) {
   };
 }
 
-async function apply(op: Operation, fence: Fence, verdict: Judged): Promise<RunResult> {
+async function apply(cap: WriteCapability, op: Operation, fence: Fence, verdict: Judged): Promise<RunResult> {
   switch (verdict.v) {
     case "done":
-      await recordDone(op, fence, verdict.effectRef, verdict.evidence, doneExtras(op, verdict));
+      await recordDone(cap, op, fence, verdict.effectRef, verdict.evidence, doneExtras(op, verdict));
       return "done";
     case "rejected":
-      await recordRejected(op, fence, verdict.error);
+      await recordRejected(cap, op, fence, verdict.error);
       return "rejected";
     case "unresolved":
-      await recordUnresolved(op, fence, verdict.error, unresolvedAlert(op, verdict.error));
+      await recordUnresolved(cap, op, fence, verdict.error, unresolvedAlert(op, verdict.error));
       return "unresolved";
     case "absent":
       // An answered mutation never lands here (judgeAnswer maps it); a re-read
@@ -226,33 +227,33 @@ const hoursSince = (date: Date | null) =>
  * authorises a re-send, and it keeps the op's attempt (its idempotency key)
  * and first-dispatch time.
  */
-export async function recoverDispatched(op: Operation, me: string = randomUUID()): Promise<RunResult> {
+export async function recoverDispatched(cap: WriteCapability, op: Operation, me: string = randomUUID()): Promise<RunResult> {
   // A gift card is re-sent with its frozen code: the re-send IS the probe
   // (created, or TAKEN → evidence). Every other kind is read first.
-  if (op.kind === "gift_card") return resend(op, me);
+  if (op.kind === "gift_card") return resend(cap, op, me);
 
   const verdict = await readEvidence(op);
-  if (verdict.v !== "absent") return apply(op, fenceOf(op), verdict);
+  if (verdict.v !== "absent") return apply(cap, op, fenceOf(op), verdict);
 
   switch (op.kind) {
     case "exchange_order":
       // Unreachable (a zero search is already unresolved), and never re-sent.
-      return apply(op, fenceOf(op), { v: "unresolved", error: verdict.detail });
+      return apply(cap, op, fenceOf(op), { v: "unresolved", error: verdict.detail });
     case "root_refund":
       if (hoursSince(op.dispatchedAt) >= ROOT_REFUND_REPLAY_HOURS) {
-        return apply(op, fenceOf(op), {
+        return apply(cap, op, fenceOf(op), {
           v: "unresolved",
           error: `no refund carries [${op.id}] ${ROOT_REFUND_REPLAY_HOURS} h after dispatch; its idempotency key has expired`,
         });
       }
-      return resend(op, me);
+      return resend(cap, op, me);
     default:
-      return resend(op, me);
+      return resend(cap, op, me);
   }
 }
 
-async function resend(op: Operation, me: string): Promise<RunResult> {
-  const taken = await takeOver(op, me);
+async function resend(cap: WriteCapability, op: Operation, me: string): Promise<RunResult> {
+  const taken = await takeOver(cap, op, me);
   if (!taken) return "not-claimed";
-  return dispatchAndSend(taken, me);
+  return dispatchAndSend(cap, taken, me);
 }

@@ -61,8 +61,11 @@
  * it Shopify answers only the last 60 days of orders, and every "no evidence"
  * would be wrong.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/reconcile-legacy.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/reconcile-legacy.ts \
  *     --out <file.csv> [--write] [--approve-file <approvals.csv>] [--census] [--by <name>] [--order <orders.id>]
+ *
+ * `--conditions=react-server`: it reaches lib/server/ modules, which start with
+ * `import "server-only"`; that package throws outside the react-server condition.
  */
 import "dotenv/config";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -127,7 +130,11 @@ async function main() {
     approvalRows = parsed.rows;
   }
 
-  const { default: db } = await import("@/db/drizzle");
+  const { default: db, readQuery } = await import("@/db/drizzle");
+  // Its write capability, minted here (F1 spec §11, G2): the operator running it.
+  const { systemTarget } = await import("@/lib/server/identity");
+  const job = systemTarget("reconcile-legacy");
+
   const { sql } = await import("drizzle-orm");
   const { orders: ordersTable } = await import("@/db/schema");
   const { eq } = await import("drizzle-orm");
@@ -162,7 +169,7 @@ async function main() {
       console.error("DRY: nothing recorded. Pass --write.");
       return;
     }
-    await census.recordCensus(identity, by);
+    await census.recordCensus(job, identity, by);
     console.error("census recorded (legacy_replacement_orders + legacy_replacement_census).");
     return;
   }
@@ -170,7 +177,7 @@ async function main() {
   // Every confirmed line is read (shared identities span them all); the
   // population is chosen below. gift_card_id is read by name — the
   // schema no longer models it (R4).
-  const result: any = await db.execute(sql`
+  const result: any = await readQuery(sql`
     SELECT p.*, p.gift_card_id AS gift_card_id_raw, o.order_number, o.exchange_of
       FROM productsorder p JOIN orders o ON o.id = p.order_id
      WHERE p.confirmed = true
@@ -425,7 +432,7 @@ async function main() {
         undefined,
         funding
       );
-      const done = await recordReconciliation(t.order, t.terms, record);
+      const done = await recordReconciliation(job, t.order, t.terms, record);
       console.error(
         `${done.recorded ? "recorded" : "already recorded / refused"} ${label}: ` +
           `${record.ops.filter((o) => o.state === "done").length} done, ` +
@@ -471,12 +478,12 @@ async function main() {
         console.error(`DRY: would record and admit ${label}`);
         continue;
       }
-      const sub = await recordApprovedLegacySubmission(group);
+      const sub = await recordApprovedLegacySubmission(job, group);
       if (!sub.ok) {
         console.error(`approved ${label} NOT recorded: ${sub.held}`);
         continue;
       }
-      const admitted = await admit(sub.submissionId, ids);
+      const admitted = await admit(job, sub.submissionId, ids);
       console.error(
         `approved ${label}: submission ${sub.submissionId}, ` +
           (admitted.ok ? `admitted ${admitted.admitted.join(",")} — recovery sends it` : `held: ${admitted.held}`)

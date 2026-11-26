@@ -12,8 +12,10 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 vi.mock("@/db/queries", () => ({ getOrderById: async () => null }));
+const admin = { value: true };
+vi.mock("@/lib/requireAdmin", () => ({ isAdmin: async () => admin.value }));
 
 const axiosGet = vi.fn();
 vi.mock("axios", () => ({ default: { get: (...a: unknown[]) => axiosGet(...a) } }));
@@ -45,7 +47,7 @@ beforeEach(() => {
 describe("obtainLastStatus", () => {
   it("reports what Correos returned", async () => {
     axiosGet.mockResolvedValue({ data: DELIVERED });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     const status = await obtainLastStatus("PQAZXT9800004250128221N");
 
@@ -54,7 +56,7 @@ describe("obtainLastStatus", () => {
 
   it("reports unknown — not Prerregistrado — when Correos has no traceability", async () => {
     axiosGet.mockResolvedValue({ data: NO_TRACEABILITY });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     const status = await obtainLastStatus("PQAZXT0710002040128224R");
 
@@ -67,7 +69,7 @@ describe("obtainLastStatus", () => {
     // sequentially inside a 300-second function, so a socket the localizador
     // never closes takes every parcel behind it down with it.
     axiosGet.mockResolvedValue({ data: DELIVERED });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     await obtainLastStatus("PQAZXT9800004250128221N");
 
@@ -77,14 +79,14 @@ describe("obtainLastStatus", () => {
   it("treats a network failure as unknown, never as a status", async () => {
     // A timeout is not evidence about the parcel.
     axiosGet.mockRejectedValue(new Error("ETIMEDOUT"));
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     expect((await obtainLastStatus("PQ123")).phase).toBe("sin_informacion");
   });
 
   it("does not call Correos at all without credentials", async () => {
     delete process.env.USERNAME_CORREOS;
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     const status = await obtainLastStatus("PQ123");
 
@@ -93,7 +95,7 @@ describe("obtainLastStatus", () => {
   });
 
   it("does not call Correos for a null locator", async () => {
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     expect((await obtainLastStatus(null)).phase).toBe("sin_informacion");
     expect(axiosGet).not.toHaveBeenCalled();
@@ -103,7 +105,7 @@ describe("obtainLastStatus", () => {
     // The locator reaches this from a query string; it must not be able to
     // append its own path segments or query parameters to the Correos URL.
     axiosGet.mockResolvedValue({ data: DELIVERED });
-    const { obtainLastStatus } = await import("@/actions/shipping");
+    const { obtainLastStatus } = await import("@/lib/server/shipping");
 
     await obtainLastStatus("PQ/123?x=1");
 
@@ -115,8 +117,34 @@ describe("GET /api/shipping-status", () => {
   const call = async (url: string) => {
     const { GET } = await import("@/app/api/shipping-status/route");
     const response = await GET(new Request(url));
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, body: await response.json(), cache: response.headers.get("cache-control") };
   };
+  beforeEach(() => {
+    admin.value = true;
+  });
+
+  it("refuses a caller without an admin session, and never lets the answer be cached (F1 §6)", async () => {
+    admin.value = false;
+    axiosGet.mockResolvedValue({ data: DELIVERED });
+
+    const { status, cache } = await call("https://x.test/api/shipping-status?locator=PQ1");
+
+    expect(status).toBe(401);
+    expect(cache).toBe("private, no-store");
+    expect(axiosGet).not.toHaveBeenCalled();
+  });
+
+  it("marks every admin answer private, so no shared cache serves it to anyone else", async () => {
+    axiosGet.mockResolvedValue({ data: DELIVERED });
+    expect((await call("https://x.test/api/shipping-status?locator=PQ1")).cache).toBe("private, no-store");
+    expect((await call("https://x.test/api/shipping-status")).cache).toBe("private, no-store");
+  });
+
+  it("is always dynamic: no ISR window to serve a stored 200 from", async () => {
+    const route = await import("@/app/api/shipping-status/route");
+    expect((route as any).dynamic).toBe("force-dynamic");
+    expect((route as any).revalidate).toBeUndefined();
+  });
 
   it("rejects a request with no locator", async () => {
     const { status } = await call("https://x.test/api/shipping-status");

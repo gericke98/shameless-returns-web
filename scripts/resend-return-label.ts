@@ -1,8 +1,13 @@
 /**
  * Send a customer their existing return label again, from the terminal.
  *
- *   npx tsx scripts/resend-return-label.ts '#311199'
- *   npx tsx scripts/resend-return-label.ts '#311199' --dry-run
+ *   npx tsx --conditions=react-server scripts/resend-return-label.ts '#311199'
+ *   npx tsx --conditions=react-server scripts/resend-return-label.ts '#311199' --dry-run
+ *
+ * `--conditions=react-server`: the label code lives in lib/server/, whose
+ * modules start with `import "server-only"`. That package resolves to an empty
+ * module only under the react-server condition (as in Next's server bundle)
+ * and throws everywhere else.
  *
  * Uses the PDF we stored when the parcel was registered, so it costs nothing:
  * no new Correos shipment, no second charge, and the customer keeps the
@@ -28,7 +33,7 @@ async function main() {
 
   if (orderNumbers.length === 0) {
     console.error(
-      "Usage: npx tsx scripts/resend-return-label.ts '#311199' [more…] [--dry-run]"
+      "Usage: npx tsx --conditions=react-server scripts/resend-return-label.ts '#311199' [more…] [--dry-run]"
     );
     process.exit(1);
   }
@@ -74,8 +79,11 @@ async function main() {
       continue;
     }
 
-    const { resendReturnLabel } = await import("../actions/shipping");
-    const status = await resendReturnLabel(order.id);
+    // The operator selected this order from our own database by its number:
+    // that selection is the credential, minted here (F1 spec §11, G2).
+    const { systemTarget } = await import("../lib/server/identity");
+    const { resendReturnLabel } = await import("../lib/server/shipping");
+    const status = await resendReturnLabel(systemTarget(String(order.id), "resend-return-label"));
     console.log(status === 200 ? "  ✅ sent\n" : `  ❌ failed (${status})\n`);
   }
 }

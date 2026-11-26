@@ -1,4 +1,5 @@
-import { saveAddress } from "@/actions/updateOrder";
+import { saveAddress } from "@/actions/address";
+import { sharedRefusalKey, useCallAction } from "@/lib/callAction";
 import { FormInput } from "@/components/formInput";
 import { orders, productsOrder } from "@/db/schema";
 import { countryDisplayName } from "@/lib/countries";
@@ -28,7 +29,8 @@ export const SecondWindowForm = ({
   const locale = useLocale();
   const wizard = usePortalWizard();
   const [isPending, startTransition] = useTransition();
-  const [saveFailed, setSaveFailed] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const callAction = useCallAction();
 
   // Only an exchange has a replacement to deliver. A pure return must not be
   // offered a delivery address: there is nothing to send, and the outbound leg
@@ -53,15 +55,48 @@ export const SecondWindowForm = ({
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (isPending) return;
-    const formData = new FormData(e.currentTarget);
-    setSaveFailed(false);
+    const form = new FormData(e.currentTarget);
+    const text = (key: string) => String(form.get(key) ?? "");
+    const optional = (key: string) => (form.has(key) ? text(key) : undefined);
+    const deliveryBlockOffered = form.has("deliveryBlockOffered");
+    // All seven empty means "no separate delivery address"; anything else is
+    // sent as typed, and the server's all-or-nothing parse judges it.
+    const deliveryKeys = ["deliveryName", "deliveryAddress1", "deliveryAddress2", "deliveryZip", "deliveryCity", "deliveryProvince", "deliveryCountry"];
+    const delivery =
+      deliveryBlockOffered && deliveryKeys.some((k) => text(k).trim().length > 0)
+        ? {
+            name: text("deliveryName"),
+            address1: text("deliveryAddress1"),
+            address2: optional("deliveryAddress2"),
+            zip: text("deliveryZip"),
+            city: text("deliveryCity"),
+            province: optional("deliveryProvince"),
+            country: text("deliveryCountry"),
+          }
+        : null;
+    setSaveError(null);
     startTransition(async () => {
-      const result = await saveAddress(formData);
-      if (result.ok) {
-        wizard.addressSaved();
-      } else {
-        setSaveFailed(true);
-      }
+      const outcome = await callAction(saveAddress, {
+        expectedOrderId: order.id,
+        name: text("name"),
+        address1: text("address"),
+        address2: optional("address2"),
+        zip: text("zip"),
+        city: text("city"),
+        province: optional("province"),
+        phone: optional("phone"),
+        delivery,
+        deliveryBlockOffered,
+      });
+      if (outcome.kind === "unknown") return setSaveError(t.action.notSaved);
+      const { result } = outcome;
+      if (result.ok) return wizard.addressSaved();
+      if (result.reason === "no-session") return;
+      if (result.reason === "incomplete") return setSaveError(t.action.incomplete);
+      if (result.reason === "invalid-delivery") return setSaveError(t.action.invalidDelivery);
+      if (result.reason === "not-editable") return setSaveError(t.action.notEditable);
+      const shared = sharedRefusalKey(result.reason);
+      setSaveError(shared ? t.action[shared] : t.second.saveError);
     });
   };
 
@@ -156,9 +191,9 @@ export const SecondWindowForm = ({
           method={wizard.method}
         />
       </div>
-      {saveFailed && (
+      {saveError && (
         <p role="alert" className="text-sm text-red-600">
-          {t.second.saveError}
+          {saveError}
         </p>
       )}
       <button

@@ -5,16 +5,19 @@ import { drizzle } from "drizzle-orm/pglite";
 import * as schema from "@/db/schema";
 import { buildAgreement } from "@/lib/agreement";
 import type { ValuedLine } from "@/lib/basket";
+import type { VerifiedSubmission } from "@/lib/server/identity";
+import { vid, vsub, sys } from "./support/verified";
 
 // The submission guarantees live in SQL: one awaiting submission per order,
 // conditional transitions, the confirm write by row id. These run the REAL
-// db/submissions.ts against the REAL migration in an in-process Postgres.
+// lib/server/submissionScope.ts (and db/submissions.ts) against the REAL
+// migration in an in-process Postgres.
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
-vi.mock("@/db/drizzle", () => ({ default: db }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: db }))()));
 
-const repo = () => import("@/db/submissions");
+const repo = async () => ({ ...(await import("@/lib/server/submissionScope")), ...(await import("@/db/submissions")) });
 
 const line = (id: number, action: "DEVOLUCIÓN" | "CAMBIO", cents: number, repl = 0): ValuedLine => ({
   id,
@@ -44,18 +47,17 @@ const agreementFor = (lines: ValuedLine[]) =>
 
 async function propose(orderId: string, lines = [line(1, "DEVOLUCIÓN", 5000)]) {
   const { proposeSubmission } = await repo();
-  const result = await proposeSubmission({
-    orderId,
+  const result = await proposeSubmission(vid(orderId), {
     returnMethod: "CORREOS",
     agreement: agreementFor(lines),
     lines: lines.map((l) => meta(l.id, l.action === "CAMBIO" ? "gid://shopify/ProductVariant/9" : null)),
   });
   if (!result.ok) throw new Error("conflict");
-  return result.id;
+  return result.submission;
 }
 
-const stateOf = async (id: string) =>
-  (await pg.query<any>("SELECT state FROM return_submissions WHERE id = $1", [id])).rows[0]?.state;
+const stateOf = async (sub: VerifiedSubmission) =>
+  (await pg.query<any>("SELECT state FROM return_submissions WHERE id = $1", [sub.id])).rows[0]?.state;
 
 beforeAll(async () => {
   await pg.exec(`CREATE TABLE productsorder (
@@ -80,7 +82,7 @@ describe("db/submissions against Postgres", () => {
   it("stores the agreement and its lines, conserving money", async () => {
     const id = await propose("o1", [line(1, "DEVOLUCIÓN", 5000), line(2, "CAMBIO", 10000, 6000)]);
 
-    const s = (await pg.query<any>("SELECT * FROM return_submissions WHERE id=$1", [id])).rows[0];
+    const s = (await pg.query<any>("SELECT * FROM return_submissions WHERE id=$1", [id.id])).rows[0];
     const lines = (await pg.query<any>("SELECT * FROM submission_lines ORDER BY productsorder_id")).rows;
     expect(s.state).toBe("awaiting_payment");
     expect(s.owed_cents).toBe(8500);
@@ -159,9 +161,9 @@ describe("db/submissions against Postgres", () => {
     const { abandonExpiredSubmissions } = await repo();
     const fresh = await propose("o1");
     const stale = await propose("o2");
-    await pg.query("UPDATE return_submissions SET created_at = now() - interval '26 hours' WHERE id = $1", [stale]);
+    await pg.query("UPDATE return_submissions SET created_at = now() - interval '26 hours' WHERE id = $1", [stale.id]);
 
-    expect(await abandonExpiredSubmissions()).toEqual([stale]);
+    expect(await abandonExpiredSubmissions(sys)).toEqual([stale.id]);
     expect(await stateOf(fresh)).toBe("awaiting_payment");
   });
 
@@ -175,8 +177,7 @@ describe("db/submissions against Postgres", () => {
     // After checkout, another tab flips row 2 to a refund. Same variant on all three rows.
     await pg.exec(`UPDATE productsorder SET action='DEVOLUCIÓN', new_variant_id=NULL WHERE id = 2`);
 
-    const written = await recordConfirmation({
-      submissionId: id,
+    const written = await recordConfirmation(id, {
       returnId: "gid://shopify/Return/1",
       transactionId: "t1",
       transactionAmount: "90.00",
@@ -217,16 +218,16 @@ describe("db/submissions against Postgres", () => {
     // A double click: two requests, same order, same instant.
     const { proposeSubmission } = await repo();
     const lines = [line(1, "DEVOLUCIÓN", 5000)];
-    const input = { orderId: "o1", returnMethod: "CORREOS", agreement: agreementFor(lines), lines: [meta(1)] };
+    const input = { returnMethod: "CORREOS", agreement: agreementFor(lines), lines: [meta(1)] };
 
-    const results = await Promise.all([proposeSubmission(input), proposeSubmission(input)]);
+    const results = await Promise.all([proposeSubmission(vid("o1"), input), proposeSubmission(vid("o1"), input)]);
 
     const awaiting = (await pg.query<any>(
       "SELECT id FROM return_submissions WHERE order_id='o1' AND state='awaiting_payment'"
     )).rows;
     expect(awaiting).toHaveLength(1);
     // Whichever lost was either superseded or refused — never left awaiting.
-    expect(results.filter((r) => r.ok && r.id === awaiting[0].id)).toHaveLength(1);
+    expect(results.filter((r) => r.ok && r.submission.id === awaiting[0].id)).toHaveLength(1);
   });
 
   it("clears a stale credit flag when the submission is a refund", async () => {
@@ -237,8 +238,7 @@ describe("db/submissions against Postgres", () => {
       VALUES (1, 'o1', 'v', 'DEVOLUCIÓN', true)`);
     const id = await propose("o1");
 
-    await recordConfirmation({
-      submissionId: id,
+    await recordConfirmation(id, {
       returnId: "gid://shopify/Return/1",
       transactionId: "t1",
       transactionAmount: "50.00",
@@ -247,5 +247,51 @@ describe("db/submissions against Postgres", () => {
     });
 
     expect((await pg.query<any>("SELECT credit FROM productsorder WHERE id = 1")).rows[0].credit).toBe(false);
+  });
+
+  it("binds a submission id to its own order only (submissionOf)", async () => {
+    const { submissionOf } = await repo();
+    const a = await propose("o1");
+    const b = await propose("o2");
+
+    expect(await submissionOf(vid("o1"), a.id)).toEqual(a);
+    // Order o1 naming order o2's submission gets nothing.
+    expect(await submissionOf(vid("o1"), b.id)).toBeNull();
+    expect(await submissionOf(vid("o1"), "not-a-uuid")).toBeNull();
+  });
+
+  it("never confirms another order's row, even when a submission line names it", async () => {
+    const { recordConfirmation } = await repo();
+    await pg.exec(`INSERT INTO productsorder (id, order_id, variant_id, action) VALUES
+      (1, 'o1', 'v', 'DEVOLUCIÓN'),
+      (2, 'o2', 'v', 'DEVOLUCIÓN')`);
+    // o1's submission whose line points at o2's row 2 (as a forged or
+    // corrupted line would).
+    const sub = await propose("o1", [line(1, "DEVOLUCIÓN", 5000), line(2, "DEVOLUCIÓN", 5000)]);
+
+    const written = await recordConfirmation(sub, {
+      returnId: "gid://shopify/Return/1",
+      transactionId: "t1",
+      transactionAmount: "100.00",
+      credit: false,
+      lines: [
+        { productsorderId: 1, fulfillmentLineItemId: "fli-1", returnLineItemId: "rli-1" },
+        { productsorderId: 2, fulfillmentLineItemId: "fli-2", returnLineItemId: "rli-2" },
+      ],
+    });
+
+    expect(written).toEqual([1]);
+    const other = (await pg.query<any>("SELECT * FROM productsorder WHERE id = 2")).rows[0];
+    expect(other).toMatchObject({ confirmed: null, return_id: null, return_line_item_id: null });
+  });
+
+  it("refuses every transition through a submission bound to the wrong order", async () => {
+    const { attachStripeSession, acceptFreeSubmission } = await repo();
+    const sub = await propose("o1");
+    const forged = vsub("o2", sub.id);
+
+    expect(await attachStripeSession(forged, "cs_x")).toBe(false);
+    expect(await acceptFreeSubmission(forged)).toBe(false);
+    expect(await stateOf(sub)).toBe("awaiting_payment");
   });
 });

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { confirmSelfTracking, rejectSelfTracking } from "@/actions/selfTrackingReview";
+import { useCallAction } from "@/lib/callAction";
 
 export type TrackingToConfirm = {
   id: string;
@@ -49,17 +50,26 @@ function ReviewRow({ row }: { row: TrackingToConfirm }) {
   const [confirmingReject, setConfirmingReject] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const act = (action: typeof confirmSelfTracking, done: string) =>
+  const callAction = useCallAction();
+
+  const act = (action: typeof confirmSelfTracking | typeof rejectSelfTracking, done: string) =>
     startTransition(async () => {
-      const outcome = await action(row.id, row.trackingSubmissionId ?? "");
+      const outcome = await callAction(action, {
+        orderId: row.id,
+        submissionId: row.trackingSubmissionId ?? "",
+      });
+      if (outcome.kind === "unknown") return setMessage("No answer from the server. Refresh before trying again.");
+      const { result } = outcome;
       setMessage(
-        outcome.ok
-          ? outcome.pinned === false
+        result.ok
+          ? "pinned" in result.value && result.value.pinned === false
             ? "Confirmed, but the warehouse refused it. Ops has been alerted."
             : done
-          : outcome.reason === "not-pending"
+          : result.reason === "not-pending"
             ? "Already handled. Refresh the page."
-            : "Not allowed."
+            : result.reason === "not-admin"
+              ? "Not allowed: sign in again."
+              : "Failed. Ops has been alerted."
       );
     });
 

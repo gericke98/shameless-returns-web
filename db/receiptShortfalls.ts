@@ -4,8 +4,9 @@
 //
 // NOT a "use server" module, for the same reason as db/lookupAttempts.ts.
 import { and, eq, isNull, notInArray, sql } from "drizzle-orm";
-import db from "./drizzle";
+import db, { writeDb } from "./drizzle";
 import { receiptShortfalls } from "./schema";
+import type { SystemTarget } from "@/lib/server/identity";
 
 export type ShortfallRow = typeof receiptShortfalls.$inferSelect;
 
@@ -29,7 +30,7 @@ const STAGE_KEY_SQL = (stage: 1 | 2) =>
  * and the counts; a RESOLVED one reopens — stage 0, anchor cleared,
  * `reopen_count` + 1 — so a fresh alert and a fresh 7-day clock start.
  */
-export async function recordShortfall(shortfall: {
+export async function recordShortfall(job: SystemTarget, shortfall: {
   amphoraReturnId: string;
   orderId: string;
   sku: string;
@@ -39,7 +40,7 @@ export async function recordShortfall(shortfall: {
 }): Promise<void> {
   const t = receiptShortfalls;
   const wasResolved = sql`${t.resolvedAt} IS NOT NULL`;
-  await db
+  await writeDb(job)
     .insert(t)
     .values(shortfall)
     .onConflictDoUpdate({
@@ -63,11 +64,12 @@ export async function recordShortfall(shortfall: {
  * Called only after a positive observation of that return's count.
  */
 export async function resolveShortfallsForReturn(
+  job: SystemTarget,
   amphoraReturnId: string,
   stillShortSkus: string[]
 ): Promise<number> {
   const t = receiptShortfalls;
-  const rows = await db
+  const rows = await writeDb(job)
     .update(t)
     .set({ resolvedAt: sql`now()` })
     .where(
@@ -83,9 +85,9 @@ export async function resolveShortfallsForReturn(
 
 /** Resolve every open row of an order: its lines are all settled, or every
  *  Shopify return involved is closed. */
-export async function resolveShortfallsForOrder(orderId: string): Promise<number> {
+export async function resolveShortfallsForOrder(job: SystemTarget, orderId: string): Promise<number> {
   const t = receiptShortfalls;
-  const rows = await db
+  const rows = await writeDb(job)
     .update(t)
     .set({ resolvedAt: sql`now()` })
     .where(and(eq(t.orderId, orderId), isNull(t.resolvedAt)))
@@ -103,8 +105,8 @@ export async function listOpenShortfalls(): Promise<ShortfallRow[]> {
  * outbox row's own `accepted_at`, written once (only while it is NULL), so a
  * failed or retried attempt can never move the 7-day clock.
  */
-export async function advanceShortfallStages(): Promise<void> {
-  await db.execute(sql`
+export async function advanceShortfallStages(job: SystemTarget): Promise<void> {
+  await writeDb(job).execute(sql`
     UPDATE receipt_shortfalls
        SET alert_stage = 1, first_alert_accepted_at = ops_alerts.accepted_at
       FROM ops_alerts
@@ -114,7 +116,7 @@ export async function advanceShortfallStages(): Promise<void> {
        AND receipt_shortfalls.first_alert_accepted_at IS NULL
        AND receipt_shortfalls.resolved_at IS NULL
   `);
-  await db.execute(sql`
+  await writeDb(job).execute(sql`
     UPDATE receipt_shortfalls
        SET alert_stage = 2
       FROM ops_alerts

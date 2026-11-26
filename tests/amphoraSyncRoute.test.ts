@@ -189,15 +189,15 @@ const state: {
 };
 const applied: any[] = [];
 
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   getAmphoraReturns: async () => {
     if (state.listThrows) throw new Error("amphora down");
     return state.returns;
   },
 }));
 
-vi.mock("@/actions/amphoraStatusSync", () => ({
-  applyReturnStatus: async (order: any, payload: any) => {
+vi.mock("@/lib/server/amphoraStatusSync", () => ({
+  applyReturnStatus: async (_id: unknown, order: any, payload: any) => {
     applied.push({ order: order.orderNumber, name: payload.name });
     return { changed: true, status: payload.internal_status, emailsSent: [], emailsFailed: [] };
   },
@@ -233,7 +233,7 @@ vi.mock("@/db/queries", () => ({
 // The sweep is exercised on its own in tests/selfReturnSweep.test.ts. Here it
 // only needs to not pull in the real db connection, since this file mocks
 // none of `@/db/drizzle`.
-vi.mock("@/actions/selfReturnSweep", () => ({
+vi.mock("@/lib/server/selfReturnSweep", () => ({
   sweepSelfReturns: async () => {
     if (state.sweepThrows) throw new Error('column "delivery_name" does not exist');
     return { reminded: 0, alerted: 0 };
@@ -243,7 +243,7 @@ vi.mock("@/actions/selfReturnSweep", () => ({
 // The outbox is tested on its own in tests/opsAlertOutbox.test.ts; here it
 // only records what the route queued.
 const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlerts: async (list: any[]) => {
     queued.push(...list);
     return { failed: 0 };
@@ -256,7 +256,7 @@ const abandon = vi.fn(async (): Promise<string[]> => []);
 vi.mock("@/db/submissions", () => ({ abandonExpiredSubmissions: () => abandon() }));
 
 const alerts: Array<{ subject: string; body: string }> = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },

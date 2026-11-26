@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 
 // What the customer paid for is the submission, frozen at checkout. Between
 // checkout and payment the rows can change — another tab, a retry — and the
@@ -49,7 +50,7 @@ const SUBMISSION = {
   ],
 };
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
@@ -57,7 +58,7 @@ vi.mock("@/db/drizzle", () => {
     query: { productsOrder: { findMany: async () => state.rows } },
   };
   return { default: chain };
-});
+})()));
 
 const createReturn = vi.fn(async (_input: any) => ({
   success: true as const,
@@ -83,12 +84,12 @@ vi.mock("@/lib/fulfillmentLines", () => ({
     new Map(ids.filter((id) => state.refundable.has(id)).map((id) => [id, state.refundable.get(id)!])),
 }));
 
-vi.mock("@/actions/replacementOrder", () => ({
+vi.mock("@/lib/server/replacementOrder", () => ({
   refundSourceFor: async () => ({ transactionId: "t", transactionAmount: "50.00" }),
 }));
 
 const reserved = vi.fn(async (_id: string, _lines: any[]) => {});
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: (id: string, lines: any[]) => reserved(id, lines),
 }));
 vi.mock("@/lib/settlement/holdRelease", () => ({
@@ -97,14 +98,14 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
 }));
 
 const recorded = vi.fn(async (_input: any) => [7]);
-vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => SUBMISSION,
-  recordConfirmation: (input: any) => recorded(input),
+vi.mock("@/lib/server/submissionScope", () => ({
+  loadSubmission: async () => SUBMISSION,
+  recordConfirmation: (_sub: unknown, input: any) => recorded(input),
 }));
 
 async function confirm() {
   const { confirmSubmission } = await import("@/lib/submissionConfirmation");
-  return confirmSubmission("sub-1");
+  return confirmSubmission(vsub(SUBMISSION.submission.orderId, "sub-1"));
 }
 
 beforeEach(() => {

@@ -41,7 +41,7 @@ vi.mock("@/db/opsAlerts", () => ({
 }));
 
 const direct: string[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     direct.push(`${subject}|${body}`);
   },
@@ -51,7 +51,7 @@ vi.mock("@/actions/opsAlert", () => ({
   },
 }));
 
-const outbox = () => import("@/actions/opsAlertOutbox");
+const outbox = () => import("@/lib/server/opsAlertOutbox");
 const alert = (key: string) => ({ dedupeKey: key, subject: `subject ${key}`, body: "body" });
 
 beforeEach(() => {

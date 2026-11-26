@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The submit half of a self-booked return. It must book NOTHING: no Correos
 // pre-registration, no Amphora collection, no courier. The Amphora ticket is
@@ -38,7 +39,7 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({ "1": "SKU-1" }),
 }));
 
-vi.mock("@/actions/amphora", async (importOriginal) => {
+vi.mock("@/lib/server/amphora", async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
@@ -53,7 +54,7 @@ vi.mock("@/actions/amphora", async (importOriginal) => {
   };
 });
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -63,7 +64,7 @@ vi.mock("@/actions/opsAlert", () => ({
 // read and our write — the race the atomic guard exists to stop.
 let raceLoser = false;
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -77,7 +78,7 @@ vi.mock("@/db/drizzle", () => {
     returning: async () => (raceLoser ? [] : [{ id: ORDER.id }]),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {
@@ -92,8 +93,8 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createSelfBookedReturn } = await import("@/actions/selfBookedReturn");
-  return createSelfBookedReturn(ORDER.id);
+  const { createSelfBookedReturn } = await import("@/lib/server/selfBookedReturn");
+  return createSelfBookedReturn(vid(ORDER.id));
 }
 
 beforeEach(() => {
@@ -151,7 +152,7 @@ describe("createSelfBookedReturn", () => {
     // Same rule as every other lane: the return still exists, so we swallow
     // and report 200 — but never silently. #311174 is why.
     created.length = 0;
-    const amphora = await import("@/actions/amphora");
+    const amphora = await import("@/lib/server/amphora");
     vi.spyOn(amphora, "createAmphoraReturn").mockRejectedValueOnce(
       new Error("amphora 503")
     );

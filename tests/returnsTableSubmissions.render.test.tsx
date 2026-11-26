@@ -9,9 +9,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const clicked: number[] = [];
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
 vi.mock("@/actions/refund", () => ({
-  validateReturn: async (product: any) => {
-    clicked.push(product.id);
+  settleRow: async (input: { rowId: number }) => {
+    clicked.push(input.rowId);
+    return { ok: true, value: { lines: [] } };
   },
 }));
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 
 // Self-booking is a SUBTRACTION from the fee we already compute, not a new
 // pricing path: resolveFee already splits the charge into the customer's parcel
@@ -60,8 +61,8 @@ vi.mock("@/lib/fulfillmentLines", () => ({
 vi.mock("@/db/queries", () => ({
   getOrderTotal: async () => ({ id: order.id, fulfillments: [] }),
 }));
-vi.mock("@/db/submissions", () => ({
-  proposeSubmission: async () => ({ ok: true, id: "sub-1" }),
+vi.mock("@/lib/server/submissionScope", () => ({
+  proposeSubmission: async (orderId: string) => ({ ok: true, submission: { id: "sub-1", orderId } }),
   attachStripeSession: async () => true,
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
@@ -85,8 +86,8 @@ vi.mock("@/lib/stripe", () => ({
 }));
 
 async function priceIt(method: "AMPHORA" | "SELF") {
-  const { createStripeUrl } = await import("@/actions/payments");
-  return createStripeUrl(order.id, order.email, false, method);
+  const { createStripeUrl } = await import("@/lib/server/payments");
+  return createStripeUrl(vid(order.id), false, method);
 }
 
 /** What Stripe was actually asked to charge, in cents. */
@@ -140,7 +141,7 @@ describe("SELF drops the return leg", () => {
 
     const result = await priceIt("SELF");
 
-    expect(result.data).toBeNull();
+    expect(result).toMatchObject({ ok: true, url: null });
     expect(sessions).toHaveLength(0);
   });
 

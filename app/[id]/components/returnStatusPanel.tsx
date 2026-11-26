@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { useT } from "@/lib/i18n/context";
-import { cancelReturnFunction } from "@/actions/cancelReturn";
+import { cancelReturn } from "@/actions/cancelReturn";
+import { sharedRefusalKey, useCallAction } from "@/lib/callAction";
 import type { CancelBlockedReason, CancelDecision } from "@/lib/cancelEligibility";
 
 /**
@@ -34,9 +36,9 @@ export function blockedMessageKey(
 }
 
 /** The four reasons `blockedMessageKey` knows how to explain. A failed cancel
- *  can also report `"carrier-cancel-failed"` or `"forbidden"`, neither of
- *  which is a `CancelBlockedReason` — those fall back to the generic
- *  `t.cancel.failed` copy instead of being run through this mapping. */
+ *  can also report `"carrier-cancel-failed"`, `"needs-support"` or a boundary
+ *  refusal, none of which is a `CancelBlockedReason` — those fall back to
+ *  their own copy instead of being run through this mapping. */
 const CANCEL_BLOCKED_REASONS: ReadonlyArray<CancelBlockedReason> = [
   "no-return",
   "already-settled",
@@ -56,55 +58,52 @@ type Props = {
 };
 
 type FailedKey = "blockedInTransit" | "blockedSettled" | "blockedUnreadable" | "failed";
+type FailedMessage = { cancel: FailedKey } | { action: "orderMismatch" | "notAdmin" | "invalidInput" | "failed" };
 
 export function ReturnStatusPanel({ decision, orderId, locator, carrier }: Props) {
   const t = useT();
   const [confirming, setConfirming] = useState(false);
   const [done, setDone] = useState(false);
-  const [failedKey, setFailedKey] = useState<FailedKey | null>(null);
+  const [failed, setFailed] = useState<FailedMessage | null>(null);
   const [isPending, startTransition] = useTransition();
+  const router = useRouter();
+  const callAction = useCallAction();
+  const setFailedKey = (key: FailedKey) => setFailed({ cancel: key });
 
   const cancel = () => {
     startTransition(async () => {
-      // `cancelReturnFunction` returns a value for every outcome it knows
-      // about, but it can still REJECT: a dropped connection mid-action, a
-      // 60s function timeout, a Next server-action framing error. Without this
-      // catch the rejection escaped the transition and neither `done` nor
-      // `failedKey` was ever set — the spinner stopped and the customer saw
-      // absolutely nothing after clicking a button about their money.
-      //
-      // The generic message is the only honest one here: a rejection tells us
-      // nothing about how far the chain got, so it must not imply either that
-      // the return survived or that it was cancelled. `t.cancel.failed` points
-      // them at support with their order number, which is the right next step
-      // whichever way it went.
-      try {
-        const result = await cancelReturnFunction(orderId);
-        if (result.ok) {
-          setDone(true);
-          setConfirming(false);
-          // No reload here: React 18 batches `setDone(true)` with the state
-          // update below it, so a synchronous reload would unload the document
-          // before the confirmation ever paints and the customer would see
-          // nothing. The customer explicitly asks to leave via the "start a new
-          // request" control instead.
-        } else {
-          // Eligibility can have changed between this page's render and this
-          // click (the parcel got scanned, an admin settled it) — when the
-          // failure reason is one we have specific copy for, show that instead
-          // of the generic "couldn't cancel" message.
-          setFailedKey(
-            isCancelBlockedReason(result.reason)
-              ? blockedMessageKey(result.reason) ?? "failed"
-              : "failed"
-          );
-          setConfirming(false);
-        }
-      } catch (error) {
-        console.error(`Cancel request failed for order ${orderId}:`, error);
+      // No answer (a dropped connection, a timeout): how far the chain got is
+      // unknown, so the page recomputes eligibility from the database and the
+      // generic message points the customer at support with their order
+      // number, the right next step whichever way it went.
+      const outcome = await callAction(cancelReturn, { expectedOrderId: orderId });
+      setConfirming(false);
+      if (outcome.kind === "unknown") {
+        console.error(`Cancel request failed for order ${orderId}:`, outcome.error);
+        router.refresh();
         setFailedKey("failed");
-        setConfirming(false);
+        return;
       }
+      const { result } = outcome;
+      if (result.ok) {
+        // No reload here: React 18 batches `setDone(true)` with the state
+        // update above it, so a synchronous reload would unload the document
+        // before the confirmation ever paints and the customer would see
+        // nothing. The customer explicitly asks to leave via the "start a new
+        // request" control instead.
+        setDone(true);
+        return;
+      }
+      if (result.reason === "no-session") return;
+      const shared = sharedRefusalKey(result.reason);
+      if (shared) return setFailed({ action: shared });
+      // Eligibility can have changed between this page's render and this
+      // click (the parcel got scanned, an admin settled it) — when the
+      // failure reason is one we have specific copy for, show that instead
+      // of the generic "couldn't cancel" message.
+      setFailedKey(
+        isCancelBlockedReason(result.reason) ? blockedMessageKey(result.reason) ?? "failed" : "failed"
+      );
     });
   };
 
@@ -138,7 +137,9 @@ export function ReturnStatusPanel({ decision, orderId, locator, carrier }: Props
           </button>
         </div>
       )}
-      {failedKey && !done && <p className="mt-3">{t.cancel[failedKey]}</p>}
+      {failed && !done && (
+        <p className="mt-3">{"cancel" in failed ? t.cancel[failed.cancel] : t.action[failed.action]}</p>
+      )}
       {blockedKey && !done && <p className="mt-3">{t.cancel[blockedKey]}</p>}
 
       {decision.cancellable && !done && !confirming && (

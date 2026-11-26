@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 
 // Order #311329 (Koen Krijnen, Netherlands), 2026-08-21. A paid exchange whose
 // Amphora booking reported 501 — the POST threw and the immediate read-back
@@ -23,7 +24,7 @@ let rows: any[] = [];
 const released: string[] = [];
 const updates: any[] = [];
 
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: async () => {},
 }));
 // The release itself goes through lib/settlement/holdRelease.ts (finding 9).
@@ -33,7 +34,7 @@ vi.mock("@/lib/settlement/holdRelease", () => ({
     return { released: true };
   },
 }));
-vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
@@ -42,7 +43,7 @@ vi.mock("next/cache", () => ({
   unstable_cache: (fn: unknown) => fn,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -55,11 +56,11 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 async function revert() {
   const { revertFinalOrder } = await import("@/lib/submissionConfirmation");
-  return revertFinalOrder("13238997909830");
+  return revertFinalOrder(vid("13238997909830"));
 }
 
 beforeEach(() => {

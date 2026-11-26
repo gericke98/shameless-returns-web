@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAmphoraReturns } from "@/actions/amphora";
+import { getAmphoraReturns } from "@/lib/server/amphora";
 import {
   getOrdersWithUnsettledReturns,
   getReturnStatusesByIds,
@@ -8,10 +8,12 @@ import {
 import { matchConflictAlert, matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { decideAutoApprove, type GateLine } from "@/lib/autoApproveGate";
 import { submissionForRow } from "@/lib/settlement/legacy";
+import { systemTarget } from "@/lib/server/identity";
 import { submissionOfRow } from "@/lib/settlement/ledger";
 import { settleSubmission } from "@/lib/settlement/settle";
-import { alertOps } from "@/actions/opsAlert";
-import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { alertOps } from "@/lib/server/opsAlert";
+import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Settle the returns that are already sitting in the warehouse.
@@ -38,14 +40,6 @@ export const dynamic = "force-dynamic";
  *  yet run is finished by /api/cron/settlement-recovery. */
 const BUDGET_MS = 40_000;
 
-/** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
- *  closed, never open — this route pays customers. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 /**
  * Read a non-negative integer from the environment.
  *
@@ -63,7 +57,7 @@ function intEnv(name: string, fallback: number): number {
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -194,7 +188,7 @@ export async function GET(req: Request) {
           );
           continue;
         }
-        const found = await submissionForRow(id);
+        const found = await submissionForRow(systemTarget(String(order.id), "auto-approve"), id);
         if (!found.ok) {
           held.push({ order: label, reason: `held:${found.held}` });
           await alertNotSettled(label, `held:${found.held}`);
@@ -209,7 +203,7 @@ export async function GET(req: Request) {
           break;
         }
         enteredSettle = true;
-        const report = await settleSubmission(submissionId, ids, {
+        const report = await settleSubmission(systemTarget("auto-approve"), submissionId, ids, {
           deadline: startedAt + BUDGET_MS,
         });
         for (const line of report.lines) {

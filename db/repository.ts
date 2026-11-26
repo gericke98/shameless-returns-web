@@ -1,10 +1,11 @@
-"use server";
-
-import db from "@/db/drizzle";
+import "server-only";
+// NOT "use server": every export of such a module is a public endpoint.
+import db, { writeDb } from "@/db/drizzle";
 import { orders, productsOrder } from "@/db/schema";
 import { OrderData, OrderLineItem } from "@/types";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { formatOrderId } from "@/utils/order-utils";
+import type { VerifiedOrderId } from "@/lib/server/identity";
 
 /**
  * Checks if an order exists in the database
@@ -23,16 +24,18 @@ export async function orderExists(orderId: string): Promise<boolean> {
 /**
  * Saves order details to the database
  *
+ * @param id The order's verified id (F1): the lookup just matched it
  * @param order Order data to save
  * @param exchangeOf Id of the original order this one replaces, or null when
  *   this is an ordinary order. See lib/replacementOrigin.ts.
  */
 export async function saveOrderDetails(
+  id: VerifiedOrderId,
   order: OrderData,
   exchangeOf: string | null = null
 ): Promise<void> {
-  await db.insert(orders).values({
-    id: formatOrderId(order.id),
+  await writeDb(id).insert(orders).values({
+    id,
     orderNumber: order.name,
     subtotal: Math.round(Number(order.subtotal_price) * 100) || 0,
     email: order.contact_email,
@@ -60,13 +63,13 @@ export async function saveOrderDetails(
  */
 export async function saveOrderItem(
   item: OrderLineItem,
-  orderId: string,
+  orderId: VerifiedOrderId,
   wasChanged: boolean,
   priceWithDiscount: number
 ): Promise<void> {
-  await db.insert(productsOrder).values({
+  await writeDb(orderId).insert(productsOrder).values({
     lineItemId: formatOrderId(item.id),
-    orderId: formatOrderId(orderId),
+    orderId,
     productId: formatOrderId(item.product_id),
     title: item.title,
     variant_title: item.variant_title || "",
@@ -104,27 +107,4 @@ export async function getOrderProductsById(orderId: string) {
   return db.query.productsOrder.findMany({
     where: eq(productsOrder.orderId, orderId),
   });
-}
-
-/**
- * Updates an order product
- *
- * @param variantId Variant ID of the product to update
- * @param orderId Order ID of the product to update
- * @param updates Updates to apply to the product
- */
-export async function updateOrderProduct(
-  variantId: string,
-  orderId: string,
-  updates: Partial<typeof productsOrder.$inferInsert>
-) {
-  return db
-    .update(productsOrder)
-    .set(updates)
-    .where(
-      and(
-        eq(productsOrder.variant_id, variantId),
-        eq(productsOrder.orderId, orderId)
-      )
-    );
 }

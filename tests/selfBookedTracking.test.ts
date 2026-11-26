@@ -27,7 +27,7 @@ const approved: any[] = [];
 // When set, Amphora refuses the approve with this axios-shaped error.
 let approveError: any = null;
 const alerts: { subject: string; body: string }[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -38,7 +38,31 @@ let access = true;
 // read and our write — the write-once race the atomic guard exists to stop.
 let raceLoser = false;
 
-vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => access }));
+vi.mock("@/lib/orderAccess", () => ({ currentOrderId: async () => (access ? order.id : null) }));
+vi.mock("@/lib/requireAdmin", () => ({ adminEmail: async () => null }));
+vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlert: async () => true }));
+vi.mock("@/lib/server/orderScope", () => ({ orderScope: (id: string) => ({ id, read: async () => order }) }));
+// The identified self-booked submission and the one-transaction claim (F1 §4).
+let activeSubmission = true;
+vi.mock("@/lib/server/submissionScope", () => ({
+  activeSelfSubmission: async (orderId: string) =>
+    activeSubmission && order.returnMethod === "SELF" ? { id: "sub-1", orderId } : null,
+  claimTracking: async (_sub: unknown, write: any) => {
+    const values = {
+      locator: write.locator,
+      carrier: write.carrier,
+      carrierUrl: write.carrierUrl,
+      trackingSubmittedAt: new Date(),
+      trackingVerifiedAt: write.verifiedBy ? new Date() : null,
+      trackingVerifiedBy: write.verifiedBy,
+      trackingSubmissionId: crypto.randomUUID(),
+    };
+    written.push(values);
+    if (raceLoser || order.locator) return false;
+    Object.assign(order, values);
+    return true;
+  },
+}));
 
 // What the carrier says about the number (lib/carrierLookup is the network).
 let verdict: "verified" | "unknown" | "unreadable" = "verified";
@@ -55,7 +79,7 @@ vi.mock("@/db/queries", () => ({
   getOrderById: async () => order,
 }));
 
-vi.mock("@/actions/amphora", async (importOriginal) => {
+vi.mock("@/lib/server/amphora", async (importOriginal) => {
   const actual = await importOriginal<any>();
   return {
     ...actual,
@@ -67,30 +91,14 @@ vi.mock("@/actions/amphora", async (importOriginal) => {
   };
 });
 
-vi.mock("@/db/drizzle", () => {
-  const chain: any = {
-    update: () => chain,
-    set: (values: Record<string, any>) => {
-      written.push(values);
-      chain._pending = values;
-      return chain;
-    },
-    where: () => chain,
-    // The real code awaits `.returning(...)`, not `.where(...)`, so the
-    // conditional UPDATE's outcome — did our write actually land, or did a
-    // competitor already claim the row — has to be decided here.
-    returning: async () => {
-      if (raceLoser) return [];
-      Object.assign(order, chain._pending);
-      return [{ id: order.id }];
-    },
-  };
-  return { default: chain };
-});
-
 async function submit(carrier = "DHL", number = "JD0123456789", url?: unknown) {
-  const { submitReturnTracking } = await import("@/actions/selfBookedTracking");
-  return submitReturnTracking(order.id, carrier, number, url);
+  const { submitTracking } = await import("@/actions/tracking");
+  return submitTracking({
+    expectedOrderId: order.id,
+    carrierCode: carrier,
+    trackingNumber: number,
+    ...(url === undefined ? {} : { trackingUrl: url as string }),
+  });
 }
 
 beforeEach(() => {
@@ -98,6 +106,7 @@ beforeEach(() => {
   written.length = 0;
   access = true;
   raceLoser = false;
+  activeSubmission = true;
   approveError = null;
   alerts.length = 0;
   verdict = "verified";
@@ -109,7 +118,7 @@ beforeEach(() => {
 
 describe("submitReturnTracking", () => {
   it("stores the carrier and tracking number", async () => {
-    await expect(submit()).resolves.toEqual({ ok: true, pending: true });
+    await expect(submit()).resolves.toEqual({ ok: true, value: { pending: true } });
 
     expect(order.locator).toBe("JD0123456789");
     expect(order.carrier).toBe("DHL");
@@ -129,7 +138,7 @@ describe("submitReturnTracking", () => {
   });
 
   it("approves Amphora with a number the carrier verified", async () => {
-    await expect(submit("CORREOS", "PQ0B7K0000043680128110B")).resolves.toEqual({ ok: true });
+    await expect(submit("CORREOS", "PQ0B7K0000043680128110B")).resolves.toEqual({ ok: true, value: { pending: false } });
 
     expect(lookedUp).toEqual([{ verifier: "correos", number: "PQ0B7K0000043680128110B" }]);
     expect(approved).toHaveLength(1);
@@ -179,7 +188,7 @@ describe("submitReturnTracking", () => {
 
     const result = await submit();
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, reason: "no-session" });
     expect(written).toHaveLength(0);
   });
 
@@ -205,15 +214,16 @@ describe("submitReturnTracking", () => {
     // Called directly, not through `submit`: that helper has a default
     // argument, so passing `undefined` through it would silently substitute a
     // valid tracking number and the case would pass for the wrong reason.
-    const { submitReturnTracking } = await import("@/actions/selfBookedTracking");
+    // A non-string never reaches the handler (F1): the schema refuses it.
+    const { submitTracking } = await import("@/actions/tracking");
     for (const junk of [{ toString: () => "1Z999" }, ["1Z999"], 1234, null, undefined]) {
-      const result = await submitReturnTracking(
-        order.id,
-        "DHL",
-        junk as unknown as string
-      );
+      const result = await submitTracking({
+        expectedOrderId: order.id,
+        carrierCode: "DHL",
+        trackingNumber: junk as unknown as string,
+      });
 
-      expect(result).toEqual({ ok: false, reason: "empty-tracking" });
+      expect(result).toEqual({ ok: false, reason: "invalid-input" });
     }
     expect(written).toHaveLength(0);
     expect(approved).toHaveLength(0);
@@ -235,7 +245,7 @@ describe("submitReturnTracking", () => {
     // certificate numbers are 23 characters.
     const result = await submit("CORREOS", "PQAZXT9800004100128221Y");
 
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, value: { pending: false } });
     expect(order.locator).toBe("PQAZXT9800004100128221Y");
   });
 
@@ -270,7 +280,6 @@ describe("submitReturnTracking — a carrier whose link the customer gives", () 
     ["a script", "javascript:alert(1)"],
     ["a data URL", "data:text/html,hi"],
     ["far too long", `https://example.com/${"a".repeat(600)}`],
-    ["not a string", { href: "https://example.com" }],
   ])("refuses 'Other' with %s, writing nothing", async (_label, url) => {
     await expect(submit("OTHER", "7280/13972666", url)).resolves.toEqual({ ok: false, reason: "invalid-url" });
     expect(written).toHaveLength(0);
@@ -278,7 +287,7 @@ describe("submitReturnTracking — a carrier whose link the customer gives", () 
   });
 
   it("stores the customer's link for 'Other' and gives it to ops", async () => {
-    await expect(submit("OTHER", "7280/13972666", `  ${LINK}  `)).resolves.toEqual({ ok: true, pending: true });
+    await expect(submit("OTHER", "7280/13972666", `  ${LINK}  `)).resolves.toEqual({ ok: true, value: { pending: true } });
     expect(order.carrierUrl).toBe(LINK);
     expect(alerts[0].body).toContain(LINK);
   });
@@ -286,7 +295,7 @@ describe("submitReturnTracking — a carrier whose link the customer gives", () 
   // Amphora's carrier_url is a plain string: any http(s) link a browser can
   // open is the carrier's to choose, including an IP host (Codex review).
   it("accepts any http(s) link, whatever its host looks like", async () => {
-    await expect(submit("OTHER", "7280/13972666", "http://10.0.0.1/track?id=7280")).resolves.toEqual({ ok: true, pending: true });
+    await expect(submit("OTHER", "7280/13972666", "http://10.0.0.1/track?id=7280")).resolves.toEqual({ ok: true, value: { pending: true } });
     expect(order.carrierUrl).toBe("http://10.0.0.1/track?id=7280");
   });
 
@@ -302,7 +311,7 @@ describe("submitReturnTracking — when Amphora refuses", () => {
       response: { status: 422, data: { message: "carrier_url is required" } },
     });
 
-    await expect(submit("CORREOS", "PQ0B7K0000043680128110B")).resolves.toEqual({ ok: true });
+    await expect(submit("CORREOS", "PQ0B7K0000043680128110B")).resolves.toEqual({ ok: true, value: { pending: false } });
 
     expect(alerts).toHaveLength(1);
     expect(alerts[0].body).not.toContain("[object Object]");
@@ -327,7 +336,7 @@ describe("submitReturnTracking — numbers that cannot be pinned", () => {
   });
 
   it("pins a NACEX number NACEX verified, with its NACEX tracking page", async () => {
-    await expect(submit("NACEX", "7280/13972666")).resolves.toEqual({ ok: true });
+    await expect(submit("NACEX", "7280/13972666")).resolves.toEqual({ ok: true, value: { pending: false } });
     expect(approved[0].data).toEqual({
       carrier: "NACEX",
       carrier_number: "7280/13972666",
@@ -358,7 +367,7 @@ describe("submitReturnTracking — verified before it is pinned", () => {
   ])("saves %s for ops, unverified, and does NOT approve", async (_l, carrier, number, why) => {
     verdict = "unreadable";
 
-    await expect(submit(carrier, number)).resolves.toEqual({ ok: true, pending: true });
+    await expect(submit(carrier, number)).resolves.toEqual({ ok: true, value: { pending: true } });
     expect(order.locator).toBe(number);
     expect(order.trackingVerifiedAt).toBeNull();
     expect(order.trackingVerifiedBy).toBeNull();
@@ -377,5 +386,26 @@ describe("submitReturnTracking — verified before it is pinned", () => {
   it("does not ask the carrier about a number already refused for its shape", async () => {
     await submit("CORREOS", "#311174");
     expect(lookedUp).toHaveLength(0);
+  });
+});
+
+describe("submitTracking needs an identified self-booked submission (F1 §4)", () => {
+  it("refuses with no-active-self-return when the order has none (none, unconfirmed, or held by cancellation)", async () => {
+    // `activeSelfSubmission` is the identity: its SQL (accepted, unheld, all
+    // lines confirmed, booked) is exercised against Postgres in
+    // tests/trackingClaimDb.test.ts; here, its absence must write nothing.
+    activeSubmission = false;
+
+    await expect(submit()).resolves.toEqual({ ok: false, reason: "no-active-self-return" });
+    expect(written).toHaveLength(0);
+    expect(approved).toHaveLength(0);
+  });
+
+  it("refuses a non-string URL at the schema, writing nothing", async () => {
+    await expect(submit("OTHER", "7280/13972666", { href: "https://example.com" })).resolves.toEqual({
+      ok: false,
+      reason: "invalid-input",
+    });
+    expect(written).toHaveLength(0);
   });
 });

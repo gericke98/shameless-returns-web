@@ -8,8 +8,9 @@ import Logo from "@/public/LOGO_2025.svg";
 import { FormInput } from "@/components/formInput";
 import { Button } from "@/components/button";
 import { useToast } from "@/hooks/use-toast";
-import { getOrder } from "@/actions/order";
-import { Warning } from "@/types";
+import { lookupOrder } from "@/actions/order";
+import type { LookupState } from "@/lib/server/handlers/lookup";
+import { lookupMessage } from "@/lib/i18n";
 import { PRIVACY_LINKS } from "@/placeholder";
 import { useT } from "@/lib/i18n/context";
 
@@ -20,9 +21,9 @@ export const InputComponent = () => {
   const { toast } = useToast();
   const t = useT();
 
-  // Initialize with an empty warning as the initial state
-  const initialState: Warning = { message: "" };
-  const [state, formAction] = useFormState(getOrder, initialState);
+  // The server answers with an i18n key, rendered here in the customer's language.
+  const initialState: LookupState = { message: null };
+  const [state, formAction] = useFormState(lookupOrder, initialState);
 
   // Handle server action response
   useEffect(() => {
@@ -31,7 +32,7 @@ export const InputComponent = () => {
       toast({
         variant: "destructive",
         title: t.lookup.errorTitle,
-        description: state.message,
+        description: lookupMessage(t, state.message),
       });
     }
   }, [toast, state, t]);

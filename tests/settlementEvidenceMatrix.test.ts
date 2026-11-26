@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sys } from "./support/verified";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { settlementDatabase } from "./support/settlementDb";
 import { planFor, seedSubmission } from "./support/settlementSeed";
@@ -15,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 
 /** Operation name → what Shopify answers. Unlisted = no answer. */
 const answers: Record<string, (variables: any) => any> = {};
@@ -32,7 +33,7 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/actions/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
+vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
 
 const ledger = () => import("@/lib/settlement/ledger");
 const runner = () => import("@/lib/settlement/run");
@@ -44,7 +45,7 @@ async function admitted(seedOpts: Parameters<typeof seedSubmission>[1] = {}, pla
   const seeded = await seedSubmission(env.pg, seedOpts);
   const plan = planFor(seeded, planOver);
   const { insertAdmission } = await ledger();
-  const result = await insertAdmission({
+  const result = await insertAdmission(sys, {
     submissionId: seeded.id,
     seenSeq: 0,
     ops: plan.ops,
@@ -90,7 +91,7 @@ const kinds = {
   },
 };
 
-const run = async (id: string) => (await import("@/lib/settlement/run")).run(id);
+const run = async (id: string) => (await import("@/lib/settlement/run")).run(sys, id);
 /** Send with no answer, then age the dispatch past the lease. */
 async function unanswered(op: any) {
   expect(await run(op.id)).toBe("in-flight");
@@ -100,7 +101,7 @@ async function unanswered(op: any) {
 async function recover(op: any) {
   const { recoverDispatched } = await import("@/lib/settlement/run");
   const { getOperation } = await ledger();
-  return recoverDispatched((await getOperation(op.id))!, randomUUID());
+  return recoverDispatched(sys, (await getOperation(op.id))!, randomUUID());
 }
 const sends = (name: string) => sent.filter((s) => s.name === name);
 const USER_ERROR = { userErrors: [{ field: ["x"], message: "no", code: "INVALID" }] };

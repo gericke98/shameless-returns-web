@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAmphoraReturns } from "@/actions/amphora";
-import { applyReturnStatus } from "@/actions/amphoraStatusSync";
+import { getAmphoraReturns } from "@/lib/server/amphora";
+import { applyReturnStatus } from "@/lib/server/amphoraStatusSync";
 import { getOrderByIdFresh } from "@/db/queries";
 import {
   matchConflictAlert,
@@ -8,10 +8,12 @@ import {
   unknownOrderAlert,
 } from "@/lib/amphoraReturnMatch";
 import { isInternationalOrder } from "@/lib/countries";
-import { sweepSelfReturns } from "@/actions/selfReturnSweep";
-import { alertOps } from "@/actions/opsAlert";
-import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { sweepSelfReturns } from "@/lib/server/selfReturnSweep";
+import { alertOps } from "@/lib/server/opsAlert";
+import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
 import { abandonExpiredSubmissions } from "@/db/submissions";
+import { verifyCronRequest } from "@/lib/server/cron";
+import { systemTarget } from "@/lib/server/identity";
 
 /**
  * Poll Amphora for return-status changes and act on them.
@@ -30,14 +32,6 @@ import { abandonExpiredSubmissions } from "@/db/submissions";
 export const maxDuration = 60;
 // Always hit Amphora; a cached response would defeat the point.
 export const dynamic = "force-dynamic";
-
-/** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
- *  closed, never open, since this route writes and sends customer email. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
 
 /**
  * Did this order ever produce a return through OUR portal?
@@ -86,9 +80,11 @@ async function conflictsOnOurOrders(
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // The job's capability, minted at its entry after the cron secret (F1 spec §11).
+  const job = systemTarget("amphora-sync");
 
   // Bookkeeping, before the Amphora call so an Amphora outage does not skip
   // it: a submission whose Stripe session has expired (24 h) can no longer be
@@ -96,7 +92,7 @@ export async function GET(req: Request) {
   // it either way — so a failure is logged, not alerted.
   let abandonedSubmissions = 0;
   try {
-    abandonedSubmissions = (await abandonExpiredSubmissions()).length;
+    abandonedSubmissions = (await abandonExpiredSubmissions(job)).length;
   } catch (error: any) {
     console.error("[amphora-sync] could not expire submissions:", error?.message || error);
   }
@@ -210,7 +206,7 @@ export async function GET(req: Request) {
       scanned += 1;
       acted.push({ ...match, returnMethod: (order as any).returnMethod });
 
-      const outcome = await applyReturnStatus(order as any, {
+      const outcome = await applyReturnStatus(systemTarget(String(order.id), "amphora-sync"), order as any, {
         id: ret.id,
         name: ret.name,
         internal_status: ret.internal_status,
@@ -305,7 +301,7 @@ export async function GET(req: Request) {
 
   let selfReturns = { reminded: 0, alerted: 0 };
   try {
-    selfReturns = await sweepSelfReturns();
+    selfReturns = await sweepSelfReturns(job);
   } catch (error: any) {
     // The Amphora poll above already did its work; a sweep failure must not
     // discard those results.

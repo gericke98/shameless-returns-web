@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { sweepReceiptShortfalls } from "@/actions/receiptShortfallSweep";
-import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
+import { sweepReceiptShortfalls } from "@/lib/server/receiptShortfallSweep";
+import { enqueueOpsAlerts } from "@/lib/server/opsAlertOutbox";
+import { verifyCronRequest } from "@/lib/server/cron";
+import { systemTarget } from "@/lib/server/identity";
 
 /**
  * Detect short receipts and queue their ops alerts.
@@ -12,20 +14,13 @@ import { enqueueOpsAlerts } from "@/actions/opsAlertOutbox";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-/** Same fail-closed rule as the other crons: unset secret = closed. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
-    return NextResponse.json(await sweepReceiptShortfalls());
+    return NextResponse.json(await sweepReceiptShortfalls(systemTarget("receipt-shortfalls")));
   } catch (error: any) {
     // An upstream read failed (Amphora, Shopify, the database): nothing was
     // decided, nothing opened or resolved. The next run starts over.

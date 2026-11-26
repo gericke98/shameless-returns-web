@@ -7,7 +7,7 @@ const proposeSubmission = vi.hoisted(() => vi.fn());
 
 vi.mock("@/db/fees", () => ({ getFeeTable: vi.fn(async () => ({})) }));
 vi.mock("@/db/queries", () => ({ getOrderTotal: vi.fn(async () => ({})) }));
-vi.mock("@/db/submissions", () => ({ proposeSubmission }));
+vi.mock("@/lib/server/submissionScope", () => ({ proposeSubmission }));
 vi.mock("@/lib/feeLegs", () => ({ feeLegsForOrder: vi.fn(() => ({})) }));
 vi.mock("@/lib/fees", () => ({
   resolveFee: vi.fn(() => ({ feeCents: 500, returnLegCents: 500, outboundLegCents: 0 })),
@@ -25,7 +25,14 @@ vi.mock("@/lib/loadBasket", () => ({
   })),
 }));
 
-import { proposeCurrentSelection } from "@/lib/submissionProposal";
+import { proposeCurrentSelection as propose } from "@/lib/submissionProposal";
+import { vid, vsub } from "./support/verified";
+
+/** The proposal, or null for a refusal (F1: refusals are values, not throws). */
+const proposeCurrentSelection = async (...args: [string, boolean | null, "CORREOS"]) => {
+  const result = await propose(vid(args[0]), args[1], args[2]);
+  return result.ok ? result.proposal : null;
+};
 
 const line = (id: number, returnedCents: number, replacementCents = 0) => ({
   id,
@@ -39,12 +46,12 @@ const line = (id: number, returnedCents: number, replacementCents = 0) => ({
 describe("proposeCurrentSelection tender", () => {
   beforeEach(() => {
     proposeSubmission.mockReset();
-    proposeSubmission.mockResolvedValue({ ok: true, id: "sub-1" });
+    proposeSubmission.mockResolvedValue({ ok: true, submission: vsub("o1", "sub-1") });
   });
 
   it("refuses to save terms when money comes back and no payout was chosen", async () => {
     basketLines.value = [line(1, 7800), line(2, 7800)];
-    await expect(proposeCurrentSelection("o1", null, "CORREOS")).rejects.toThrow(/no payout was chosen/);
+    expect(await propose(vid("o1"), null, "CORREOS")).toEqual({ ok: false, reason: "payout-required" });
     expect(proposeSubmission).not.toHaveBeenCalled();
   });
 
@@ -67,5 +74,16 @@ describe("proposeCurrentSelection tender", () => {
     const p = await proposeCurrentSelection("o1", null, "CORREOS");
     expect(p?.agreement.owedCents).toBe(0);
     expect(proposeSubmission).toHaveBeenCalledOnce();
+  });
+
+  it("answers submission-in-progress when another proposal won the race", async () => {
+    basketLines.value = [line(1, 7800)];
+    proposeSubmission.mockResolvedValue({ ok: false, conflict: true });
+    expect(await propose(vid("o1"), false, "CORREOS")).toEqual({ ok: false, reason: "submission-in-progress" });
+  });
+
+  it("answers nothing-selected for an empty basket", async () => {
+    basketLines.value = [];
+    expect(await propose(vid("o1"), false, "CORREOS")).toEqual({ ok: false, reason: "nothing-selected" });
   });
 });

@@ -21,7 +21,8 @@
 //
 // Stripe and Shopify are only READ. NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import { read } from "./reads";
 import { judgeLegacyExchangeOrder } from "./reconcile";
@@ -60,6 +61,7 @@ export type FundingOutcome =
   | { ok: false; reason: string };
 
 export async function fundReplacementLine(
+  cap: WriteCapability,
   d: FundingDecisionInput,
   readSession: (id: string) => Promise<StripeSessionRead>,
   options: { write: boolean }
@@ -70,7 +72,7 @@ export async function fundReplacementLine(
 
   // The done reconciled exchange record that identifies order and line.
   const ops = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT o.id, o.submission_id, o.request, s.order_id AS source_order_id
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'
@@ -84,7 +86,7 @@ export async function fundReplacementLine(
   const op = ops[0];
   const sourceOrderId = String(op.source_order_id);
   const [funded] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT 1 FROM replacement_lines
        WHERE exchange_operation_id = ${op.id} AND source_productsorder_id = ${d.productsorderId}`)
   );
@@ -103,7 +105,7 @@ export async function fundReplacementLine(
   const total = Number(s.session.amount_total);
   if (!Number.isInteger(total) || total <= 0) return { ok: false, reason: `session ${d.stripeSessionId} has no amount_total` };
   const [used] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT COALESCE(sum(funded_cents), 0)::int AS used FROM replacement_funding_decisions
        WHERE stripe_session_id = ${d.stripeSessionId}`)
   );
@@ -126,7 +128,7 @@ export async function fundReplacementLine(
   if (!options.write) return { ok: true, written: false, summary: `would ${summary}` };
 
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH budget AS (
         SELECT COALESCE(sum(funded_cents), 0) AS used FROM replacement_funding_decisions
          WHERE stripe_session_id = ${d.stripeSessionId}

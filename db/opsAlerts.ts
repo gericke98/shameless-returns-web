@@ -2,9 +2,12 @@
 // actions/opsAlertOutbox.ts; this file only inserts, claims and marks rows.
 //
 // NOT a "use server" module, for the same reason as db/lookupAttempts.ts.
-import { eq, sql } from "drizzle-orm";
-import db from "./drizzle";
+import { and, asc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import db, { opsAlertsWriter as alerts } from "./drizzle";
 import { opsAlerts } from "./schema";
+
+// ops_alerts holds no customer data: it is written through its own
+// table-bound writer, which can reach no other table (F1 spec §11).
 
 export type PendingOpsAlert = {
   id: string;
@@ -23,8 +26,8 @@ export async function insertOpsAlert(alert: {
   subject: string;
   body: string;
 }): Promise<boolean> {
-  const rows = await db
-    .insert(opsAlerts)
+  const rows = await alerts
+    .insert()
     .values(alert)
     .onConflictDoNothing({ target: opsAlerts.dedupeKey })
     .returning({ id: opsAlerts.id });
@@ -41,40 +44,50 @@ export async function insertOpsAlert(alert: {
  * keeps failing cannot starve the rest.
  */
 export async function claimPendingOpsAlerts(limit: number): Promise<PendingOpsAlert[]> {
-  const result: any = await db.execute(sql`
-    UPDATE ops_alerts
-       SET last_attempt_at = now()
-     WHERE id IN (
-       SELECT id FROM ops_alerts
-        WHERE accepted_at IS NULL
-          AND (last_attempt_at IS NULL
-               OR last_attempt_at < now() - make_interval(secs => ${OPS_ALERT_LEASE_SECONDS}))
-        ORDER BY last_attempt_at ASC NULLS FIRST, created_at ASC
-        LIMIT ${limit}
-        FOR UPDATE SKIP LOCKED
-     )
-    RETURNING id, dedupe_key, subject, body
-  `);
-  const rows: any[] = result?.rows ?? result ?? [];
+  // UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING …: the
+  // subquery is only built here, and runs inside the writer's one UPDATE.
+  const claimable = db
+    .select({ id: opsAlerts.id })
+    .from(opsAlerts)
+    .where(
+      and(
+        isNull(opsAlerts.acceptedAt),
+        or(
+          isNull(opsAlerts.lastAttemptAt),
+          lt(opsAlerts.lastAttemptAt, sql`now() - make_interval(secs => ${OPS_ALERT_LEASE_SECONDS})`)
+        )
+      )
+    )
+    .orderBy(sql`${opsAlerts.lastAttemptAt} ASC NULLS FIRST`, asc(opsAlerts.createdAt))
+    // A placeholder, bound at execute: drizzle 0.30 drops LIMIT for a falsy
+    // number, and a limit of 0 must claim nothing, not everything.
+    .limit(sql.placeholder("limit"))
+    .for("update", { skipLocked: true });
+  const rows = await alerts
+    .update()
+    .set({ lastAttemptAt: sql`now()` })
+    .where(inArray(opsAlerts.id, claimable))
+    .returning({ id: opsAlerts.id, dedupeKey: opsAlerts.dedupeKey, subject: opsAlerts.subject, body: opsAlerts.body })
+    .execute({ limit });
   return rows.map((r) => ({
     id: String(r.id),
-    dedupeKey: String(r.dedupe_key),
+    dedupeKey: String(r.dedupeKey),
     subject: String(r.subject),
     body: String(r.body),
   }));
 }
 
 export async function markOpsAlertAccepted(id: string): Promise<void> {
-  await db
-    .update(opsAlerts)
+  await alerts
+    .update()
     .set({ acceptedAt: sql`now()`, lastError: null })
     .where(eq(opsAlerts.id, id));
 }
 
 /** The lease stamp stays: the row is retried once it expires. */
 export async function markOpsAlertFailed(id: string, error: string): Promise<void> {
-  await db
-    .update(opsAlerts)
+  await alerts
+    .update()
     .set({ lastError: error.slice(0, 1000) })
     .where(eq(opsAlerts.id, id));
 }

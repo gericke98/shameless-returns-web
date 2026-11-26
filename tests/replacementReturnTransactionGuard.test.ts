@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { acceptedSubmission, refundableFrom } from "./submissionFixture";
 
 // `refundSourceFor` runs AFTER `createReturn` has already succeeded against
@@ -65,7 +66,7 @@ const state: { rows: Row[]; writes: Array<Record<string, unknown>> } = {
   writes: [],
 };
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, unknown>) => {
@@ -78,7 +79,7 @@ vi.mock("@/db/drizzle", () => {
     },
   };
   return { default: chain };
-});
+})()));
 
 const createReturn = vi.fn(async () => ({
   success: true as const,
@@ -116,7 +117,7 @@ vi.mock("@/db/queries", () => ({
 
 vi.mock("@/db/fees", () => ({ getFeeTable: async () => [] }));
 vi.mock("@/lib/loadBasket", () => ({ loadBasket: async () => null }));
-vi.mock("@/actions/exchangeReservation", () => ({
+vi.mock("@/lib/server/exchangeReservation", () => ({
   reserveExchangeStock: async () => {},
 }));
 vi.mock("@/lib/settlement/holdRelease", () => ({
@@ -127,7 +128,7 @@ vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // The failure this test pins: walking `exchange_of` to the root (or reading
 // the root's transactions) throws instead of resolving.
-vi.mock("@/actions/replacementOrder", () => ({
+vi.mock("@/lib/server/replacementOrder", () => ({
   refundSourceFor: async () => {
     throw new Error("exchange_of cycle at order 13192219000000");
   },
@@ -139,14 +140,14 @@ vi.mock("@/lib/fulfillmentLines", () => ({
   refundableQuantities: (ids: string[]) => refundableFrom(FULFILLMENT_LINE_ITEMS)(ids),
 }));
 
-vi.mock("@/db/submissions", () => ({
-  getSubmission: async () => acceptedSubmission("13192219558214", state.rows, { fulfillment: FULFILLMENT_LINE_ITEMS }),
-  recordConfirmation: (input: any) => recorded(input),
+vi.mock("@/lib/server/submissionScope", () => ({
+  loadSubmission: async () => acceptedSubmission("13192219558214", state.rows, { fulfillment: FULFILLMENT_LINE_ITEMS }),
+  recordConfirmation: (sub: any, input: any) => recorded({ submissionId: sub.id, ...input }),
 }));
 
 async function confirm() {
   const mod = await import("@/lib/submissionConfirmation");
-  return mod.confirmSubmission("sub-1");
+  return mod.confirmSubmission(vsub("13192219558214", "sub-1"));
 }
 
 beforeEach(() => {

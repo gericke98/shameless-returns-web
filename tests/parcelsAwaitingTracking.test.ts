@@ -15,7 +15,7 @@ vi.mock("react", async (importOriginal) => {
 let captured: any = null;
 let rows: any[] = [];
 
-vi.mock("@/db/drizzle", () => ({
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({
   default: {
     query: {
       orders: {
@@ -26,7 +26,7 @@ vi.mock("@/db/drizzle", () => ({
       },
     },
   },
-}));
+}))()));
 
 /** Render a drizzle predicate back to SQL-ish text, so the test asserts on the
  *  condition that reaches Postgres rather than on how it was spelled. */

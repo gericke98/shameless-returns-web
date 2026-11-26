@@ -1,0 +1,101 @@
+# FX: an exchange's replacement is backed by Amphora's stock (HEAVY) — plan rev 1, 2026-11-26
+
+Base: `feat/f1-server-boundary` @ 3590c79 (FX ships after F1). Parent: foundation plan §FX (research answer recorded there).
+Santi's decision (2026-11-26): **Amphora's stock is the truth**; no Shopify-side hold.
+
+Owner's rules, verbatim:
+1. Fix the root cause. Never a heuristic, tie-breaker, special case, flag, retry, regex over words, "until phase N" stopgap, or workaround for an existing weakness. If the root fix is bigger than the ask, say so and do the root fix (or stop and ask) — never ship the patch silently.
+2. Before designing anything, read the official skills and docs for what already exists, and reuse it instead of rebuilding. State in the design which official primitive you use, or why none fits.
+4. Identity, state and ownership are explicit data with stable ids — never derived from content, position, object identity, names, lineage or quote text.
+
+## Root weakness
+We promise a replacement against a number that is not the warehouse's (a Shopify draft hold Amphora never sees), and at
+settlement we tell Shopify to ignore stock (`DECREMENT_IGNORING_POLICY` when a hold existed,
+`lib/settlement/exchangeOrderInput.ts:159`). Nothing on the server ever reads stock. Amphora allocates only when it starts
+preparing an order (tested: NEW orders and drafts count nowhere), so no Shopify object can reserve there.
+
+## Foundation
+1. **One stock reader, Amphora's own number.** `lib/server/stock.ts`: `readAvailable(skus) → Map<sku, number> | unreadable`
+   from `GET {AMPHORA_COMPANY_API_URL}/inventory/Shameless` (Company API v1.15.0 `InventoryLevels.available_quantity`,
+   "stock available to place new orders"). Variant → SKU through one Shopify read (`ProductVariant.sku`). Unreadable is a
+   value, never 0 and never "enough": callers refuse/hold on it.
+2. **Accept: the server refuses a replacement Amphora cannot cover.** `saveLine` (CAMBIO) and `submitReturn` call the
+   reader; refusal `replacement-unavailable` (closed union, i18n) and `stock-unreadable`. The size picker keeps reading
+   `ProductVariant.inventoryQuantity` for display only; the server is the authority.
+3. **Settle: the replacement is created only against real stock.** Admission reads Amphora for the exchange lines'
+   SKUs. Enough → plan `exchange_order` with `DECREMENT_OBEYING_POLICY` always (Shopify `orderCreate`
+   `inventoryBehaviour`, documented; variants are `inventoryPolicy: DENY`, tested), so Shopify also refuses a mirror that
+   says 0. Not enough → the submission is **held with a recorded state**, not admitted (see 4). `holdExisted` and
+   `DECREMENT_IGNORING_POLICY` are deleted.
+4. **"Replacement unavailable" is explicit data.** New table `replacement_shortfalls(id uuid, submission_id, productsorder_id,
+   sku, needed, available_seen, detected_at, decision NULL|'other_variant'|'refund', decided_variant_id, decided_by,
+   decided_at)`, `UNIQUE(submission_id, productsorder_id) WHERE decision IS NULL`. Admission writes it once and
+   `alertOps` (outbox) once; the cron's held reason is `replacement-unavailable:<shortfall id>`. While an undecided row
+   exists, admission never plans goods/money/exchange ops for that submission (nothing half-settles).
+   A decision is recorded by `scripts/decide-shortfall.ts --shortfall <id> --variant <gid> | --refund --write`
+   (operator, `systemTarget` per F1), which re-reads stock for `--variant`. `other_variant` rewrites the line's agreed
+   replacement through the agreement path (new agreement revision, not an UPDATE of `new_variant_id` in place);
+   `refund` converts the line to the refund lane in the agreement. The next cron run settles from the new agreement.
+5. **Drop the draft holds.** Stop creating them (`reserveExchangeStock` call in `lib/submissionConfirmation.ts:313`
+   removed with its module). Existing 44 `exchange-reservation` drafts (29 live, 15 expired) are released once through the
+   existing `releaseHoldDraft` (`draftOrderDelete`), clearing `orders.exchange_reservation_id`, by a `--write` script with
+   before/after counts. The `release_hold` op kind stays readable for history; admission no longer plans it.
+   The 11 done `release_hold` ops and 251 done `exchange_order` ops are history; the 9 `unresolved` `exchange_order` ops
+   are legacy-reconciliation records (resolved_by `reconcile-legacy`, never dispatched) and out of scope.
+
+## Residual, stated
+No reservation: between accept and settlement a unit can sell; the customer then gets the explicit choice (4), never a
+stockless order. Between the settlement stock read and `orderCreate` (seconds) a race remains; Shopify's DENY policy
+catches it if the mirror has caught up, and otherwise Amphora's own stock exception (`reserved`, tested on #313142) is the
+warehouse's existing path. A real reservation needs Amphora (questions below).
+
+## Decisions (Santi, 2026-11-26)
+- D1 Refund after the size is gone: **same as a normal return: line total minus the return shipping fee.** The `refund`
+  decision converts the line to the refund lane, so the refund lane's existing fee rules compute it (no new formula).
+- D2 Two exchanges competing for the same units: **decide by time.** The earlier accepted submission
+  (`return_submissions.accepted_at`, explicit data) has priority. At accept: available-to-promise = Amphora available −
+  units of our open accepted exchanges for that SKU; short → `replacement-unavailable`. At settlement: a submission is
+  covered when Amphora available − units of open exchanges for that SKU accepted EARLIER than it ≥ its need. A later
+  submission settling first can never take an earlier one's unit.
+- D3 No self-service page. **Santi emails the customer and records the outcome by hand** with
+  `scripts/decide-shortfall.ts` (other variant or refund); settlement then executes it. Paying or creating the order
+  directly in Shopify instead is NOT supported: the ledger would pay again.
+
+## Questions for Amphora (sent by Santi)
+1. Does your Shopify connector import an order whose fulfillment order is on hold / unpaid, and does an imported NEW or
+   EXCEPTION_HOLD order ever count in `reserved`/`committed`? 2. Can `flags:["reserve_stock"]` be used for a B2C exchange
+   shipment, and how does it relate to the Shopify order? 3. Can your sync push physical stock (`on_hand`) instead of
+   `available`?
+
+## Verification
+- Unit: reader (unreadable ≠ 0), refusals, admission with enough/short/unreadable, decision script (stock re-read).
+- Revert-and-fail: put `DECREMENT_IGNORING_POLICY` back → a test that asserts every planned `exchange_order` obeys policy
+  fails; remove the admission stock read → a short-stock test admits and fails.
+- Neon branch E2E: a CAMBIO to a sold-out SKU is refused at save; an admitted submission whose SKU is 0 at Amphora is held
+  with a shortfall row + one alert and plans nothing; decide → next run settles.
+- After deploy: the 9 currently-unbacked units are each held as shortfalls when they reach the gate; no `orderCreate`
+  with IGNORING appears in the ledger again.
+- One Codex review of this plan, then one of the code.
+
+## Codex plan review round 1 (2026-11-26): CHANGES-REQUIRED, 9 blockers (full text: 2026-11-26-fx-codex-review-r1.md)
+Reviewed 69e8014, before D1–D3 were recorded. Substance:
+1. Inventory incomplete (lines.ts/orderScope stock predicate, replacementCatalogue, holdRelease callers, tests, historical
+   release_hold contracts). 2. Stock pool undefined: Amphora rows are per product_id × location_id; multi-line/qty demand.
+3. "Never a stockless order" is NOT achievable from our side: Amphora allocates nothing for a NEW order, so two
+   settlements (even sequential, minutes apart) can both read available=1. A guarantee needs Amphora allocation.
+4. Admission-only gate: goods/refund/exchange ops are independent (`after: null`); orderCreate rejection after goods are
+   processed strands the line; recovery re-runs frozen requests. Needs one delivery-resolution lifecycle.
+5. Converting to refund has no defined money obligation; no partial Stripe refund operation exists (cancellation helper
+   refunds the whole PaymentIntent).
+6. No agreement-revision model exists; scope keys are per submission, so a changed decision collides with frozen ops.
+7. Shortfall detection/decision/admission not serialized; `alertOps` is not the outbox.
+8. Releasing 44 drafts has no valid authority (releaseHoldDraft mints only for cancel/revert).
+9. Decisions + "until then" operator path.
+Status: open, to Santi (scope).
+
+## Scope decision after r1 (Santi, 2026-11-26): stop the cause now, choices in F4
+FX builds only permanent parts: drop the draft holds (proper migration authority); the server refuses a replacement
+Amphora cannot cover; the exchange order is created FIRST and goods are processed only after it exists, obeying stock;
+Amphora short at settlement → the whole submission is held (explicit record + outbox alert), nothing is planned.
+Held cases: Santi resolves by email + by hand. Customer choice (agreement revisions, conversion money, partial Stripe
+refund) → F4. Hard allocation → Amphora (Santi asks the 3 questions). Codex r1 #3 accepted as residual; #5 #6 #9 → F4.

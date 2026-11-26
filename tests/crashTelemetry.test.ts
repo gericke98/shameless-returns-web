@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 const queued: { dedupeKey: string; subject: string; body: string }[] = [];
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlert: async (alert: any) => {
     queued.push(alert);
     return true;
@@ -45,18 +45,19 @@ vi.mock("next/cache", async (importOriginal) => ({
 vi.mock("next/headers", () => ({
   cookies: () => ({ get: () => ({ name: "locale", value: "es" }) }),
 }));
-const stripe = { error: null as Error | null };
-vi.mock("@/actions/payments", () => ({
+const stripe = { error: null as Error | null, refusal: null as string | null };
+vi.mock("@/lib/server/payments", () => ({
   createStripeUrl: async () => {
+    if (stripe.refusal) return { ok: false, reason: stripe.refusal };
     throw stripe.error;
   },
 }));
-vi.mock("@/actions/opsAlert", () => ({ alertOps: async () => {} }));
+vi.mock("@/lib/server/opsAlert", () => ({ alertOps: async () => {} }));
 vi.mock("@/db/queries", () => ({ getOrderById: async () => ({ shippingCountry: "Spain" }) }));
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = { update: () => chain, set: () => chain, where: () => Promise.resolve() };
   return { default: chain };
-});
+})()));
 
 import { parseClientErrorReport } from "@/lib/clientErrorReport";
 
@@ -138,32 +139,34 @@ describe("POST /api/client-error", () => {
 
 describe("a submit refused before anything is booked", () => {
   it("a missing payout returns a typed refusal (no crash screen) and still alerts ops", async () => {
-    const { PayoutRequiredError } = await import("@/lib/payoutRequired");
-    stripe.error = new PayoutRequiredError("13577291399494");
-    const { returnFunction } = await import("@/actions/return");
+    stripe.refusal = "payout-required";
+    session.orderId = "13577291399494";
+    const { submitReturn } = await import("@/actions/return");
 
-    await expect(returnFunction("13577291399494", null, "c@example.com")).resolves.toEqual({
-      ok: false,
-      reason: "payout-required",
-    });
+    await expect(
+      submitReturn({ expectedOrderId: "13577291399494", payout: null, method: "CORREOS" })
+    ).resolves.toEqual({ ok: false, reason: "payout-required" });
 
     expect(queued).toHaveLength(1);
     expect(queued[0].subject).toContain("13577291399494");
-    expect(queued[0].body).toContain("no payout was chosen");
+    expect(queued[0].body).toContain("payout-required");
     expect(queued[0].body).toContain("Payout sent by the browser: none");
     // The refusal carries the server's selection back, so a tab with a stale
     // basket re-derives the payout step from what the server refused on.
     expect(revalidated).toContain("/");
+    stripe.refusal = null;
   });
 
-  it("any other refusal still fails for the customer, with the real error sent to ops", async () => {
+  it("an unexpected throw answers `failed`, with the real error sent to ops", async () => {
     stripe.error = new Error("Order 13577291399494: line item 1 has no fulfillment line item");
-    const { returnFunction } = await import("@/actions/return");
+    session.orderId = "13577291399494";
+    const { submitReturn } = await import("@/actions/return");
 
-    await expect(returnFunction("13577291399494", false, "c@example.com")).rejects.toThrow(
-      /no fulfillment line item/
-    );
+    await expect(
+      submitReturn({ expectedOrderId: "13577291399494", payout: "refund", method: "CORREOS" })
+    ).resolves.toEqual({ ok: false, reason: "failed" });
     expect(queued).toHaveLength(1);
+    expect(queued[0].subject).toContain("submitReturn");
     expect(queued[0].body).toContain("no fulfillment line item");
   });
 });

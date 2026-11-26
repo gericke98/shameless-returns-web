@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { settlementDatabase } from "./support/settlementDb";
+import { vid } from "./support/verified";
 
 // The cancellation primitives, moved out of the "use server" db/queries.ts into
 // lib/submissionCancellation.ts (S2 plan L2). The reset now runs as SQL inside
@@ -12,7 +13,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: env.transact }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: env.transact, readQuery: env.readQuery }))()));
 
 let shopifyBody = "";
 const shopifyResponse = { value: { data: { returnCancel: { return: { id: "gid://x" }, userErrors: [] } } } };
@@ -114,10 +115,16 @@ const order = async (id: string) =>
 const row = async (id: number) =>
   (await env.pg.query<any>("SELECT * FROM productsorder WHERE id = $1", [id])).rows[0];
 
+// `resetOrderReturn` is no longer a function of its own (F1): its statements
+// run only inside `finishCancellation`'s transaction. A cancellation holding
+// no submissions runs exactly those statements.
+const resetOrderReturn = async (id: string) =>
+  (await import("@/lib/server/submissionScope")).finishCancellation(vid(id), []);
+
 describe("resetOrderReturn", () => {
   it("clears the tracking the cancelled return carried", async () => {
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     expect(await order("1")).toMatchObject({
       locator: null, carrier: null, carrier_url: null, return_status: null,
@@ -129,7 +136,7 @@ describe("resetOrderReturn", () => {
     // return would be handed the old intent, and a paid one whose intent write
     // failed would never reach the session-lookup fallback.
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     expect((await order("1")).stripe_payment_intent).toBeNull();
   });
@@ -140,7 +147,7 @@ describe("resetOrderReturn", () => {
     // (`if (order.returnSubmittedAt) return 200;`), and a surviving null
     // `tracking_submitted_at` gets the customer nudged about a cancelled one.
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     const o = await order("1");
     expect(o).toMatchObject({
@@ -158,7 +165,7 @@ describe("resetOrderReturn", () => {
 
   it("touches only the one order, not the whole table", async () => {
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     expect((await order("2")).locator).toBe("PK2");
     expect((await row(3)).confirmed).toBe(true);
@@ -167,7 +174,7 @@ describe("resetOrderReturn", () => {
 
   it("clears the confirmation and the Shopify return ids from every line", async () => {
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     for (const id of [1, 2]) {
       expect(await row(id)).toMatchObject({ confirmed: false, return_id: null, return_line_item_id: null });
@@ -176,7 +183,7 @@ describe("resetOrderReturn", () => {
 
   it("keeps `refunded` — the permanent record that a garment was settled", async () => {
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     expect((await row(2)).refunded).toBe(true);
   });
@@ -185,14 +192,14 @@ describe("resetOrderReturn", () => {
     // `changed` alone left a cancelled line struck through next to nothing
     // (#311258, cancelled 2026-08-13).
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     expect((await row(1)).changed).toBe(false);
   });
 
   it("clears the customer's selections so they get a clean wizard", async () => {
     await seed();
-    await (await lib()).resetOrderReturn("1");
+    await resetOrderReturn("1");
 
     expect(await row(1)).toMatchObject({
       action: null, reason: null, notes: null, new_variant_id: null, new_variant_title: null,

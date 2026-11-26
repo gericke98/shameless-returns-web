@@ -30,6 +30,7 @@ function product(id: string, variants: { id: string; price: string }[]): Product
   return {
     id: `gid://shopify/Product/${id}`,
     title: `P${id}`,
+    status: "ACTIVE",
     handle: `p${id}`,
     description: "",
     images: { edges: [] },

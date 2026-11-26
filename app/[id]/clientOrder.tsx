@@ -75,7 +75,6 @@ const ClientOrderShell = ({
                 // Never a default (#312385): null only when nothing comes back,
                 // which is the one case the server accepts it.
                 isCredit={wizard.payout === null ? null : wizard.payout === "credit"}
-                email={order.email}
                 method={wizard.method}
                 disabled={!wizard.canSubmit}
                 onPayoutRefused={wizard.payoutRefused}

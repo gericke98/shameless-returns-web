@@ -11,8 +11,9 @@ import { cleanup, render, screen } from "@testing-library/react";
 
 // SecondWindowForm saves through saveAddress ("use server"), which pulls in
 // db/queries.ts and friends. Nothing here submits, so a stub is enough.
-vi.mock("@/actions/updateOrder", () => ({
-  saveAddress: async () => ({ ok: true }),
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
+vi.mock("@/actions/address", () => ({
+  saveAddress: async () => ({ ok: true, value: {} }),
 }));
 
 import { SecondWindowForm } from "@/app/[id]/components/secondWindowForm";

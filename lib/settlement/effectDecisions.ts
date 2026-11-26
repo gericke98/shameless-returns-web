@@ -11,7 +11,8 @@
 //
 // NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import type { EffectDecision } from "./reconcile";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -37,11 +38,11 @@ export function effectDecisionProblem(d: EffectDecisionInput): string | null {
 }
 
 /** Record it, once. A bound line must exist and be confirmed. */
-export async function decideEffect(d: EffectDecisionInput): Promise<{ ok: true } | { ok: false; reason: string }> {
+export async function decideEffect(cap: WriteCapability, d: EffectDecisionInput): Promise<{ ok: true } | { ok: false; reason: string }> {
   const problem = effectDecisionProblem(d);
   if (problem) return { ok: false, reason: problem };
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       INSERT INTO reconciliation_effect_decisions (effect_id, verdict, productsorder_id, decided_by, evidence)
       SELECT ${d.effectId}, ${d.verdict}, ${d.productsorderId}::int, ${d.by}, ${d.evidence}
        WHERE ${d.verdict} = 'excludes'
@@ -58,7 +59,7 @@ export async function decideEffect(d: EffectDecisionInput): Promise<{ ok: true }
 /** Every recorded decision, by effect id. */
 export async function effectDecisions(): Promise<Map<string, EffectDecision>> {
   const rows = rowsOf(
-    await db.execute(sql`SELECT effect_id, verdict, productsorder_id FROM reconciliation_effect_decisions`)
+    await readQuery(sql`SELECT effect_id, verdict, productsorder_id FROM reconciliation_effect_decisions`)
   );
   return new Map(
     rows.map((r) => [
@@ -74,7 +75,7 @@ export async function effectDecisions(): Promise<Map<string, EffectDecision>> {
 /** Effect id → the lines a DONE operation recorded it for. */
 export async function recordedEffects(): Promise<Map<string, number[]>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT o.effect_ref, m.po
         FROM settlement_operations o CROSS JOIN LATERAL unnest(o.members) AS m(po)
        WHERE o.state = 'done' AND o.effect_ref IS NOT NULL`)

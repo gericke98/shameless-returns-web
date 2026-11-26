@@ -17,7 +17,8 @@
 //
 // Shopify is only READ. NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import type { Read, ReturnEvidence } from "./reconcile";
 import { returnOwnerProblem } from "./returnOwnership";
 import { reconciliationRequestOf } from "./types";
@@ -29,6 +30,7 @@ export type VoidDecision = { by: string; evidence: string };
 export type VoidOutcome = { ok: true; written: boolean; summary: string } | { ok: false; reason: string };
 
 export async function voidForeignReconciliation(
+  cap: WriteCapability,
   target: VoidTarget,
   d: VoidDecision,
   readReturn: (returnGid: string) => Promise<Read<ReturnEvidence | null>>,
@@ -38,7 +40,7 @@ export async function voidForeignReconciliation(
   if (!d.evidence.trim()) return { ok: false, reason: "the evidence (--evidence) is required" };
 
   const subs = rowsOf(
-    await db.execute(
+    await readQuery(
       "submissionId" in target
         ? sql`SELECT s.id::text AS id, s.order_id FROM return_submissions s
                WHERE s.id::text = ${target.submissionId} AND s.state = 'reconciled'`
@@ -51,7 +53,7 @@ export async function voidForeignReconciliation(
   const sub = subs[0];
 
   const ops = rowsOf(
-    await db.execute(sql`SELECT id::text AS id, state, request, members FROM settlement_operations WHERE submission_id = ${sub.id}::uuid`)
+    await readQuery(sql`SELECT id::text AS id, state, request, members FROM settlement_operations WHERE submission_id = ${sub.id}::uuid`)
   );
   if (ops.length === 0) return { ok: false, reason: `record ${sub.id} has no operations` };
   if (ops.some((o) => o.state === "done")) {
@@ -82,7 +84,7 @@ export async function voidForeignReconciliation(
   if (!options.write) return { ok: true, written: false, summary: `would ${summary}` };
 
   const [row] = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH v AS (
         UPDATE return_submissions s SET state = 'voided'
          WHERE s.id = ${sub.id}::uuid AND s.state = 'reconciled'

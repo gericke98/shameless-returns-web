@@ -56,7 +56,7 @@ vi.mock("@/db/queries", () => ({
   getLatestReturnLabel: async () => null,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -66,9 +66,9 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   createAmphoraReturn: async (input: any) => {
     if (behaviour.createFails) throw new Error("amphora 500");
@@ -99,7 +99,7 @@ vi.mock("axios", () => ({
 }));
 
 async function registerLabel() {
-  const { createShippingLabel } = await import("@/actions/shipping");
+  const { createShippingLabel } = await import("@/lib/server/shipping");
   return createShippingLabel(ORDER.id);
 }
 

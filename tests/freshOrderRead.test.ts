@@ -34,7 +34,7 @@ const rows: Record<string, any> = {
 
 let queries = 0;
 
-vi.mock("@/db/drizzle", () => ({
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({
   default: {
     query: {
       orders: {
@@ -48,7 +48,7 @@ vi.mock("@/db/drizzle", () => ({
       },
     },
   },
-}));
+}))()));
 
 beforeEach(() => {
   queries = 0;

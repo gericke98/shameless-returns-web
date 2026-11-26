@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The international half of the August 2026 silent-email outage.
 //
@@ -44,22 +45,22 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({ "54623384371526": "20250502" }),
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   createAmphoraReturn: (...a: unknown[]) => amphora.create(...a),
   getAmphoraReturnsByOrderName: (...a: unknown[]) => amphora.listByName(...a),
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -70,8 +71,8 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createInternationalReturn } = await import("@/actions/amphoraReturn");
-  return createInternationalReturn(ORDER.id);
+  const { createInternationalReturn } = await import("@/lib/server/amphoraReturn");
+  return createInternationalReturn(vid(ORDER.id));
 }
 
 beforeEach(async () => {

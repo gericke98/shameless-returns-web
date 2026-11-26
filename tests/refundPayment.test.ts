@@ -46,7 +46,7 @@ const SUB = "11111111-1111-4111-8111-111111111111";
 
 describe("refundOrderPayment", () => {
   it("refunds the stored payment intent without touching the session list", async () => {
-    const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const { refundOrderPayment } = await import("@/lib/server/refundPayment");
 
     const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
 
@@ -56,7 +56,7 @@ describe("refundOrderPayment", () => {
   });
 
   it("keys the refund on the cancelled submission, so a double submit cannot refund twice", async () => {
-    const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const { refundOrderPayment } = await import("@/lib/server/refundPayment");
 
     await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
     await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
@@ -69,7 +69,7 @@ describe("refundOrderPayment", () => {
     // A customer can cancel, start a fresh return, pay again, and cancel that
     // one too. That is a new submission (S2 plan L2), so a new key — reusing
     // the first key against a different payment_intent is what Stripe rejects.
-    const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const { refundOrderPayment } = await import("@/lib/server/refundPayment");
     const NEXT = "22222222-2222-4222-8222-222222222222";
 
     await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_first" }, SUB);
@@ -84,7 +84,7 @@ describe("refundOrderPayment", () => {
       { metadata: { id: "someone-else" }, payment_intent: "pi_wrong" },
       { metadata: { id: ORDER.id }, payment_intent: "pi_found" },
     ];
-    const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const { refundOrderPayment } = await import("@/lib/server/refundPayment");
 
     const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: null }, SUB);
 
@@ -97,7 +97,7 @@ describe("refundOrderPayment", () => {
   it("reports no-payment for a return that never owed anything", async () => {
     // createStripeUrl returned { data: null }: nothing was ever charged.
     sessions = [];
-    const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const { refundOrderPayment } = await import("@/lib/server/refundPayment");
 
     const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: null }, SUB);
 
@@ -109,7 +109,7 @@ describe("refundOrderPayment", () => {
     // The label is already dead by the time this runs; the caller must be able
     // to finish the cancellation and alert a human.
     refundThrows = true;
-    const { refundOrderPayment } = await import("@/actions/refundPayment");
+    const { refundOrderPayment } = await import("@/lib/server/refundPayment");
 
     const result = await refundOrderPayment({ ...ORDER, stripePaymentIntent: "pi_stored" }, SUB);
 

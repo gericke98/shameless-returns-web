@@ -16,14 +16,14 @@ vi.mock("react", async (importOriginal) => {
 // pass vacuously by never reaching the send. The chain records what was
 // written so the tests can assert the state actually persisted.
 let pendingSet: any = null;
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: any) => { pendingSet = values; return chain; },
     where: () => { persisted.push({ ...pendingSet }); events.push("persist"); return Promise.resolve(); },
   };
   return { default: chain };
-});
+})()));
 
 const state = {
   orders: [] as any[],
@@ -38,7 +38,7 @@ const events: string[] = [];
 vi.mock("@/db/queries", () => ({
   getParcelsAwaitingTracking: async () => state.orders,
 }));
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   obtainLastStatus: async (loc: string) => {
     if (state.lookupThrowsOn === loc) throw new Error("correos down");
     return state.status[loc] ?? { label: "Sin información", phase: "sin_informacion" };
@@ -53,7 +53,7 @@ vi.mock("@/lib/emails", async (importOriginal) => {
     }),
   };
 });
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string) => { alerts.push(subject); },
 }));
 

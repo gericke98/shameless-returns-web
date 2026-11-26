@@ -1,9 +1,10 @@
 "use client";
 
-import { validateReturn } from "@/actions/refund";
+import { settleRow } from "@/actions/refund";
+import { useCallAction } from "@/lib/callAction";
 import { ACTIONS } from "@/placeholder";
 import { lineTotalCents } from "@/lib/basket";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   ReturnTableProps,
   RefundFilter,
@@ -262,6 +263,57 @@ const COLUMNS = [
   "Validate",
 ];
 
+/**
+ * Settle the submission a row belongs to (`settleRow`). Only the row id is
+ * sent; on a refusal or no answer, a message and no local status change.
+ */
+function SettleButton({
+  rowId,
+  className,
+  title,
+  ariaLabel,
+  children,
+}: {
+  rowId: number | string;
+  className: string;
+  title?: string;
+  ariaLabel: string;
+  children: React.ReactNode;
+}) {
+  const callAction = useCallAction();
+  const [isPending, startTransition] = useTransition();
+  const [message, setMessage] = useState<string | null>(null);
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <button
+        className={className}
+        disabled={isPending}
+        title={title}
+        aria-label={ariaLabel}
+        onClick={() =>
+          startTransition(async () => {
+            setMessage(null);
+            const outcome = await callAction(settleRow, { rowId: Number(rowId) });
+            if (outcome.kind === "unknown") return setMessage("No answer from the server. Refresh before retrying.");
+            const { result } = outcome;
+            if (result.ok) return;
+            setMessage(
+              result.reason === "not-settleable"
+                ? "Not settleable (no submission owns this row). Check the order."
+                : result.reason === "not-admin"
+                  ? "Not allowed: sign in again."
+                  : "Failed. Ops has been alerted."
+            );
+          })
+        }
+      >
+        {isPending ? "Processing…" : children}
+      </button>
+      {message && <span className="text-xs text-red-600">{message}</span>}
+    </span>
+  );
+}
+
 function TableHeader() {
   return (
     <thead className="bg-gray-50">
@@ -310,15 +362,15 @@ function OrderGroup({ group, status }: { group: Group; status: TrackingStatus })
               </span>
             )}
             {batches.map((batch) => (
-              <button
+              <SettleButton
                 key={batch.settlementKey}
+                rowId={batch.lines[0].id}
                 className="ml-auto bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-md text-sm transition-colors"
-                onClick={() => validateReturn(batch.lines[0], status.label, order)}
                 title={batch.settlementKey}
-                aria-label={`Process the exchange ${batch.settlementKey} for ${order.orderNumber} — ${batch.lines.length} garments in one order`}
+                ariaLabel={`Process the exchange ${batch.settlementKey} for ${order.orderNumber} — ${batch.lines.length} garments in one order`}
               >
                 Process exchange · {batch.lines.length} garments
-              </button>
+              </SettleButton>
             ))}
           </div>
         </td>
@@ -402,13 +454,13 @@ function ProductRow({
             with the exchange above
           </span>
         ) : (
-          <button
+          <SettleButton
+            rowId={product.id}
             className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm transition-colors"
-            onClick={() => validateReturn(product, status.label, order)}
-            aria-label={`Refund ${product.title}`}
+            ariaLabel={`Refund ${product.title}`}
           >
             Refund
-          </button>
+          </SettleButton>
         )}
       </td>
     </tr>

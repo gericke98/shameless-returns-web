@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // Where a domestic return parcel is actually sent. The destination block in the
 // Correos pre-registration was still the old warehouse (CORISA TEXTIL,
@@ -33,10 +34,10 @@ let soapBody = "";
 
 vi.mock("@/db/queries", () => ({ getOrderById: async () => ORDER }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = { update: () => chain, set: () => chain, where: () => Promise.resolve() };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {
@@ -52,8 +53,8 @@ vi.mock("axios", () => ({
 }));
 
 async function registerLabel() {
-  const { createShippingLabel } = await import("@/actions/shipping");
-  return createShippingLabel(ORDER.id);
+  const { createShippingLabel } = await import("@/lib/server/shipping");
+  return createShippingLabel(vid(ORDER.id));
 }
 
 beforeEach(() => {

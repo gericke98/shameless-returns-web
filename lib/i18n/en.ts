@@ -22,6 +22,16 @@ export const en: Dictionary = {
     sessionExpired: "Please look up your order to continue.",
     tooManyAttempts:
       "Too many attempts. Please wait a few minutes and try again.",
+    invalidInput: "Please enter a valid order number.",
+    notFound: "Please enter a valid order.",
+    mismatch: "Please enter a valid mail address.",
+    contactSupport:
+      "Please contact hello@shamelesscollective.com with your order number to return items from this order.",
+    notYetShipped:
+      "The order is being prepared. Please contact hello@shamelesscollective.com for any changes.",
+    outsideWindow:
+      "Returns and exchanges can only be processed within 60 days of delivery and your order was delivered more than 60 days ago.",
+    failed: "We could not look up your order. Please try again in a few minutes.",
   },
   first: {
     orderTitle: "Order",
@@ -176,6 +186,21 @@ export const en: Dictionary = {
     title: "Something went wrong",
     body: "We could not complete that. Please try again. If the problem persists, email us at hello@shamelesscollective.com with your order number.",
     retry: "Try again",
+  },
+  action: {
+    notSaved: "Not saved. Check your connection and try again.",
+    failed:
+      "We could not complete that. Please try again. If it keeps happening, write to hello@shamelesscollective.com with your order number.",
+    orderMismatch:
+      "You opened a different order in another tab. Reload this page to continue with the right order.",
+    notAdmin: "Your admin session has expired. Please sign in again.",
+    invalidInput: "Please check the details and try again.",
+    nothingSelected: "You have not chosen any item. Go back and choose what to return or exchange.",
+    submissionInProgress: "We are already processing your request. Wait a few seconds before trying again.",
+    notEditable: "This item can no longer be changed. Please reload the page.",
+    variantNotOffered: "That size is no longer available. Please choose another.",
+    incomplete: "Please fill in every required address field.",
+    invalidDelivery: "Please check the delivery address for the exchange.",
   },
   cancel: {
     heading: "Your return",

@@ -40,6 +40,9 @@ export type ProductImage = {
 export type Product = {
   id: string;
   title: string;
+  /** Shopify product status. `getProducts()` reads only ACTIVE ones; the
+   *  replacement predicate (lib/replacementCatalogue.ts) still checks it. */
+  status: string;
   handle: string;
   description: string;
   images: {

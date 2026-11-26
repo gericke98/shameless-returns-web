@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { customerCtx } from "./support/verified";
 
 // Order #311174 (Ferran Palma), 2026-08-12 07:39:36Z. The portal created the
 // Shopify return, the Correos booking then failed, and he was shown /success
@@ -70,17 +71,17 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // Nothing to pay: this is the free lane, the one that had no alert.
-vi.mock("@/actions/payments", () => ({
-  createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
+vi.mock("@/lib/server/payments", () => ({
+  createStripeUrl: async (orderId: string) => ({ ok: true, url: null, submission: { id: "sub-1", orderId } }),
 }));
 
 vi.mock("@/lib/submissionConfirmation", () => ({
   confirmSubmission: async () => {},
   revertFinalOrder: async () => {},
 }));
-vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
+vi.mock("@/lib/server/submissionScope", () => ({ acceptFreeSubmission: async () => true }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -93,7 +94,7 @@ vi.mock("@/db/queries", () => ({
   getLatestReturnLabel: async () => null,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -103,7 +104,7 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {
@@ -116,12 +117,15 @@ vi.mock("axios", () => ({
 }));
 
 async function submit() {
-  const { returnFunction } = await import("@/actions/return");
-  try {
-    await returnFunction(order.id, false, order.email);
-  } catch (e: any) {
-    if (e?.message !== REDIRECTED) throw e;
-  }
+  // The handler behind `submitReturn` (F1), called with the context
+  // `customerAction` builds. An absent claim is sent as the non-SELF default.
+  const { submitReturnHandler } = await import("@/lib/server/handlers/customer/submitReturn");
+  const result = await submitReturnHandler(await customerCtx(order.id), {
+    payout: "refund",
+    method: ("CORREOS") as any,
+  });
+  if (result.ok) redirects.push(result.value.navigate);
+  return result;
 }
 
 beforeEach(() => {

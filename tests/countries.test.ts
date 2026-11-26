@@ -31,7 +31,7 @@ vi.mock("react", async (importOriginal) => {
 //
 // The function under test — isInternationalOrder — is
 // pure string functions. They touch none of it.
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 vi.mock("@/db/queries", () => ({
   getOrderById: async () => null,
   getVariantSkusByIds: async () => [],
@@ -124,7 +124,7 @@ describe("countryDisplayName", () => {
 
 describe("an unnameable stored country still routes and prices safely", () => {
   it("counts as international, so Amphora still handles it", async () => {
-    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    const { isInternationalOrder } = await import("@/lib/server/amphoraReturn");
     expect(normalizeCountry("Wakanda")).toBeNull();
     expect(isInternationalOrder("Wakanda")).toBe(true);
   });
@@ -150,15 +150,13 @@ describe("an unnameable stored country still routes and prices safely", () => {
   });
 
   it("is never written back from the address form", () => {
-    // The country is display-only in secondWindowForm. updateData must not
-    // read a `country` field at all — that is what makes it impossible for a
-    // stored country to be replaced by a client-supplied one.
-    const source = readFileSync(
-      resolve(__dirname, "../actions/updateOrder.ts"),
-      "utf-8"
-    );
-    expect(source).not.toContain('formData.get("country")');
+    // The country is display-only in secondWindowForm. The address write
+    // (lib/server/orderScope.ts `saveAddress`) never names the column, and the
+    // action's `.strict()` schema refuses a `country` field (F1).
+    const source = readFileSync(resolve(__dirname, "../lib/server/orderScope.ts"), "utf-8");
     expect(source).not.toContain("shippingCountry:");
+    const handler = readFileSync(resolve(__dirname, "../lib/server/handlers/customer/address.ts"), "utf-8");
+    expect(handler).not.toContain("shippingCountry");
   });
 });
 
@@ -180,14 +178,14 @@ describe("lib/countries source hygiene", () => {
 
 describe("country helpers keep their previous semantics", () => {
   it("treats Spain in every stored spelling as national", async () => {
-    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    const { isInternationalOrder } = await import("@/lib/server/amphoraReturn");
     for (const spelling of ["Spain", "España", "Espana", "ES", "es", "esp"]) {
       expect(isInternationalOrder(spelling)).toBe(false);
     }
   });
 
   it("treats empty as not international, matching the old guard", async () => {
-    const { isInternationalOrder } = await import("@/actions/amphoraReturn");
+    const { isInternationalOrder } = await import("@/lib/server/amphoraReturn");
     expect(isInternationalOrder("")).toBe(false);
     expect(isInternationalOrder(null)).toBe(false);
   });

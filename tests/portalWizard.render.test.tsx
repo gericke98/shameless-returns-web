@@ -16,16 +16,16 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const returnFunction = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: () => {}, refresh: () => {} }) }));
 vi.mock("@/actions/return", () => ({
-  returnFunction: (...args: unknown[]) => returnFunction(...args),
+  submitReturn: (...args: unknown[]) => returnFunction(...args),
 }));
 
 const saveAddress = vi.fn();
-vi.mock("@/actions/updateOrder", () => ({
+vi.mock("@/actions/address", () => ({
   saveAddress: (...args: unknown[]) => saveAddress(...args),
-  updateOrder: vi.fn(),
-  anularOrder: vi.fn(),
 }));
+vi.mock("@/actions/lines", () => ({ setLineSelection: vi.fn(), clearLineSelection: vi.fn() }));
 
 import { en } from "@/lib/i18n/en";
 vi.mock("@/lib/i18n/context", () => ({
@@ -146,12 +146,14 @@ async function chooseSelfBooking(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   window.scrollTo = vi.fn() as any;
-  saveAddress.mockResolvedValue({ ok: true });
+  saveAddress.mockResolvedValue({ ok: true, value: {} });
 });
 
 afterEach(() => {
   cleanup();
   returnFunction.mockReset();
+  // An answer that navigates nowhere, so the button returns to idle.
+  returnFunction.mockResolvedValue({ ok: false, reason: "submission-in-progress" });
   saveAddress.mockReset();
 });
 
@@ -185,7 +187,20 @@ describe("the portal wizard", () => {
 
     await user.click(continueButton());
 
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(en.second.saveError));
+    // The refusal is named (F1 §7): an incomplete address says what to fix.
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(en.action.incomplete));
+    expect(heading(en.second.title)).not.toBeNull();
+  });
+
+  it("stays on the address step with 'not saved' when the save got no answer", async () => {
+    const user = userEvent.setup();
+    saveAddress.mockRejectedValue(new Error("network"));
+    renderPortal();
+    await toAddress(user);
+
+    await user.click(continueButton());
+
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe(en.action.notSaved));
     expect(heading(en.second.title)).not.toBeNull();
   });
 
@@ -202,7 +217,7 @@ describe("the portal wizard", () => {
     expect(heading(en.last.title)).not.toBeNull();
     expect(heading(en.last.refundTitle)).not.toBeNull();
     await user.click(submitButton()!);
-    expect(returnFunction).toHaveBeenCalledWith(ORDER_ID, false, "customer@example.com", "CORREOS");
+    expect(returnFunction).toHaveBeenCalledWith({ expectedOrderId: ORDER_ID, payout: "refund", method: "CORREOS" });
   });
 
   // The second route: €4 back before a €5 fee. With our courier nothing comes
@@ -234,7 +249,7 @@ describe("the portal wizard", () => {
     expect(heading(en.last.refundTitle)).toBeNull();
     expect(heading(en.last.creditTitle)).toBeNull();
     await user.click(submitButton()!);
-    expect(returnFunction).toHaveBeenCalledWith(ORDER_ID, null, "customer@example.com", "CORREOS");
+    expect(returnFunction).toHaveBeenCalledWith({ expectedOrderId: ORDER_ID, payout: null, method: "CORREOS" });
   });
 
   it("self-booking is threaded to submit, and the total drops the return leg", async () => {
@@ -251,7 +266,7 @@ describe("the portal wizard", () => {
     expect(screen.queryByText("€45.00")).toBeNull();
     expect(screen.queryByText("-€5.00")).toBeNull();
     await user.click(submitButton()!);
-    expect(returnFunction).toHaveBeenCalledWith(ORDER_ID, false, "customer@example.com", "SELF");
+    expect(returnFunction).toHaveBeenCalledWith({ expectedOrderId: ORDER_ID, payout: "refund", method: "SELF" });
   });
 
   it("a server refusal for a missing payout returns to the payout step, not the crash screen", async () => {

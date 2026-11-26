@@ -16,7 +16,7 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [] }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {}, transact: async () => [] }))()));
 
 const V1 = "gid://shopify/ProductVariant/11";
 const V2 = "gid://shopify/ProductVariant/22";

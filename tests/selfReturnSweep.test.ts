@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { sys } from "./support/verified";
 
 const NOW = new Date("2026-08-21T12:00:00Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86400000);
@@ -18,7 +19,7 @@ vi.mock("@/db/queries", () => ({
   getSelfReturnsAwaitingTracking: async () => rows,
 }));
 
-vi.mock("@/actions/selfReturnEmails", () => ({
+vi.mock("@/lib/server/selfReturnEmails", () => ({
   sendSelfReturnReminder: async (to: string) => {
     if (to === "throws@example.com") {
       throw new Error("Postmark is down");
@@ -29,13 +30,13 @@ vi.mock("@/actions/selfReturnEmails", () => ({
   },
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -50,11 +51,11 @@ vi.mock("@/db/drizzle", () => {
     returning: async () => (claimLost ? [] : [{ id: "x" }]),
   };
   return { default: chain };
-});
+})()));
 
 async function sweep() {
-  const { sweepSelfReturns } = await import("@/actions/selfReturnSweep");
-  return sweepSelfReturns(NOW);
+  const { sweepSelfReturns } = await import("@/lib/server/selfReturnSweep");
+  return sweepSelfReturns(sys, NOW);
 }
 
 const row = (over: Record<string, any> = {}) => ({

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The same defect as the Amphora path, on the flow that carries most of the
 // volume. `createShippingLabel` returned the EMAIL's status as its own, so a
@@ -34,14 +35,14 @@ const behaviour = { correos: CORREOS_OK, emailFails: false };
 
 vi.mock("@/db/queries", () => ({ getOrderById: async () => ORDER }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {
@@ -56,8 +57,8 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createShippingLabel } = await import("@/actions/shipping");
-  return createShippingLabel(ORDER.id);
+  const { createShippingLabel } = await import("@/lib/server/shipping");
+  return createShippingLabel(vid(ORDER.id));
 }
 
 beforeEach(() => {

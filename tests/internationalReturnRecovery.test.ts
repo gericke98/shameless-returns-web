@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // The failure that cost order #310972.
 //
@@ -50,7 +51,7 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({ "54623384371526": "20250502" }),
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: unknown) => {
@@ -60,9 +61,9 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
-vi.mock("@/actions/amphora", () => ({
+vi.mock("@/lib/server/amphora", () => ({
   amphoraOrderIdFromShopifyId: (id: string) => `SHP ${id}`,
   createAmphoraReturn: (...a: unknown[]) => amphora.create(...a),
   getAmphoraReturnsByOrderName: (...a: unknown[]) => amphora.listByName(...a),
@@ -78,8 +79,8 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createInternationalReturn } = await import("@/actions/amphoraReturn");
-  return createInternationalReturn("13194624794950");
+  const { createInternationalReturn } = await import("@/lib/server/amphoraReturn");
+  return createInternationalReturn(vid("13194624794950"));
 }
 
 beforeEach(() => {

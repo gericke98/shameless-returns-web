@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { sys } from "./support/verified";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
@@ -11,7 +12,7 @@ import * as schema from "@/db/schema";
 
 const pg = new PGlite();
 const db = drizzle(pg, { schema });
-vi.mock("@/db/drizzle", () => ({ default: db }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: db }))()));
 
 const DAY = 86_400_000;
 
@@ -51,7 +52,7 @@ const world = {
 };
 const sent: string[] = [];
 
-vi.mock("@/actions/amphora", () => ({ getAmphoraReturns: async () => world.returns }));
+vi.mock("@/lib/server/amphora", () => ({ getAmphoraReturns: async () => world.returns }));
 vi.mock("@/db/queries", () => ({
   getOrdersWithUnsettledReturns: async () =>
     world.orders.filter((o) => o.products.some((p: any) => !p.refunded)),
@@ -59,7 +60,7 @@ vi.mock("@/db/queries", () => ({
   getVariantSkusByIds: async () => ({ v1: "20240800", v2: "20252901" }),
   getReturnStatusesByIds: async () => world.shopify,
 }));
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async () => {},
   sendOpsAlert: async (subject: string) => {
     if (!world.postmarkOk) return { ok: false, error: "Postmark 500" };
@@ -69,8 +70,8 @@ vi.mock("@/actions/opsAlert", () => ({
 }));
 
 const sweep = async (now = new Date()) =>
-  (await import("@/actions/receiptShortfallSweep")).sweepReceiptShortfalls(now);
-const dispatch = async () => (await import("@/actions/opsAlertOutbox")).dispatchOpsAlerts();
+  (await import("@/lib/server/receiptShortfallSweep")).sweepReceiptShortfalls(sys, now);
+const dispatch = async () => (await import("@/lib/server/opsAlertOutbox")).dispatchOpsAlerts();
 /** Let the outbox lease expire so the dispatcher may retry a failed row. */
 const expireLeases = () =>
   pg.exec(`UPDATE ops_alerts SET last_attempt_at = now() - interval '1 hour'`);

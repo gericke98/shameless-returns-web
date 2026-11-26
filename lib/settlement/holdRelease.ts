@@ -21,10 +21,11 @@
 // Never throws: both callers have already done something irreversible.
 // NOT "use server".
 import { sql } from "drizzle-orm";
-import db from "@/db/drizzle";
+import { readQuery, writeDb } from "@/db/drizzle";
 import { releaseHoldDraft, type HoldReleaseAuthority } from "./effects";
 import { graphQLErrors } from "./shopify";
 import { DRAFT_ORDER_QUERY, read } from "./reads";
+import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 
@@ -33,17 +34,17 @@ export type HoldRelease =
   | { released: true }
   | { released: false; reason: string };
 
-async function heldDraftOf(orderId: string): Promise<string | null> {
+async function heldDraftOf(orderId: VerifiedOrderId): Promise<string | null> {
   const [row] = rowsOf(
-    await db.execute(sql`SELECT exchange_reservation_id FROM orders WHERE id = ${orderId}`)
+    await readQuery(sql`SELECT exchange_reservation_id FROM orders WHERE id = ${orderId}`)
   );
   return row?.exchange_reservation_id ? String(row.exchange_reservation_id) : null;
 }
 
-async function cancellationOwnsHold(orderId: string, submissionIds: readonly string[]): Promise<string | null> {
+async function cancellationOwnsHold(orderId: VerifiedOrderId, submissionIds: readonly string[]): Promise<string | null> {
   const ids = JSON.stringify(submissionIds);
   const [row] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT
         (SELECT count(*) FROM return_submissions s
           WHERE s.id IN (SELECT (jsonb_array_elements_text(${ids}::jsonb))::uuid)
@@ -60,9 +61,9 @@ async function cancellationOwnsHold(orderId: string, submissionIds: readonly str
   return null;
 }
 
-async function revertOwnsHold(orderId: string): Promise<string | null> {
+async function revertOwnsHold(orderId: VerifiedOrderId): Promise<string | null> {
   const [row] = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT
         (SELECT count(*) FROM productsorder p
           WHERE p.order_id = ${orderId} AND p.confirmed = true
@@ -78,12 +79,12 @@ async function revertOwnsHold(orderId: string): Promise<string | null> {
   return null;
 }
 
-async function release(orderId: string, by: HoldReleaseAuthority["by"], refusal: string | null): Promise<HoldRelease> {
+async function release(orderId: VerifiedOrderId, by: HoldReleaseAuthority["by"], refusal: string | null): Promise<HoldRelease> {
   try {
     const draftOrderId = await heldDraftOf(orderId);
     if (!draftOrderId) return { released: true };
     if (refusal) return { released: false, reason: refusal };
-    const authority = { orderId, draftOrderId, by } as HoldReleaseAuthority;
+    const authority = { orderId: orderId as string, draftOrderId, by } as HoldReleaseAuthority;
 
     const answer = await releaseHoldDraft(authority);
     const deleted =
@@ -96,7 +97,7 @@ async function release(orderId: string, by: HoldReleaseAuthority["by"], refusal:
       if (!now.ok) return { released: false, reason: `draft ${draftOrderId} unreadable: ${now.error}` };
       if (now.value) return { released: false, reason: `draft ${draftOrderId} still exists` };
     }
-    await db.execute(sql`
+    await writeDb(orderId).execute(sql`
       UPDATE orders SET exchange_reservation_id = NULL
        WHERE id = ${orderId} AND exchange_reservation_id = ${draftOrderId}
     `);
@@ -108,12 +109,14 @@ async function release(orderId: string, by: HoldReleaseAuthority["by"], refusal:
 
 /** A cancellation releases the hold of the submissions it holds. */
 export async function releaseHoldForCancellation(
-  orderId: string,
-  submissionIds: readonly string[]
+  orderId: VerifiedOrderId,
+  submissions: readonly VerifiedSubmission[]
 ): Promise<HoldRelease> {
   let refusal: string | null;
   try {
-    refusal = await cancellationOwnsHold(orderId, submissionIds);
+    refusal = submissions.some((s) => s.orderId !== orderId)
+      ? "a named submission is not this order's"
+      : await cancellationOwnsHold(orderId, submissions.map((s) => s.id));
   } catch (error: any) {
     return { released: false, reason: String(error?.message ?? error) };
   }
@@ -121,7 +124,7 @@ export async function releaseHoldForCancellation(
 }
 
 /** A failed confirmation, reverted, releases the hold it placed. */
-export async function releaseHoldForRevert(orderId: string): Promise<HoldRelease> {
+export async function releaseHoldForRevert(orderId: VerifiedOrderId): Promise<HoldRelease> {
   let refusal: string | null;
   try {
     refusal = await revertOwnsHold(orderId);

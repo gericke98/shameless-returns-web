@@ -18,8 +18,10 @@
 //
 // NOT "use server".
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import { and, eq, sql } from "drizzle-orm";
+import type { VerifiedOrderId } from "@/lib/server/identity";
+import db, { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import { getFeeTable } from "@/db/fees";
 import { getProducts } from "@/db/queries";
 import { orders, productsOrder } from "@/db/schema";
@@ -50,9 +52,10 @@ const appDeps: LegacyDeps = { feeTable: getFeeTable, catalogue: getProducts as (
  * them. The insert takes a fresh snapshot after the lock, so two concurrent
  * recorders cannot both insert.
  */
-async function insertAccepted(order: Order, terms: LegacyTerms): Promise<void> {
+async function insertAccepted(orderId: VerifiedOrderId, order: Order, terms: LegacyTerms): Promise<void> {
+  if (order.id !== orderId) throw new Error(`legacy submission for order ${order.id} recorded under ${orderId}`);
   const ids = terms.lines.map((l) => l.productsorder_id);
-  await transact([
+  await writeDb(orderId).transact([
     sql`SELECT id FROM productsorder WHERE id IN ${idListOf(ids)} FOR UPDATE`,
     sql`WITH ${legacySubmissionCtes(
       order,
@@ -63,21 +66,33 @@ async function insertAccepted(order: Order, terms: LegacyTerms): Promise<void> {
   ]);
 }
 
-/** The accepted submission a row belongs to, recording a legacy one if none does. */
-export async function submissionForRow(productsorderId: number): Promise<SubmissionLookup> {
+/**
+ * The accepted submission a row of `orderId` belongs to, recording a legacy
+ * one if none does. A row of any other order is `no-such-line` (F1 §10): the
+ * caller's credential is for the order, and the row id is only a filter.
+ */
+export async function submissionForRow(orderId: VerifiedOrderId, productsorderId: number): Promise<SubmissionLookup> {
+  const [owned] = await db
+    .select({ id: productsOrder.id })
+    .from(productsOrder)
+    .where(and(eq(productsOrder.id, productsorderId), eq(productsOrder.orderId, orderId)));
+  if (!owned) return { ok: false, held: "no-such-line" };
   const existing = await submissionOfRow(productsorderId);
   if (existing) return { ok: true, submissionId: existing };
-  return recordLegacySubmissionFor(productsorderId);
+  return recordLegacySubmissionFor(orderId, productsorderId);
 }
 
-async function recordLegacySubmissionFor(productsorderId: number): Promise<SubmissionLookup> {
-  const [row] = await db.select().from(productsOrder).where(eq(productsOrder.id, productsorderId));
+async function recordLegacySubmissionFor(orderId: VerifiedOrderId, productsorderId: number): Promise<SubmissionLookup> {
+  const [row] = await db
+    .select()
+    .from(productsOrder)
+    .where(and(eq(productsOrder.id, productsorderId), eq(productsOrder.orderId, orderId)));
   if (!row) return { ok: false, held: "no-such-line" };
   if (row.confirmed !== true || !row.return_id || !row.return_line_item_id) {
     return { ok: false, held: "not-confirmed" };
   }
   if (row.refunded) return { ok: false, held: "already-refunded" };
-  const [order] = await db.select().from(orders).where(eq(orders.id, String(row.orderId)));
+  const [order] = await db.select().from(orders).where(eq(orders.id, orderId));
   if (!order) return { ok: false, held: "no-order" };
 
   const all = await db.select().from(productsOrder).where(eq(productsOrder.orderId, order.id));
@@ -97,7 +112,7 @@ async function recordLegacySubmissionFor(productsorderId: number): Promise<Submi
 
   const built = await legacyTerms(order, basket, all, appDeps);
   if (!built.ok) return built;
-  await insertAccepted(order, built.terms);
+  await insertAccepted(orderId, order, built.terms);
 
   const recorded = await submissionOfRow(productsorderId);
   return recorded ? { ok: true, submissionId: recorded } : { ok: false, held: "legacy-not-recorded" };
@@ -133,7 +148,7 @@ export function approvalProblem(a: ApprovalInput): string | null {
  * record excepted). `refunded` is deliberately NOT a refusal here: it is what
  * the reconciliation proved wrong.
  */
-export async function recordApprovedLegacySubmission(approvals: ApprovalInput[]): Promise<SubmissionLookup> {
+export async function recordApprovedLegacySubmission(cap: WriteCapability, approvals: ApprovalInput[]): Promise<SubmissionLookup> {
   const ids = approvals.map((a) => a.productsorderId).sort((a, b) => a - b);
   if (ids.length === 0) return { ok: false, held: "nothing-approved" };
   if (new Set(ids).size !== ids.length) return { ok: false, held: "duplicate-approval" };
@@ -184,7 +199,7 @@ export async function recordApprovedLegacySubmission(approvals: ApprovalInput[])
                ON a.productsorder_id = ANY (o.members)
             WHERE o.state <> 'rejected'
               AND NOT (a.basis = 'swap' AND o.state = 'done' AND o.kind = 'exchange_order'))`;
-  await transact([
+  await writeDb(cap).transact([
     sql`SELECT id FROM productsorder WHERE id IN ${idListOf(ids)} FOR UPDATE`,
     sql`WITH ${legacySubmissionCtes(
       order,
@@ -216,7 +231,7 @@ type ApprovalRow = {
 };
 
 async function approvalRowsOf(ids: number[]): Promise<ApprovalRow[]> {
-  const result: any = await db.execute(sql`
+  const result: any = await readQuery(sql`
     SELECT productsorder_id, submission_id::text AS submission_id, basis, amount_cents, cap_cents, approved_by
       FROM settlement_approvals WHERE productsorder_id IN ${idListOf(ids)}`);
   return (result?.rows ?? result ?? []).map((r: any) => ({

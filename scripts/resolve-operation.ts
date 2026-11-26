@@ -23,7 +23,7 @@
  * conditional update `WHERE state = 'unresolved'`, recording who resolved it
  * and the evidence.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/resolve-operation.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/resolve-operation.ts \
  *     --op <uuid> --done|--rejected --evidence "<gid / notes>" [--order <gid>] [--by <name>] [--write]
  *
  * Moves no money itself and imports nothing that can.
@@ -56,7 +56,11 @@ async function main() {
   console.log("op      :", op.id, op.kind, op.scopeKey, "state:", op.state, "attempt:", op.attempt);
   console.log("amount  :", (op.amountCents / 100).toFixed(2), op.currency, "members:", op.members.join(","));
   console.log("error   :", op.error ?? "(none)");
+  // Its write capability, minted here (F1 spec §11, G2): the operator running it.
+  const { systemTarget } = await import("@/lib/server/identity");
+  const job = systemTarget("resolve-operation");
   const outcome = await resolveOperation(
+    job,
     op,
     {
       verdict: values.done ? "done" : "rejected",

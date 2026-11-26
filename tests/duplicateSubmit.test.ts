@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { customerCtx } from "./support/verified";
 
 // Resubmitting booked a SECOND Correos label. Production, 2026-08-10 07:41:
 // order #311148 sent FIVE "Tu devolución se ha creado correctamente" emails in
@@ -56,11 +57,11 @@ vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
 
 // Nothing to pay, so returnFunction stays on the free path instead of leaving
 // for Stripe.
-vi.mock("@/actions/payments", () => ({
-  createStripeUrl: async () => ({ data: null, submissionId: "sub-1" }),
+vi.mock("@/lib/server/payments", () => ({
+  createStripeUrl: async (orderId: string) => ({ ok: true, url: null, submission: { id: "sub-1", orderId } }),
 }));
 
-vi.mock("@/db/submissions", () => ({ acceptFreeSubmission: async () => true }));
+vi.mock("@/lib/server/submissionScope", () => ({ acceptFreeSubmission: async () => true }));
 
 // Its own duplicate guard is already tested; here it must not be what saves us.
 vi.mock("@/lib/submissionConfirmation", () => ({
@@ -76,7 +77,7 @@ vi.mock("@/db/queries", () => ({
 }));
 
 // Persist what the code writes, so the second submit sees the first one's work.
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, any>) => {
@@ -86,7 +87,7 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("axios", () => ({
   default: {
@@ -104,12 +105,14 @@ vi.mock("axios", () => ({
 }));
 
 async function submit() {
-  const { returnFunction } = await import("@/actions/return");
-  try {
-    await returnFunction(order.id, false, order.email);
-  } catch (e: any) {
-    if (e?.message !== REDIRECTED) throw e;
-  }
+  // The handler behind `submitReturn` (F1), called with the context
+  // `customerAction` builds. An absent claim is sent as the non-SELF default.
+  const { submitReturnHandler } = await import("@/lib/server/handlers/customer/submitReturn");
+  const result = await submitReturnHandler(await customerCtx(order.id), {
+    payout: "refund",
+    method: ("CORREOS") as any,
+  });
+  return result;
 }
 
 beforeEach(() => {

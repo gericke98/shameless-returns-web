@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseEurosToCents } from "../actions/parseEurosToCents";
+import { parseEurosToCents } from "../lib/server/parseEurosToCents";
 
 // This suite must be importable and runnable without a DATABASE_URL: it
 // imports only the pure `parseEurosToCents` helper from

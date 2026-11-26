@@ -34,7 +34,7 @@ vi.mock("@/db/queries", () => ({
   getOrderByNumberFresh: async () => found.order,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (v: unknown) => {
@@ -44,12 +44,12 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 // Mocked so an ops alert is not counted as a customer email: `alertOps` posts
 // to the same Postmark endpoint the axios mock below captures.
 const alerts: string[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string) => {
     alerts.push(subject);
   },

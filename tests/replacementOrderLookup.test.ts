@@ -6,7 +6,7 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("@/db/queries", () => ({}));
-vi.mock("@/db/drizzle", () => ({ default: {}, transact: async () => [] }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {}, transact: async () => [] }))()));
 let FUNDING: any = { kind: "not-settlement" };
 vi.mock("@/db/replacementLines", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/db/replacementLines")>()),
@@ -14,7 +14,7 @@ vi.mock("@/db/replacementLines", async (importOriginal) => ({
 }));
 const alerts: string[] = [];
 const bodies: string[] = [];
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => { alerts.push(subject); bodies.push(body); },
 }));
 
@@ -32,7 +32,7 @@ beforeEach(() => {
 });
 
 async function plan(order: any) {
-  const { planReplacementOrder } = await import("@/actions/replacementOrder");
+  const { planReplacementOrder } = await import("@/lib/server/replacementOrder");
   return planReplacementOrder(order);
 }
 

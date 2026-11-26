@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 
 // Task 4: a degraded exchange price (basis "median" or "none" — the original
 // variant has left the catalogue) must reach a human BEFORE the customer is
@@ -102,8 +103,8 @@ vi.mock("@/lib/fulfillmentLines", () => ({
   resolveFulfillmentLineItems: async (lines: Array<{ productsorderId: number }>) =>
     new Map(lines.map((l) => [l.productsorderId, `gid://shopify/FulfillmentLineItem/${l.productsorderId}`])),
 }));
-vi.mock("@/db/submissions", () => ({
-  proposeSubmission: async () => ({ ok: true, id: "sub-1" }),
+vi.mock("@/lib/server/submissionScope", () => ({
+  proposeSubmission: async (orderId: string) => ({ ok: true, submission: { id: "sub-1", orderId } }),
   attachStripeSession: async () => true,
 }));
 vi.mock("@/lib/orderAccess", () => ({ hasOrderAccess: async () => true }));
@@ -131,7 +132,7 @@ vi.mock("@/lib/stripe", () => ({
   },
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -148,9 +149,9 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
   it("stays silent for an ordinary, fully-resolved exchange", async () => {
     fees = CHARGED_FEES;
     order.products = [healthyLine()];
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
-    await createStripeUrl(order.id, order.email, false, "COURIER" as any);
+    await createStripeUrl(vid(order.id), false, "COURIER" as any);
 
     expect(alerts).toHaveLength(0);
   });
@@ -158,9 +159,9 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
   it("alerts before charging, and truthfully says a charge is coming, when a replacement was priced on a fallback", async () => {
     fees = CHARGED_FEES;
     order.products = [degradedLine("10.00")];
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
-    const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
+    const result = await createStripeUrl(vid(order.id), false, "COURIER" as any);
 
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — charging");
@@ -171,7 +172,7 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     // "no charge" wording either.
     expect(alerts[0]?.body).not.toContain("NOT charged");
     // The charge itself is unaffected by the alert.
-    expect(result.data).toBe("https://checkout.stripe.com/cs_1");
+    expect(result).toMatchObject({ ok: true, url: "https://checkout.stripe.com/cs_1" });
     expect(sessionsCreated).toHaveLength(1);
   });
 
@@ -183,11 +184,11 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     // but the alert must say so, not claim a charge happened.
     fees = ZERO_FEES;
     order.products = [degradedLine("80.00")]; // 80.00 return vs 69.00 exchange
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
-    const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
+    const result = await createStripeUrl(vid(order.id), false, "COURIER" as any);
 
-    expect(result).toEqual({ data: null, submissionId: "sub-1" });
+    expect(result).toEqual({ ok: true, url: null, submission: vsub(order.id, "sub-1") });
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — no charge");
     expect(alerts[0]?.body).toContain(order.id);
@@ -205,11 +206,11 @@ describe("createStripeUrl alerts on a degraded exchange price", () => {
     // reaching Stripe, on the SECOND early return, not the first.
     fees = ZERO_FEES;
     order.products = [degradedLine("68.80")];
-    const { createStripeUrl } = await import("@/actions/payments");
+    const { createStripeUrl } = await import("@/lib/server/payments");
 
-    const result = await createStripeUrl(order.id, order.email, false, "COURIER" as any);
+    const result = await createStripeUrl(vid(order.id), false, "COURIER" as any);
 
-    expect(result).toEqual({ data: null, submissionId: "sub-1" });
+    expect(result).toEqual({ ok: true, url: null, submission: vsub(order.id, "sub-1") });
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.subject).toBe("EXCHANGE PRICED ON A FALLBACK — no charge");
     expect(alerts[0]?.body).toContain(order.id);

@@ -7,7 +7,10 @@ import { useState, useTransition, useRef, useEffect, useMemo } from "react";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Product } from "@/types";
 import { productsOrder } from "@/db/schema";
-import { anularOrder, updateOrder } from "@/actions/updateOrder";
+import { clearLineSelection, setLineSelection } from "@/actions/lines";
+import { sharedRefusalKey, useCallAction } from "@/lib/callAction";
+import { isOfferedReplacement } from "@/lib/replacementCatalogue";
+import type { ReasonKey } from "@/placeholder";
 import { ACTIONS, REASON_KEYS } from "@/placeholder";
 import { useT } from "@/lib/i18n/context";
 import { toReasonKey } from "@/lib/reasons";
@@ -16,6 +19,10 @@ import {
   replacementPriceForVariant,
   type PricedLine,
 } from "@/lib/replacementPricing";
+
+/** The dialog offers exactly what the server accepts (`isOfferedReplacement`). */
+const offered = (product: Product, variant: { inventoryQuantity: number }) =>
+  isOfferedReplacement({ productStatus: product.status, inventoryQuantity: variant.inventoryQuantity });
 
 type Props = {
   product: Product;
@@ -62,7 +69,7 @@ export const FormProduct = ({
         );
 
         // Only use existing variant if it has stock
-        if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+        if (existingVariant && offered(existingProduct, existingVariant.node)) {
           return orderProduct.new_variant_title;
         }
       }
@@ -84,7 +91,7 @@ export const FormProduct = ({
         );
 
         // Only use existing variant if it has stock
-        if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+        if (existingVariant && offered(existingProduct, existingVariant.node)) {
           return orderProduct.new_variant_id;
         }
       }
@@ -143,7 +150,7 @@ export const FormProduct = ({
       (v) => v.node.id === orderProduct.new_variant_id
     );
 
-    if (existingVariant && existingVariant.node.inventoryQuantity > 0) {
+    if (existingVariant && offered(newProduct, existingVariant.node)) {
       // Keep the existing variant if it has stock
       setVariantId(orderProduct.new_variant_id);
       setSize(orderProduct.new_variant_title || existingVariant.node.title);
@@ -221,13 +228,35 @@ export const FormProduct = ({
     };
   }, []);
 
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const callAction = useCallAction();
+
+  /** A refusal or no answer: the dialog stays open, nothing is voided, no callbacks. */
+  const showRefusal = (reason: string) => {
+    if (reason === "no-session") return;
+    if (reason === "not-editable") return setSaveError(t.action.notEditable);
+    if (reason === "variant-not-offered") return setSaveError(t.action.variantNotOffered);
+    setSaveError(t.action[sharedRefusalKey(reason) ?? "failed"]);
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSaveError(null);
     const formData = new FormData(e.currentTarget);
+    const isExchange = formData.get("accion") === ACTIONS.CHANGE;
 
     try {
-      await updateOrder(formData);
+      const outcome = await callAction(setLineSelection, {
+        expectedOrderId: orderProduct.orderId ?? "",
+        rowId: orderProduct.id,
+        action: isExchange ? "CAMBIO" : "DEVOLUCIÓN",
+        reason: String(formData.get("motivo") ?? "") as ReasonKey,
+        notes: String(formData.get("notas") ?? ""),
+        ...(isExchange ? { newVariantId: String(formData.get("variantId") ?? "") } : {}),
+      });
+      if (outcome.kind === "unknown") return setSaveError(t.action.notSaved);
+      if (!outcome.result.ok) return showRefusal(outcome.result.reason);
       setChanged(!changed);
       if (onItemChange) {
         // Create a proper structure for the updated item based on console logs
@@ -259,8 +288,6 @@ export const FormProduct = ({
         onItemChange(updatedItem as any);
       }
       onSuccess();
-    } catch (error) {
-      console.error("updateOrder failed", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -268,8 +295,14 @@ export const FormProduct = ({
 
   const handleAnular = async () => {
     setIsSubmitting(true);
+    setSaveError(null);
     try {
-      await anularOrder(orderProduct.id, orderProduct.orderId ?? "");
+      const outcome = await callAction(clearLineSelection, {
+        expectedOrderId: orderProduct.orderId ?? "",
+        rowId: orderProduct.id,
+      });
+      if (outcome.kind === "unknown") return setSaveError(t.action.notSaved);
+      if (!outcome.result.ok) return showRefusal(outcome.result.reason);
       setChanged(!changed);
       if (onItemChange) {
         // Create a proper structure with products array
@@ -280,8 +313,6 @@ export const FormProduct = ({
         onItemChange(updatedItem);
       }
       onSuccess();
-    } catch (error) {
-      console.error("anularOrder failed", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -330,9 +361,7 @@ export const FormProduct = ({
     });
 
     // Find the first variant with stock
-    const firstAvailable = sortedVariants.find(
-      (v) => v.node.inventoryQuantity > 0
-    );
+    const firstAvailable = sortedVariants.find((v) => offered(product, v.node));
 
     return firstAvailable;
   };
@@ -355,7 +384,7 @@ export const FormProduct = ({
     new_product_change?.variants.edges.map((variant) => ({
       value: variant.node.title,
       label: variant.node.title,
-      disabled: variant.node.inventoryQuantity === 0,
+      disabled: !offered(new_product_change, variant.node),
     })) || [];
 
   const showNewProduct = action === ACTIONS.CHANGE && motivo !== "";
@@ -518,8 +547,9 @@ export const FormProduct = ({
                           0
                         );
 
-                        // Check if product has any variants with stock
-                        const hasStock = totalStock > 0;
+                        // Offered while any of its sizes is (the same
+                        // predicate the server checks the choice against).
+                        const hasStock = p.variants.edges.some((v) => offered(p, v.node));
 
                         // Get the first variant with stock or the first variant if none have stock
                         const firstVariant = p.variants.edges[0]?.node;
@@ -663,6 +693,12 @@ export const FormProduct = ({
               />
             )}
           </div>
+        )}
+
+        {saveError && (
+          <p role="alert" className="text-sm text-red-600 mt-4">
+            {saveError}
+          </p>
         )}
 
         <button

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { dispatchOpsAlerts } from "@/actions/opsAlertOutbox";
+import { dispatchOpsAlerts } from "@/lib/server/opsAlertOutbox";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Deliver the durable ops-alert outbox (`ops_alerts`).
@@ -12,15 +13,8 @@ import { dispatchOpsAlerts } from "@/actions/opsAlertOutbox";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-/** Same fail-closed rule as the other crons: unset secret = closed. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

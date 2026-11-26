@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { vid } from "./support/verified";
 
 // Six customers, three days, zero emails, and not one signal.
 //
@@ -62,16 +63,16 @@ vi.mock("@/db/queries", () => ({
   getLatestReturnLabel: async () => null,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: () => chain,
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
@@ -90,8 +91,8 @@ vi.mock("axios", () => ({
 }));
 
 async function run() {
-  const { createShippingLabel } = await import("@/actions/shipping");
-  return createShippingLabel(ORDER.id);
+  const { createShippingLabel } = await import("@/lib/server/shipping");
+  return createShippingLabel(vid(ORDER.id));
 }
 
 beforeEach(() => {

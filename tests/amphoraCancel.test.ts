@@ -27,7 +27,7 @@ beforeEach(() => {
 
 describe("cancelAmphoraReturn", () => {
   it("PATCHes the cancel endpoint for that return", async () => {
-    const { cancelAmphoraReturn } = await import("@/actions/amphora");
+    const { cancelAmphoraReturn } = await import("@/lib/server/amphora");
 
     await cancelAmphoraReturn("SHP 123");
 
@@ -37,7 +37,7 @@ describe("cancelAmphoraReturn", () => {
   });
 
   it("returns the cancelled return", async () => {
-    const { cancelAmphoraReturn } = await import("@/actions/amphora");
+    const { cancelAmphoraReturn } = await import("@/lib/server/amphora");
 
     const result = await cancelAmphoraReturn("SHP 123");
 
@@ -47,7 +47,7 @@ describe("cancelAmphoraReturn", () => {
   it("throws when Amphora refuses, so the caller can abort", async () => {
     // The orchestrator treats this as fatal: nothing else may run, because a
     // refund past this point would leave the warehouse expecting a parcel.
-    const { cancelAmphoraReturn } = await import("@/actions/amphora");
+    const { cancelAmphoraReturn } = await import("@/lib/server/amphora");
     failNext = true;
 
     await expect(cancelAmphoraReturn("SHP 123")).rejects.toThrow();

@@ -20,6 +20,19 @@ export const es = {
     sessionExpired: "Vuelve a buscar tu pedido para continuar.",
     tooManyAttempts:
       "Demasiados intentos. Espera unos minutos y vuelve a probar.",
+    // The lookup's refusals (lib/server/handlers/lookup.ts), by key. One
+    // message for an unknown number and one for a wrong email, as before.
+    invalidInput: "Introduce un número de pedido válido.",
+    notFound: "Introduce un pedido válido.",
+    mismatch: "Introduce un email válido.",
+    contactSupport:
+      "Escríbenos a hello@shamelesscollective.com con tu número de pedido para devolver productos de este pedido.",
+    notYetShipped:
+      "Estamos preparando tu pedido. Escríbenos a hello@shamelesscollective.com si necesitas algún cambio.",
+    outsideWindow:
+      "Solo podemos gestionar cambios y devoluciones en los 60 días siguientes a la entrega, y tu pedido se entregó hace más de 60 días.",
+    failed:
+      "No hemos podido buscar tu pedido. Inténtalo de nuevo en unos minutos.",
   },
   first: {
     orderTitle: "Pedido",
@@ -179,6 +192,24 @@ export const es = {
     title: "Algo ha salido mal",
     body: "No hemos podido completar la operación. Vuelve a intentarlo. Si el problema continúa, escríbenos a hello@shamelesscollective.com con tu número de pedido.",
     retry: "Reintentar",
+  },
+  action: {
+    // Shared answers to a server action that did not do what was asked
+    // (lib/callAction.ts, F1 spec §7). Domain refusals with their own words
+    // (tracking, cancel) keep them in their own sections.
+    notSaved: "No se ha guardado. Comprueba tu conexión e inténtalo de nuevo.",
+    failed:
+      "No hemos podido completar la operación. Vuelve a intentarlo. Si el problema continúa, escríbenos a hello@shamelesscollective.com con tu número de pedido.",
+    orderMismatch:
+      "Has abierto otro pedido en otra pestaña. Recarga esta página para seguir con el pedido correcto.",
+    notAdmin: "Tu sesión de administrador ha caducado. Vuelve a entrar.",
+    invalidInput: "Revisa los datos e inténtalo de nuevo.",
+    nothingSelected: "No has elegido ningún artículo. Vuelve atrás y elige qué quieres devolver o cambiar.",
+    submissionInProgress: "Ya estamos procesando tu solicitud. Espera unos segundos antes de volver a intentarlo.",
+    notEditable: "Este artículo ya no se puede cambiar. Recarga la página.",
+    variantNotOffered: "Esa talla ya no está disponible. Elige otra.",
+    incomplete: "Completa todos los campos obligatorios de la dirección.",
+    invalidDelivery: "Revisa la dirección de entrega del cambio.",
   },
   cancel: {
     heading: "Tu devolución",

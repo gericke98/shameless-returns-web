@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import axios from "axios";
 import { eq } from "drizzle-orm";
-import db from "@/db/drizzle";
+import db, { writeDb } from "@/db/drizzle";
+import { systemTarget } from "@/lib/server/identity";
 import { orders as ordersTable } from "@/db/schema";
 import { getParcelsAwaitingTracking } from "@/db/queries";
-import { obtainLastStatus } from "@/actions/shipping";
+import { obtainLastStatus } from "@/lib/server/shipping";
 import { decideTrackingUpdate } from "@/lib/trackingUpdate";
 import { buildTrackingUpdateEmail } from "@/lib/emails";
 import { isInternationalOrder } from "@/lib/countries";
 import { tracksWithCorreos } from "@/lib/trackingStatus";
 import { readLocale } from "@/lib/i18n";
-import { alertOps } from "@/actions/opsAlert";
+import { alertOps } from "@/lib/server/opsAlert";
+import { verifyCronRequest } from "@/lib/server/cron";
 
 /**
  * Tell customers where their return has got to.
@@ -43,14 +45,6 @@ export const dynamic = "force-dynamic";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
-/** Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Unset secret =
- *  closed, never open — this route emails customers. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  return req.headers.get("authorization") === `Bearer ${secret}`;
-}
-
 /** Empty and whitespace fall back, because `Number("")` is 0 and a cap of zero
  *  or a silent default is not what an operator who left a box blank meant. */
 function intEnv(name: string, fallback: number): number {
@@ -79,7 +73,7 @@ async function sendEmail(payload: Record<string, unknown>): Promise<number> {
 }
 
 export async function GET(req: Request) {
-  if (!authorized(req)) {
+  if (!verifyCronRequest(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -210,7 +204,7 @@ export async function GET(req: Request) {
         // Persist, never notify. The cap does not apply: a partial seed is
         // worse than none, because the parcels it missed would still be told
         // stale news on the first live run.
-        await db
+        await writeDb(systemTarget(String(order.id), "tracking-sync"))
           .update(ordersTable)
           .set(decision.persist)
           .where(eq(ordersTable.id, order.id));
@@ -229,7 +223,7 @@ export async function GET(req: Request) {
       // Persist BEFORE emailing. The next daily run then finds the key
       // unchanged and does nothing, so nobody can be told twice. The cost is
       // that a failed send is not retried — hence the loud log below.
-      await db
+      await writeDb(systemTarget(String(order.id), "tracking-sync"))
         .update(ordersTable)
         .set(decision.persist)
         .where(eq(ordersTable.id, order.id));

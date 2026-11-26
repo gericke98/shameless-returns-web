@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildCreateReturnBody } from "@/actions/amphora";
+import { buildCreateReturnBody } from "@/lib/server/amphora";
 
 // Regression cover for the defect that stranded every international return.
 //

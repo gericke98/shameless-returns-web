@@ -11,7 +11,7 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return { ...actual, cache: (fn: unknown) => fn };
 });
-vi.mock("@/db/drizzle", () => ({ default: {} }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {} }))()));
 
 const RECEIVED_LONG_AGO = "2026-08-17T12:56:05";
 
@@ -38,7 +38,7 @@ const alertBodies: string[] = [];
 /** The clock the route reads. Advanced only by the settle mock below. */
 const clock = { t: 0 };
 
-vi.mock("@/actions/amphora", () => ({ getAmphoraReturns: async () => state.returns }));
+vi.mock("@/lib/server/amphora", () => ({ getAmphoraReturns: async () => state.returns }));
 vi.mock("@/db/queries", () => ({
   getOrdersWithUnsettledReturns: async () => state.orders,
   getReturnStatusesByIds: async () => state.shopifyStatuses,
@@ -50,10 +50,13 @@ vi.mock("@/db/queries", () => ({
 const rowVariant: Record<number, string> = {};
 const rowOrder: Record<number, string> = {};
 const settleCalls: Array<[string, number[]]> = [];
+const settleCaps: unknown[] = [];
 const lookups: number[] = [];
 vi.mock("@/lib/settlement/legacy", () => ({
-  submissionForRow: async (id: number) => {
+  submissionForRow: async (orderId: string, id: number) => {
     lookups.push(id);
+    // The cron mints the order the row was selected under (F1 §10).
+    if (String(orderId) !== String(rowOrder[id])) return { ok: false, held: "no-such-line" };
     return { ok: true, submissionId: `sub-${rowOrder[id]}` };
   },
 }));
@@ -61,8 +64,9 @@ vi.mock("@/lib/settlement/ledger", () => ({
   submissionOfRow: async (id: number) => `sub-${rowOrder[id]}`,
 }));
 vi.mock("@/lib/settlement/settle", () => ({
-  settleSubmission: async (submissionId: string, ids: number[]) => {
+  settleSubmission: async (cap: unknown, submissionId: string, ids: number[]) => {
     clock.t += state.msPerSettle;
+    settleCaps.push(cap);
     settleCalls.push([submissionId, ids]);
     const variants = ids.map((id) => rowVariant[id]);
     if (state.settleThrowsOn && variants.includes(state.settleThrowsOn)) throw new Error("shopify down");
@@ -84,14 +88,14 @@ vi.mock("@/lib/settlement/settle", () => ({
 // The outbox is tested on its own in tests/opsAlertOutbox.test.ts; here it
 // only records what the route queued.
 const queued: Array<{ dedupeKey: string; subject: string; body: string }> = [];
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlerts: async (list: any[]) => {
     queued.push(...list);
     return { failed: 0 };
   },
 }));
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push(subject);
     alertBodies.push(body);
@@ -137,6 +141,7 @@ beforeEach(() => {
   state.siblingsOf = {};
   state.statusOf = {};
   settleCalls.length = 0;
+  settleCaps.length = 0;
   lookups.length = 0;
   state.msPerSettle = 0;
   clock.t = 0;
@@ -342,6 +347,8 @@ describe("auto-approve cron — honest reporting", () => {
     const body = await (await call({ authorization: "Bearer s3cret" })).json();
 
     expect(settleCalls).toEqual([["sub-1001", [10011, 10012]]]);
+    // Under the cron's own capability, minted at its entry (F1 spec §11).
+    expect(settleCaps).toEqual([{ job: "auto-approve" }]);
     expect(body.settled).toBe(2); // both lines are counted
     expect(body.held).toEqual([]);
   });

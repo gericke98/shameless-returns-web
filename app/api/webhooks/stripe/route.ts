@@ -1,11 +1,13 @@
-import { createShippingLabel } from "@/actions/shipping";
-import { createInternationalReturn } from "@/actions/amphoraReturn";
-import { createSelfBookedReturn } from "@/actions/selfBookedReturn";
-import { alertOps } from "@/actions/opsAlert";
+import { createShippingLabel } from "@/lib/server/shipping";
+import { createInternationalReturn } from "@/lib/server/amphoraReturn";
+import { createSelfBookedReturn } from "@/lib/server/selfBookedReturn";
+import { alertOps } from "@/lib/server/opsAlert";
 import { confirmSubmission, revertFinalOrder } from "@/lib/submissionConfirmation";
-import { enqueueOpsAlert } from "@/actions/opsAlertOutbox";
-import { acceptPaidSubmission, getSubmission, type PaidOutcome } from "@/db/submissions";
-import db from "@/db/drizzle";
+import { enqueueOpsAlert } from "@/lib/server/opsAlertOutbox";
+import type { PaidOutcome } from "@/db/submissions";
+import { verifiedByStripeSignature } from "@/lib/server/identity";
+import { acceptPaidSubmission, loadSubmission, submissionOf } from "@/lib/server/submissionScope";
+import db, { writeDb } from "@/db/drizzle";
 import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
@@ -225,7 +227,10 @@ export async function POST(req: Request) {
       if (!metadata) {
         return new NextResponse("Metadata is required", { status: 400 });
       }
-      const { id, isCredit } = metadata;
+      // The signature over this event was verified by `constructEvent` above,
+      // so the order its metadata names is one Stripe vouches we created this
+      // checkout for (F1 spec §1): the credential for every write below.
+      const id = verifiedByStripeSignature(metadata);
       const paymentIntentId =
         typeof session.payment_intent === "string"
           ? session.payment_intent
@@ -244,15 +249,21 @@ export async function POST(req: Request) {
           await alertPaymentUnbound(id, session, paymentIntentId);
           return NextResponse.json({ received: true });
         }
+        // The submission must be THIS order's: a submission id alone is not
+        // a capability (F1 spec §1). One the order does not own is reported
+        // exactly like one that does not exist.
+        const submission = await submissionOf(id, submissionId);
         // Accept only the payment this submission asked for: this session,
         // this amount, EUR, paid.
-        const outcome: PaidOutcome = await acceptPaidSubmission(submissionId, {
-          sessionId: session.id,
-          amountTotal: session.amount_total ?? null,
-          currency: session.currency ?? null,
-          paymentStatus: session.payment_status ?? null,
-          paymentIntent: paymentIntentId,
-        });
+        const outcome: PaidOutcome = submission
+          ? await acceptPaidSubmission(submission, {
+              sessionId: session.id,
+              amountTotal: session.amount_total ?? null,
+              currency: session.currency ?? null,
+              paymentStatus: session.payment_status ?? null,
+              paymentIntent: paymentIntentId,
+            })
+          : { kind: "unknown-submission" };
 
         // A redelivery of a payment already accepted: the first delivery owns
         // the confirmation and the booking. Running them again could race it
@@ -260,8 +271,13 @@ export async function POST(req: Request) {
         if (outcome.kind === "duplicate") {
           return NextResponse.json({ received: true });
         }
-        if (outcome.kind !== "accepted") {
-          await alertPaymentNotConfirmed(id, session, paymentIntentId, outcome);
+        if (outcome.kind !== "accepted" || !submission) {
+          await alertPaymentNotConfirmed(
+            id,
+            session,
+            paymentIntentId,
+            outcome.kind === "accepted" ? { kind: "unknown-submission" } : outcome
+          );
           return NextResponse.json({ received: true });
         }
 
@@ -270,7 +286,7 @@ export async function POST(req: Request) {
         // intent without a human searching Stripe by hand.
         if (paymentIntentId) {
           try {
-            await db
+            await writeDb(id)
               .update(orders)
               .set({ stripePaymentIntent: paymentIntentId })
               .where(eq(orders.id, id));
@@ -281,12 +297,12 @@ export async function POST(req: Request) {
 
         // The lane is the one agreed and paid for, not whatever the order row
         // says by now: another tab can have changed it since checkout.
-        const agreed = await getSubmission(submissionId);
+        const agreed = await loadSubmission(submission);
         if (!agreed) throw new Error(`order ${id}: submission ${submissionId} vanished after acceptance`);
         const method = agreed.submission.returnMethod as ReturnMethod;
 
         // // First update the database
-        await confirmSubmission(submissionId);
+        await confirmSubmission(submission);
         // // // Then create the return shipment (Correos label or Amphora collection)
         const statusLabel =
           method === "SELF"

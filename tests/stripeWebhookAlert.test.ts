@@ -51,15 +51,15 @@ const behaviour: {
 const calls: string[] = [];
 const outbox: Array<{ dedupeKey: string; subject: string; body: string }> = [];
 
-vi.mock("@/actions/opsAlert", () => ({
+vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async (subject: string, body: string) => {
     alerts.push({ subject, body });
   },
 }));
 
 vi.mock("@/lib/submissionConfirmation", () => ({
-  confirmSubmission: async (submissionId: string) => {
-    calls.push(`confirm:${submissionId}`);
+  confirmSubmission: async (sub: { id: string }) => {
+    calls.push(`confirm:${sub.id}`);
     if (behaviour.confirmThrows) {
       throw new Error("returnCreate failed: The presentment currency of the order needs to be used.");
     }
@@ -69,31 +69,33 @@ vi.mock("@/lib/submissionConfirmation", () => ({
   },
 }));
 
-vi.mock("@/actions/opsAlertOutbox", () => ({
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
   enqueueOpsAlert: async (alert: { dedupeKey: string; subject: string; body: string }) => {
     outbox.push(alert);
   },
 }));
 
-vi.mock("@/db/submissions", () => ({
-  acceptPaidSubmission: async (id: string, evidence: { sessionId: string }) => {
-    calls.push(`accept:${id}:${evidence.sessionId}`);
+vi.mock("@/lib/server/submissionScope", () => ({
+  // The submission belongs to the order the signed metadata names (F1).
+  submissionOf: async (orderId: string, id: string) => ({ id, orderId }),
+  acceptPaidSubmission: async (sub: { id: string }, evidence: { sessionId: string }) => {
+    calls.push(`accept:${sub.id}:${evidence.sessionId}`);
     return behaviour.outcome;
   },
-  getSubmission: async (id: string) => ({
-    submission: { id, returnMethod: behaviour.agreedMethod },
+  loadSubmission: async (sub: { id: string }) => ({
+    submission: { id: sub.id, returnMethod: behaviour.agreedMethod },
     lines: [],
   }),
 }));
 
-vi.mock("@/actions/shipping", () => ({
+vi.mock("@/lib/server/shipping", () => ({
   createShippingLabel: async () => {
     calls.push("book:CORREOS");
     return behaviour.labelStatus;
   },
 }));
 
-vi.mock("@/actions/amphoraReturn", () => ({
+vi.mock("@/lib/server/amphoraReturn", () => ({
   createInternationalReturn: async () => {
     calls.push("book:AMPHORA");
     return behaviour.labelStatus;
@@ -101,7 +103,7 @@ vi.mock("@/actions/amphoraReturn", () => ({
   isInternationalOrder: () => false,
 }));
 
-vi.mock("@/actions/selfBookedReturn", () => ({
+vi.mock("@/lib/server/selfBookedReturn", () => ({
   createSelfBookedReturn: async () => {
     calls.push("book:SELF");
     return behaviour.labelStatus;
@@ -115,7 +117,7 @@ vi.mock("@/db/queries", () => ({
   getOrderByIdFresh: async () => ORDER,
 }));
 
-vi.mock("@/db/drizzle", () => {
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => {
   const chain: any = {
     update: () => chain,
     set: (values: Record<string, unknown>) => {
@@ -125,7 +127,7 @@ vi.mock("@/db/drizzle", () => {
     where: () => Promise.resolve(),
   };
   return { default: chain };
-});
+})()));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/headers", () => ({
@@ -230,7 +232,7 @@ describe("the Stripe webhook alerts when money is taken and no return exists", (
     // The worst state: money taken, return possibly half-created, and the
     // database now disagreeing with reality. This must never be the quiet one.
     behaviour.confirmThrows = true;
-    const { alertOps } = await import("@/actions/opsAlert");
+    const { alertOps } = await import("@/lib/server/opsAlert");
     expect(typeof alertOps).toBe("function");
 
     await post();

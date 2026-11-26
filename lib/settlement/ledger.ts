@@ -7,7 +7,8 @@
 //
 // NOT "use server": nothing here may be callable from a browser.
 import { sql, type SQL } from "drizzle-orm";
-import db, { transact } from "@/db/drizzle";
+import db, { readQuery, writeDb } from "@/db/drizzle";
+import type { WriteCapability } from "@/lib/server/identity";
 import {
   LEASE_MINUTES,
   ROOT_REFUND_REPLAY_HOURS,
@@ -64,13 +65,13 @@ const replayWindow = sql.raw(`interval '${ROOT_REFUND_REPLAY_HOURS} hours'`);
 // ── reads ──────────────────────────────────────────────────────────────────
 
 export async function getOperation(id: string): Promise<Operation | null> {
-  const rows = rowsOf(await db.execute(sql`SELECT * FROM settlement_operations WHERE id = ${id}`));
+  const rows = rowsOf(await readQuery(sql`SELECT * FROM settlement_operations WHERE id = ${id}`));
   return rows[0] ? toOperation(rows[0]) : null;
 }
 
 export async function operationsOf(submissionId: string): Promise<Operation[]> {
   const rows = rowsOf(
-    await db.execute(
+    await readQuery(
       sql`SELECT * FROM settlement_operations WHERE submission_id = ${submissionId} ORDER BY created_at, scope_key`
     )
   );
@@ -109,11 +110,11 @@ export async function loadSubmission(
   submissionId: string
 ): Promise<{ submission: SubmissionForAdmission; lines: SubmissionLineRow[] } | null> {
   const [s] = rowsOf(
-    await db.execute(sql`SELECT * FROM return_submissions WHERE id = ${submissionId}`)
+    await readQuery(sql`SELECT * FROM return_submissions WHERE id = ${submissionId}`)
   );
   if (!s) return null;
   const lines = rowsOf(
-    await db.execute(
+    await readQuery(
       sql`SELECT * FROM submission_lines WHERE submission_id = ${submissionId} ORDER BY productsorder_id`
     )
   );
@@ -153,8 +154,10 @@ export async function loadSubmission(
  * none and so belongs to nothing.
  */
 export async function submissionOfRow(productsorderId: number): Promise<string | null> {
+  // Read-only by construction (F1 spec §10): shared with admission and admin
+  // approvals, so it takes no order capability; Postgres refuses any write.
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT sl.submission_id
         FROM submission_lines sl
         JOIN return_submissions s ON s.id = sl.submission_id
@@ -175,7 +178,7 @@ export async function submissionOfRow(productsorderId: number): Promise<string |
 export async function submissionsOfRows(productsorderIds: readonly number[]): Promise<Map<number, string>> {
   if (productsorderIds.length === 0) return new Map();
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT sl.productsorder_id, sl.submission_id
         FROM submission_lines sl
         JOIN return_submissions s ON s.id = sl.submission_id
@@ -206,8 +209,9 @@ export async function standingReconciliations(
   approved: ReadonlyMap<number, ApprovalBasis> = new Map()
 ): Promise<Map<number, { opId: string; state: string; kind: string }>> {
   if (productsorderIds.length === 0) return new Map();
+  // Read-only by construction (F1 spec §10), as `submissionOfRow`.
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT m.po, o.id, o.state, o.kind
         FROM settlement_operations o
         JOIN return_submissions s ON s.id = o.submission_id AND s.state = 'reconciled'
@@ -231,7 +235,7 @@ export type Approval = { productsorderId: number; basis: ApprovalBasis; amountCe
 /** Santi's approvals (drizzle/0010) recorded with this submission, by line. */
 export async function approvalsOf(submissionId: string): Promise<Map<number, Approval>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT productsorder_id, basis, amount_cents FROM settlement_approvals WHERE submission_id = ${submissionId}
     `)
   );
@@ -261,13 +265,13 @@ export type NewOperation = {
  * statement. Zero rows from `s` means a concurrent admission bumped the
  * sequence, or a cancellation holds the submission: nothing is written.
  */
-export async function insertAdmission(input: {
+export async function insertAdmission(cap: WriteCapability, input: {
   submissionId: string;
   seenSeq: number;
   ops: NewOperation[];
   reverseFulfillment: Array<{ productsorder_id: number; rfo: string }>;
 }): Promise<{ admitted: boolean; inserted: number }> {
-  const result = await db.execute(sql`
+  const result = await writeDb(cap).execute(sql`
     WITH s AS (
       UPDATE return_submissions
          SET admission_seq = admission_seq + 1,
@@ -318,9 +322,9 @@ export async function insertAdmission(input: {
  * goes back through evidence and replay via `takeOver` (finding 1).
  * Every claim moves `lease_gen`, the worker fence.
  */
-export async function claim(opId: string, me: string): Promise<Operation | null> {
+export async function claim(cap: WriteCapability, opId: string, me: string): Promise<Operation | null> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       UPDATE settlement_operations o
          SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
              attempt = CASE WHEN o.state IN ('pending', 'rejected') THEN o.attempt + 1 ELSE o.attempt END,
@@ -349,9 +353,9 @@ export async function claim(opId: string, me: string): Promise<Operation | null>
  * worker fence `lease_gen` moves. A root_refund is re-sent only within 23 h
  * of its first dispatch.
  */
-export async function takeOver(op: Operation, me: string): Promise<Operation | null> {
+export async function takeOver(cap: WriteCapability, op: Operation, me: string): Promise<Operation | null> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       UPDATE settlement_operations o
          SET state = 'claimed', owner = ${me}, lease_gen = o.lease_gen + 1,
              lease_until = now() + ${lease}, updated_at = now()
@@ -375,9 +379,9 @@ export async function takeOver(op: Operation, me: string): Promise<Operation | n
  * this lease generation, and its lease alive. `dispatched_at` is kept across a
  * root_refund re-send so its 23 h replay window is measured from the first.
  */
-export async function dispatch(op: Operation, me: string): Promise<DispatchToken | null> {
+export async function dispatch(cap: WriteCapability, op: Operation, me: string): Promise<DispatchToken | null> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       UPDATE settlement_operations
          SET state = 'dispatched', dispatched_at = COALESCE(dispatched_at, now()), updated_at = now()
        WHERE id = ${op.id}
@@ -411,9 +415,9 @@ function fenceSql(id: string, fence: Fence): SQL {
  * and a durable alert (one per op) are ONE statement, so a refusal that keeps
  * repeating is in front of a human, not only in the ledger.
  */
-export async function recordRejected(op: Operation, fence: Fence, error: string, resolvedBy?: string) {
+export async function recordRejected(cap: WriteCapability, op: Operation, fence: Fence, error: string, resolvedBy?: string) {
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH r AS (
         UPDATE settlement_operations
            SET state = 'rejected', error = ${error.slice(0, 2000)}, updated_at = now(),
@@ -448,13 +452,14 @@ export async function recordRejected(op: Operation, fence: Fence, error: string,
  * statement, so the alert exists exactly when the state does.
  */
 export async function recordUnresolved(
+  cap: WriteCapability,
   op: Operation,
   fence: Fence,
   error: string,
   alert: { subject: string; body: string }
 ): Promise<boolean> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       WITH u AS (
         UPDATE settlement_operations
            SET state = 'unresolved', error = ${error.slice(0, 2000)}, updated_at = now()
@@ -566,6 +571,7 @@ const lockSubmission = (submissionId: string) =>
  * finishing together cannot both miss the line, nor settle it early.
  */
 export async function recordDone(
+  cap: WriteCapability,
   op: Operation,
   fence: Fence,
   effectRef: string,
@@ -620,7 +626,7 @@ export async function recordDone(
   }
   const doneStatement = sql`WITH ${sql.join(ctes, sql`, `)} SELECT count(*)::int AS done FROM d`;
 
-  const [, doneRows, settledRows] = await transact([
+  const [, doneRows, settledRows] = await writeDb(cap).transact([
     lockSubmission(op.submissionId),
     doneStatement,
     ...finalizeStatements(op.submissionId),
@@ -632,8 +638,8 @@ export async function recordDone(
 }
 
 /** Finalization alone, for recovery: a done op whose line was never settled. */
-export async function finalize(submissionId: string): Promise<number[]> {
-  const [, settledRows] = await transact([
+export async function finalize(cap: WriteCapability, submissionId: string): Promise<number[]> {
+  const [, settledRows] = await writeDb(cap).transact([
     lockSubmission(submissionId),
     ...finalizeStatements(submissionId),
   ]);
@@ -650,7 +656,7 @@ export async function finalize(submissionId: string): Promise<number[]> {
  *  to `recoverDispatched` (evidence first), never to `run`. */
 export async function recoverableOperations(limit: number): Promise<Operation[]> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT o.* FROM settlement_operations o
        WHERE ((o.state IN ('pending', 'rejected')
                AND (o.after IS NULL
@@ -679,7 +685,7 @@ export const hasDispatched = (op: Operation): boolean =>
  */
 export async function approvalsAwaitingAdmission(): Promise<Array<{ submissionId: string; lines: number[] }>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT a.submission_id::text AS submission_id, to_jsonb(array_agg(a.productsorder_id ORDER BY a.productsorder_id)) AS lines
         FROM settlement_approvals a
         JOIN return_submissions s ON s.id = a.submission_id
@@ -701,7 +707,7 @@ export async function approvalsAwaitingAdmission(): Promise<Array<{ submissionId
 /** Submissions with a done op and a line still unsettled. */
 export async function submissionsToFinalize(): Promise<string[]> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT DISTINCT sl.submission_id
         FROM submission_lines sl
        WHERE sl.settled_at IS NULL
@@ -715,7 +721,7 @@ export async function submissionsToFinalize(): Promise<string[]> {
 /** Cancellations that took a submission over an hour ago and never finished. */
 export async function stuckCancellations(): Promise<Array<{ id: string; orderId: string }>> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await readQuery(sql`
       SELECT id, order_id FROM return_submissions
        WHERE holder = 'cancellation' AND state <> 'cancelled'
          AND holder_since < now() - interval '1 hour'
@@ -730,9 +736,9 @@ export async function stuckCancellations(): Promise<Array<{ id: string; orderId:
  * nothing was refused by Shopify. The line then reads as unpaid to the next
  * reconciliation run, and is paid only once Santi approves it.
  */
-export async function recordReconciliationRejected(opId: string, evidence: string, by: string): Promise<boolean> {
+export async function recordReconciliationRejected(cap: WriteCapability, opId: string, evidence: string, by: string): Promise<boolean> {
   const rows = rowsOf(
-    await db.execute(sql`
+    await writeDb(cap).execute(sql`
       UPDATE settlement_operations o
          SET state = 'rejected', error = ${evidence.slice(0, 2000)}, resolved_by = ${by},
              evidence = ${JSON.stringify({ operator: evidence })}::jsonb, updated_at = now()

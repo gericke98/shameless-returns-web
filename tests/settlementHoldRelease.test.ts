@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { vid, vsub } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
@@ -14,7 +15,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 const env = settlementDatabase();
-vi.mock("@/db/drizzle", () => ({ default: env.db, transact: (s: any) => env.transact(s) }));
+vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: env.db, transact: (s: any) => env.transact(s), readQuery: (s: any) => env.readQuery(s) }))()));
 
 const answers: Record<string, (variables: any) => any> = {};
 const sent: Array<{ name: string; query: string; variables: any }> = [];
@@ -55,7 +56,7 @@ describe("releaseHoldForCancellation", () => {
   it("deletes the draft through the ledger's own document and clears the pointer", async () => {
     const seeded = await exchangeHeldBy("cancellation");
     answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: D, userErrors: [] } } });
-    expect(await (await hold()).releaseHoldForCancellation("100", [seeded.id])).toEqual({ released: true });
+    expect(await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).toEqual({ released: true });
     const { DRAFT_ORDER_DELETE } = await import("@/lib/settlement/effects");
     expect(sent.map((s) => s.query)).toEqual([DRAFT_ORDER_DELETE]);
     expect(sent[0].variables).toEqual({ input: { id: D } });
@@ -65,7 +66,7 @@ describe("releaseHoldForCancellation", () => {
   it("reports released with nothing sent when there is no hold", async () => {
     const seeded = await exchangeHeldBy("cancellation");
     await env.pg.query("UPDATE orders SET exchange_reservation_id=NULL");
-    expect(await (await hold()).releaseHoldForCancellation("100", [seeded.id])).toEqual({ released: true });
+    expect(await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).toEqual({ released: true });
     expect(sent).toEqual([]);
   });
 
@@ -73,7 +74,7 @@ describe("releaseHoldForCancellation", () => {
     const seeded = await exchangeHeldBy("cancellation");
     answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: null, userErrors: [{ message: "no" }] } } });
     answers.SettlementDraftOrder = () => ({ data: { draftOrder: { id: D } } });
-    expect((await (await hold()).releaseHoldForCancellation("100", [seeded.id])).released).toBe(false);
+    expect((await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).released).toBe(false);
     expect(await pointer()).toBe(D);
   });
 
@@ -81,13 +82,13 @@ describe("releaseHoldForCancellation", () => {
     const seeded = await exchangeHeldBy("cancellation");
     answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: null, userErrors: [{ message: "gone" }] } } });
     answers.SettlementDraftOrder = () => ({ data: { draftOrder: null } });
-    expect(await (await hold()).releaseHoldForCancellation("100", [seeded.id])).toEqual({ released: true });
+    expect(await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).toEqual({ released: true });
     expect(await pointer()).toBeNull();
   });
 
   it("sends nothing for a submission cancellation does not hold", async () => {
     const seeded = await exchangeHeldBy("settlement");
-    expect((await (await hold()).releaseHoldForCancellation("100", [seeded.id])).released).toBe(false);
+    expect((await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", seeded.id)])).released).toBe(false);
     expect(sent).toEqual([]);
     expect(await pointer()).toBe(D);
   });
@@ -96,7 +97,7 @@ describe("releaseHoldForCancellation", () => {
     const mine = await exchangeHeldBy("cancellation");
     const other = await seedSubmission(env.pg, { lines: [line(2, { action: "CAMBIO", newVariantId: V, payCents: 0 })] });
     expect(other.id).not.toBe(mine.id);
-    expect((await (await hold()).releaseHoldForCancellation("100", [mine.id])).released).toBe(false);
+    expect((await (await hold()).releaseHoldForCancellation(vid("100"), [vsub("100", mine.id)])).released).toBe(false);
     expect(sent).toEqual([]);
   });
 });
@@ -104,7 +105,7 @@ describe("releaseHoldForCancellation", () => {
 describe("releaseHoldForRevert", () => {
   it("sends nothing while the order still carries a live Shopify return", async () => {
     await exchangeHeldBy(null); // seeded rows are confirmed with a return id
-    expect((await (await hold()).releaseHoldForRevert("100")).released).toBe(false);
+    expect((await (await hold()).releaseHoldForRevert(vid("100"))).released).toBe(false);
     expect(sent).toEqual([]);
   });
 
@@ -112,7 +113,7 @@ describe("releaseHoldForRevert", () => {
     await exchangeHeldBy(null);
     await env.pg.query("UPDATE productsorder SET confirmed=false, return_id=NULL");
     answers.SettlementDraftOrderDelete = () => ({ data: { draftOrderDelete: { deletedId: D, userErrors: [] } } });
-    expect(await (await hold()).releaseHoldForRevert("100")).toEqual({ released: true });
+    expect(await (await hold()).releaseHoldForRevert(vid("100"))).toEqual({ released: true });
     expect(await pointer()).toBeNull();
   });
 
@@ -124,7 +125,7 @@ describe("releaseHoldForRevert", () => {
        VALUES ($1, $2, 'exchange_order', $3, '{}'::jsonb)`,
       [randomUUID(), seeded.id, `exchange:${seeded.id}`]
     );
-    expect((await (await hold()).releaseHoldForRevert("100")).released).toBe(false);
+    expect((await (await hold()).releaseHoldForRevert(vid("100"))).released).toBe(false);
     expect(sent).toEqual([]);
   });
 });

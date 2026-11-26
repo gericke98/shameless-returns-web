@@ -62,6 +62,7 @@ const FirstWindowBase = ({
                 product.newp || {
                   id: "0",
                   title: "",
+                  status: "",
                   handle: "",
                   description: "",
                   images: { edges: [] },

@@ -181,7 +181,7 @@ describe("admission reads Amphora before planning the replacement (§#4 (d))", (
     const [hold] = await holds(s.id);
     stock.available[V] = 5;
     stock.reads = 0;
-    expect(await admit(s.id, [1])).toEqual({ ok: false, held: `stock-held:${hold.id}` });
+    expect(await admit(s.id, [1])).toEqual({ ok: false, held: `stock-short:${hold.id}` });
     expect(stock.reads).toBe(0);
     expect(await ops(s.id)).toEqual([]);
   });
@@ -586,7 +586,7 @@ describe("A2: take first, then act", () => {
     const { s, hold } = await heldShort();
     await resolve(hold.id, "take");
     const { claimForCancellation } = await import("@/lib/server/submissionScope");
-    expect(await claimForCancellation(vsub(s.orderId, s.id))).toBe("settled");
+    expect(await claimForCancellation(vsub(s.orderId, s.id))).toBe("held");
     expect((await q(`SELECT holder FROM return_submissions WHERE id=$1`, [s.id]))[0].holder).toBe("manual");
   });
 

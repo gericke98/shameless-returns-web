@@ -56,6 +56,9 @@ export type CancellationClaim =
 const CLAIM_REFUSAL: Record<Exclude<CancellationClaimOutcome, "claimed">, "in-transit" | "already-settled" | "no-return"> = {
   "in-transit": "in-transit",
   settled: "already-settled",
+  // An operator is deciding it (a settlement hold): to the customer, it is
+  // already being processed.
+  held: "already-settled",
   cancelled: "no-return",
 };
 

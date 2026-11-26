@@ -10,6 +10,11 @@
 //   done    — "I settled it." Only on a hold taken (holder 'manual'): the hold
 //             closes as `manual`, the submission's rows are marked `refunded`.
 //             The holder stays 'manual' forever.
+//   open    — "Stop it before it settles." An operator holds an accepted
+//             submission that no hold covers yet (cause 'operator'): the case
+//             where the customer was paid by hand outside the ledger, so
+//             nothing automated may settle it again. Then take / done as usual.
+//             Refused while any op is in flight, or a hold already blocks it.
 //   release — "Try again." Only on an untaken hold, holder NULL or settlement:
 //             the hold closes as `release`; the next admission, claim or A1
 //             reads Amphora afresh (and may hold it again, with a new id).
@@ -17,10 +22,11 @@
 // Counts are compared after the write, the way voidForeignReconciliation does.
 // Each verb first locks the submission row (F1 §10 pattern), as dispatch does.
 // NOT "use server".
+import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { readQuery, writeDb } from "@/db/drizzle";
 import type { WriteCapability } from "@/lib/server/identity";
-import { getHold, type Hold } from "./ledger";
+import { getHold, holdAlert, holdAlertColumns, type Hold } from "./ledger";
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 
@@ -176,4 +182,78 @@ export async function resolveHold(
   const counted =
     d.verb === "take" ? ` — ${Number(row.ops)} operation(s) voided` : d.verb === "done" ? ` — ${Number(row.rows)} row(s) marked refunded` : "";
   return { ok: true, written: true, summary: `${summary}${counted}` };
+}
+
+export type OpenOutcome = { ok: true; written: boolean; summary: string; holdId?: string } | { ok: false; reason: string };
+
+/**
+ * `open`: an operator holds an accepted submission no hold covers yet. ONE
+ * statement on the admission fence, exactly like insertHold: the submission
+ * CAS (accepted, holder NULL or settlement, nothing in flight, no blocking
+ * hold), the hold row, its outbox alert. After it, admission, claim and A1
+ * all refuse the submission; --take / --done finish it.
+ */
+export async function openHold(
+  cap: WriteCapability,
+  submissionId: string,
+  d: { by: string; evidence: string },
+  options: { write: boolean }
+): Promise<OpenOutcome> {
+  if (!d.by.trim()) return { ok: false, reason: "who (--by) is required" };
+  if (!d.evidence.trim()) return { ok: false, reason: "why (--evidence) is required" };
+  const s = await submissionNow(submissionId);
+  if (!s) return { ok: false, reason: `no submission ${submissionId}` };
+  if (s.state !== "accepted") return { ok: false, reason: `the submission is ${s.state}, not accepted` };
+  if (s.holder !== null && s.holder !== "settlement") return { ok: false, reason: `the submission is held by ${s.holder}` };
+  if (s.inFlight > 0) {
+    return { ok: false, reason: `${s.inFlight} operation(s) are in flight (claimed, dispatched or unresolved): resolve them first` };
+  }
+  const [blocking] = rowsOf(
+    await readQuery(sql`
+      SELECT id, resolution FROM settlement_holds
+       WHERE submission_id = ${submissionId} AND (resolved_at IS NULL OR resolution = 'manual')
+       LIMIT 1`)
+  );
+  if (blocking) {
+    return { ok: false, reason: `hold ${blocking.id} already blocks this submission${blocking.resolution ? ` (${blocking.resolution})` : ""}: use it` };
+  }
+
+  const holdId = randomUUID();
+  const summary = `open an operator hold on submission ${submissionId} for ${d.by}: ${d.evidence}`;
+  if (!options.write) return { ok: true, written: false, summary: `would ${summary}` };
+
+  const alert = holdAlert(holdId, submissionId, "operator", [`Opened by ${d.by}: ${d.evidence}`]);
+  const [, rows] = await writeDb(cap).transact([
+    sql`SELECT id FROM return_submissions WHERE id = ${submissionId} FOR UPDATE`,
+    sql`
+      WITH s AS (
+        UPDATE return_submissions rs
+           SET admission_seq = rs.admission_seq + 1
+         WHERE rs.id = ${submissionId} AND rs.admission_seq = ${s.seq}
+           AND rs.state = 'accepted'
+           AND (rs.holder IS NULL OR rs.holder = 'settlement')
+           AND NOT EXISTS (SELECT 1 FROM settlement_operations o
+                            WHERE o.submission_id = rs.id AND o.state IN ('claimed', 'dispatched', 'unresolved'))
+           AND NOT EXISTS (SELECT 1 FROM settlement_holds bh
+                            WHERE bh.submission_id = rs.id AND (bh.resolved_at IS NULL OR bh.resolution = 'manual'))
+        RETURNING rs.id
+      ),
+      h AS (
+        INSERT INTO settlement_holds (id, submission_id, cause, detail)
+        SELECT ${holdId}, s.id, 'operator', ${JSON.stringify({ openedBy: d.by, why: d.evidence })}::jsonb FROM s
+        RETURNING id, submission_id
+      ),
+      a AS (
+        INSERT INTO ops_alerts (dedupe_key, subject, body)
+        SELECT ${holdAlertColumns(alert, sql`h.submission_id`)} FROM h
+        ON CONFLICT (dedupe_key) DO NOTHING
+        RETURNING 1
+      )
+      SELECT (SELECT count(*) FROM s)::int AS s, (SELECT count(*) FROM h)::int AS h`,
+  ]);
+  const [row] = rows ?? [];
+  if (Number(row?.s) !== 1 || Number(row?.h) !== 1) {
+    return { ok: false, reason: `not written: submission ${submissionId} changed meanwhile` };
+  }
+  return { ok: true, written: true, summary: `${summary} — hold ${holdId}`, holdId };
 }

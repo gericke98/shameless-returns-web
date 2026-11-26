@@ -77,7 +77,7 @@ export async function admit(cap: WriteCapability, submissionId: string, requeste
     // hand blocks it forever.
     const hold = await holdOf(submissionId);
     if (hold) {
-      return { ok: false, held: hold.resolution === "manual" ? `resolved-by-hand:${hold.id}` : `stock-held:${hold.id}` };
+      return { ok: false, held: hold.resolution === "manual" ? `resolved-by-hand:${hold.id}` : `${hold.cause}:${hold.id}` };
     }
     if (submission.holder === "manual") return { ok: false, held: "taken-by-hand" };
 

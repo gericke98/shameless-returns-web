@@ -95,7 +95,7 @@ op whose `after` is not `done` (`ledger.ts:337-339`), as do `recoverableOperatio
 **Admission unit.** `expandAdmission` (`admission.ts:34-44`) admits every non-approved CAMBIO line whenever ANY line of
 a submission with one is requested (today only when a requested line is CAMBIO, :40), so a refund sibling can never
 be admitted without its exchange gate (Codex #4 "refund sibling").
-**Admission stock read (d).** Only when the exchange op will be NEWLY planned: blocking hold → `held:stock-held:<id>`
+**Admission stock read (d).** Only when the exchange op will be NEWLY planned: blocking hold → `held:stock-held:<id>` [SUPERSEDED 2026-11-26: `<cause>:<id>`, see Follow-up: operator hold]
 or `held:resolved-by-hand:<id>`; `readAvailable` unreadable → `held:stock-unreadable:<reason>` (no record; transient,
 the cron reports it); short → `insertHold` (#7) → `held:stock-short:<hold id>`, no ops; covered → plan + `insertAdmission`.
 `readDraftExists` (`facts.ts:110-113`) and the reservation read (`admission.ts:116-122`) are deleted.
@@ -136,7 +136,7 @@ state='accepted' AND holder IS DISTINCT FROM 'cancellation'`, exactly as `insert
   (`autoApproveGate.ts:71`). Counts are compared as `voidForeignReconciliation` does (:99-101).
 A worker that read "enough" and a worker that recorded "short" cannot both win: whichever commits second fails the CAS
 and re-reads (the hold, or the ops). `claim` gains `AND NOT EXISTS (blocking hold for o.submission_id)` and
-`recoverableOperations` the same filter on its pending/rejected branch. Cancellation is unchanged
+`recoverableOperations` the same filter on its pending/rejected branch. Cancellation is unchanged [SUPERSEDED 2026-11-26: a blocking hold now refuses cancellation, see Follow-up: operator hold]
 (`submissionScope.ts:319-344` UPDATEs the same row, so it serializes): a held submission may still be cancelled while
 `cancelEligibility` allows it; a hold left on a cancelled submission is inert (admission and `resolveHold` require
 `accepted`).
@@ -462,3 +462,31 @@ Agreements are frozen: never rewrite `action`/`new_variant_id` in place.
 | #313008 | 1327 | Mad Air Knit M (20261903) instead, NO price difference (goodwill) | create order by hand |
 | #313470 | 1448, 1450 | customer cancels himself in the portal | nothing |
 | #313114 | 1374 | customer cancels SELF, redoes with Correos, pays 5,00 € | check the new Amphora registration after |
+
+## Follow-up: operator hold (`resolve-hold --open`), 2026-11-26 (LIGHT tier: CLI + additive CHECK)
+**Gap.** #313127 was refunded BY HAND in Shopify (08:11Z, 40,55 €, PENDING, irrevocable), while its submission stayed
+`accepted` as a CAMBIO. Its replacement was back in stock (45), so at warehouse receipt + grace, settlement would ALSO
+have created the exchange order: a double payment. No operator command could stop a submission before a hold existed;
+`resolve-hold` acted only on an existing hold.
+**Fix (root: an explicit operator decision, recorded as data).** `openHold` (lib/settlement/holdResolution.ts) and
+`scripts/resolve-hold.ts --submission <id> --open --by <you> --evidence "<why>"` hold an accepted submission no hold
+covers yet, with cause `operator` (migration 0016 widens `settlement_holds_cause_check`). It uses insertHold's single
+fenced statement (admission_seq CAS; accepted; holder NULL or settlement; nothing claimed, dispatched or unresolved; no
+blocking hold) plus the atomic outbox alert `settlement-held:<id>`, after the F1 §10 row lock. The existing hold
+predicates are cause-agnostic, so admission, claim and A1 all refuse the submission. Then `--take` and `--done` run as
+usual. Santi's decision for #313127: he keeps the refund and orders the M himself.
+**Tests:** tests/settlementOperatorHold.test.ts covers Jacobo's shape (stock 45 → open → nothing admitted or sent →
+take → done), pending ops never claimed and then voided by take, the refusals, and a fence lost after the read.
+Revert-and-fail: with no hold row 3 tests fail; with no seq CAS 1 fails; with no in-flight check 1 fails.
+**Rollout:** apply 0016 by hand BEFORE deploy; then open, take and done #313127 (submission be625e8f…).
+**Codex review (CHANGES-REQUIRED) → fixed.** P1: `claimForCancellation` never read holds, so a customer could cancel
+(Stripe refund) a submission an operator had opened a hold on. Now its locked UPDATE refuses any blocking hold, and it
+answers `held` (shown to the customer as `already-settled`). **Behaviour change:** while ANY hold blocks a submission
+(open, or resolved by hand), customer cancellation is refused, so pg16 race (5) now has the hold winning in every
+order. Before, a cancellation could beat `--take` on an open stock-short hold. This also closes the E2E wording gap
+(a taken return answered `settled`). P2: admission's held reason was `stock-held:<id>` for every hold; it is now
+`<cause>:<id>` from the stored cause. Not changed: tracking (`claimTracking`) still proceeds under a hold. It moves
+no money and no order, and a refunded-by-hand customer still has to send the garment back.
+Revert-and-fail: with cancellation ignoring holds, 1 test fails; with the write ignoring in-flight ops, 1 fails.
+Codex fix check: **APPROVED** (docs …-operator-hold-codex-fixcheck.md). Open, non-blocking: an untouched OPEN hold is in
+no overdue digest (only taken holds are); money can wait indefinitely if nobody acts on the alert.

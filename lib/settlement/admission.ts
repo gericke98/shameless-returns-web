@@ -162,7 +162,7 @@ export async function admit(cap: WriteCapability, submissionId: string, requeste
     // cover exactly the lines it freezes, net of earlier-accepted promises.
     const exchange = plan.ops.find((o) => o.kind === "exchange_order");
     if (exchange && exchange.request.kind === "exchange_order") {
-      const coverage = await exchangeCoverage(submission, exchange.request.check.lines);
+      const coverage = await exchangeCoverage(submission.id, exchange.request.check.lines);
       if (coverage.kind === "unreadable") return { ok: false, held: `stock-unreadable:${coverage.reason}` };
       if (coverage.kind === "short") {
         const recorded = await insertHold(cap, {

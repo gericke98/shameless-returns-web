@@ -210,6 +210,45 @@ describe("admission reads Amphora before planning the replacement (§#4 (d))", (
   });
 });
 
+describe("D2 is decided on the stored microseconds, never a millisecond copy (review #3)", () => {
+  // Acceptance stamps with Postgres now(): microseconds. A JS Date keeps
+  // milliseconds, so a boundary read out and passed back would drop both
+  // neighbours below.
+  it("microsecond-equal stamps: each counts the other — neither takes the last unit", async () => {
+    const a = await seeded({ orderId: "300", lines: [exchangeLine(3)] });
+    const b = await seeded({ orderId: "400", lines: [exchangeLine(4)] });
+    await q(`UPDATE return_submissions SET accepted_at = '2026-11-20T10:00:00.000900Z'`);
+    stock.available[V] = 1;
+    shopifyReturn([exchangeLine(3)], "300");
+    expect(await admit(a.id, [3])).toMatchObject({ ok: false, held: expect.stringMatching(/^stock-short:/) });
+    shopifyReturn([exchangeLine(4)], "400");
+    expect(await admit(b.id, [4])).toMatchObject({ ok: false, held: expect.stringMatching(/^stock-short:/) });
+    expect((await holds(b.id))[0].detail.short).toEqual([{ sku: V, need: 1, available: 1, earlier: 1 }]);
+  });
+
+  it("microsecond-earlier: the earlier keeps its unit, the later (same millisecond) is held", async () => {
+    const first = await seeded({ orderId: "100", lines: [exchangeLine(1)] });
+    const later = await seeded({ orderId: "200", lines: [exchangeLine(2)] });
+    await q(`UPDATE return_submissions SET accepted_at = '2026-11-20T10:00:00.000100Z' WHERE id=$1`, [first.id]);
+    await q(`UPDATE return_submissions SET accepted_at = '2026-11-20T10:00:00.000900Z' WHERE id=$1`, [later.id]);
+    stock.available[V] = 1;
+    expect(await admit(later.id, [2])).toMatchObject({ ok: false, held: expect.stringMatching(/^stock-short:/) });
+    expect((await holds(later.id))[0].detail.short).toEqual([{ sku: V, need: 1, available: 1, earlier: 1 }]);
+    shopifyReturn([exchangeLine(1)], "100");
+    expect(await admit(first.id, [1])).toMatchObject({ ok: true });
+  });
+
+  it("a submission with no accepted_at is never 'earliest': unreadable, not covered", async () => {
+    const s = await seeded();
+    const { exchangeCoverage } = await import("@/lib/settlement/stockGate");
+    expect(await exchangeCoverage(crypto.randomUUID(), [{ variantGid: V, quantity: 1 }])).toEqual({
+      kind: "unreadable",
+      reason: "no-accepted-at",
+    });
+    expect(await exchangeCoverage(s.id, [{ variantGid: V, quantity: 1 }])).toMatchObject({ kind: "covered" });
+  });
+});
+
 describe("a rejected exchange is held, never re-sent every run (§#4)", () => {
   it("userError → hold + alert + seq bump in one statement; claim refuses; --release makes it claimable", async () => {
     const s = await seeded();

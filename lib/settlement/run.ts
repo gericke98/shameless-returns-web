@@ -99,7 +99,7 @@ async function authorizeExchangeSend(
   const loaded = await loadSubmission(op.submissionId);
   const coverage = loaded
     ? await exchangeCoverage(
-        { id: op.submissionId, acceptedAt: loaded.submission.acceptedAt },
+        op.submissionId,
         request.check.lines.map((l) => ({ variantGid: l.variantGid, quantity: l.quantity }))
       )
     : ({ kind: "unreadable", reason: "no-submission" } as const);

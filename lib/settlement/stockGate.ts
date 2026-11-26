@@ -15,15 +15,17 @@
 import { readAvailable } from "@/lib/server/amphoraStock";
 import { variantGid } from "@/lib/shopifyIds";
 import { assess, type Assessment, type DemandLine } from "@/lib/stockCoverage";
-import { openExchangeDemand } from "./ledger";
+import { earlierExchangeDemand, openExchangeDemand } from "./ledger";
 
 export async function exchangeCoverage(
-  submission: { id: string; acceptedAt: Date | null },
+  submissionId: string,
   lines: readonly DemandLine[]
 ): Promise<Assessment> {
-  // drizzle/0014 makes accepted_at total; a missing one is not "earliest".
-  if (!submission.acceptedAt) return { kind: "unreadable", reason: "no-accepted-at" };
-  const earlier = await openExchangeDemand({ submissionId: submission.id, acceptedAt: submission.acceptedAt });
+  // D2 is decided in SQL against this submission's own stored accepted_at
+  // (ledger.earlierExchangeDemand). drizzle/0014 makes it total; a missing one
+  // is not "earliest".
+  const earlier = await earlierExchangeDemand(submissionId);
+  if (!earlier) return { kind: "unreadable", reason: "no-accepted-at" };
   const read = await readAvailable(
     lines.map((l) => l.variantGid),
     earlier.map((e) => e.variantGid)

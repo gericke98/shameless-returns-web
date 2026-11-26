@@ -19,7 +19,6 @@ export const submission = (over: Partial<SubmissionForAdmission> = {}): Submissi
   holder: null,
   admissionSeq: 0,
   provenance: "agreed",
-  acceptedAt: new Date("2026-11-20T10:00:00Z"),
   ...over,
 });
 

@@ -158,8 +158,6 @@ export type SubmissionForAdmission = {
   holder: string | null;
   admissionSeq: number;
   provenance: string;
-  /** When it was accepted: total for an accepted submission (drizzle/0014). D2 orders by it. */
-  acceptedAt: Date | null;
 };
 
 export type SubmissionLineRow = {
@@ -201,7 +199,6 @@ export async function loadSubmission(
       holder: s.holder ?? null,
       admissionSeq: Number(s.admission_seq),
       provenance: String(s.provenance),
-      acceptedAt: s.accepted_at ? new Date(s.accepted_at) : null,
     },
     lines: lines.map((l) => ({
       productsorderId: Number(l.productsorder_id),
@@ -509,41 +506,74 @@ export type OpenDemand = { submissionId: string; acceptedAt: Date; variantGid: s
  * submissions not being cancelled, not settled (in the ledger, or outside it:
  * `refunded`), not covered by an approval (money only, D1), whose
  * submission's exchange order is not done (or voided), and not settled by
- * hand. An open hold's demand still counts (decision 3).
- *
- * `before`: settlement's earlier demand — submissions accepted at or before
- * this one, itself excluded. Equal stamps count both ways (no tie-breaker).
+ * hand. An open hold's demand still counts (decision 3). `s` is the demand's
+ * return_submissions alias.
  */
-export async function openExchangeDemand(
-  before?: { submissionId: string; acceptedAt: Date }
-): Promise<OpenDemand[]> {
+const openDemandWhere = sql`
+         sl.action = 'CAMBIO'
+     AND s.state = 'accepted'
+     AND s.holder IS DISTINCT FROM 'cancellation'
+     AND sl.settled_at IS NULL
+     AND p.refunded IS NOT TRUE
+     AND NOT EXISTS (SELECT 1 FROM settlement_approvals a
+                      WHERE a.productsorder_id = sl.productsorder_id AND a.submission_id = sl.submission_id)
+     AND NOT EXISTS (SELECT 1 FROM settlement_operations o
+                      WHERE o.submission_id = s.id AND o.kind = 'exchange_order' AND o.state IN ('done', 'void'))
+     AND NOT EXISTS (SELECT 1 FROM settlement_holds h
+                      WHERE h.submission_id = s.id AND h.resolution = 'manual')`;
+
+const toDemand = (r: any): OpenDemand => ({
+  submissionId: String(r.submission_id),
+  acceptedAt: new Date(r.accepted_at),
+  variantGid: String(r.new_variant_id),
+  quantity: Number(r.quantity),
+});
+
+/** All open demand (accept time: the customer's basket is part of none of it). */
+export async function openExchangeDemand(): Promise<OpenDemand[]> {
   const rows = rowsOf(
     await readQuery(sql`
       SELECT sl.submission_id::text AS submission_id, s.accepted_at, sl.new_variant_id, sl.quantity
         FROM submission_lines sl
         JOIN return_submissions s ON s.id = sl.submission_id
         JOIN productsorder p ON p.id = sl.productsorder_id
-       WHERE sl.action = 'CAMBIO'
-         AND s.state = 'accepted'
-         AND s.holder IS DISTINCT FROM 'cancellation'
-         AND sl.settled_at IS NULL
-         AND p.refunded IS NOT TRUE
-         AND NOT EXISTS (SELECT 1 FROM settlement_approvals a
-                          WHERE a.productsorder_id = sl.productsorder_id AND a.submission_id = sl.submission_id)
-         AND NOT EXISTS (SELECT 1 FROM settlement_operations o
-                          WHERE o.submission_id = s.id AND o.kind = 'exchange_order' AND o.state IN ('done', 'void'))
-         AND NOT EXISTS (SELECT 1 FROM settlement_holds h
-                          WHERE h.submission_id = s.id AND h.resolution = 'manual')
-         ${before ? sql`AND s.accepted_at <= ${before.acceptedAt.toISOString()}::timestamptz AND s.id <> ${before.submissionId}` : sql``}
+       WHERE ${openDemandWhere}
        ORDER BY s.accepted_at, sl.submission_id, sl.productsorder_id
     `)
   );
-  return rows.map((r) => ({
-    submissionId: String(r.submission_id),
-    acceptedAt: new Date(r.accepted_at),
-    variantGid: String(r.new_variant_id),
-    quantity: Number(r.quantity),
-  }));
+  return rows.map(toDemand);
+}
+
+/**
+ * Settlement's earlier demand (D2): the open demand of submissions accepted
+ * at or before `submissionId`, itself excluded. Equal stamps count both ways
+ * (no tie-breaker). The boundary is that submission's own stored
+ * `accepted_at`, looked up by its id INSIDE the query — never a value read
+ * out and passed back (a JS Date keeps milliseconds; Postgres keeps
+ * microseconds, review #3). `null`: the submission does not exist or has no
+ * `accepted_at` — never "earliest".
+ */
+export async function earlierExchangeDemand(submissionId: string): Promise<OpenDemand[] | null> {
+  const rows = rowsOf(
+    await readQuery(sql`
+      SELECT m.accepted_at IS NOT NULL AS known,
+             d.submission_id, d.accepted_at, d.new_variant_id, d.quantity
+        FROM (SELECT accepted_at FROM return_submissions WHERE id = ${submissionId}) m
+        LEFT JOIN LATERAL (
+          SELECT sl.submission_id::text AS submission_id, s.accepted_at, sl.new_variant_id, sl.quantity,
+                 sl.productsorder_id
+            FROM submission_lines sl
+            JOIN return_submissions s ON s.id = sl.submission_id
+            JOIN productsorder p ON p.id = sl.productsorder_id
+           WHERE ${openDemandWhere}
+             AND s.accepted_at <= m.accepted_at
+             AND s.id <> ${submissionId}
+        ) d ON true
+       ORDER BY d.accepted_at, d.submission_id, d.productsorder_id
+    `)
+  );
+  if (rows.length === 0 || rows[0].known !== true) return null;
+  return rows.filter((r) => r.submission_id !== null && r.submission_id !== undefined).map(toDemand);
 }
 
 // ── L4: claim → dispatch → record ──────────────────────────────────────────

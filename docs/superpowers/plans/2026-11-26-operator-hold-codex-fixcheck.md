@@ -1,0 +1,19 @@
+Reviewed HEAD `1c5402f` only. No files modified.
+
+1. **P1 RESOLVED — FOUNDATION.** Cancellation locks the submission before checking the authoritative hold rows; its UPDATE excludes every open or manually resolved hold ([submissionScope.ts:321](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/server/submissionScope.ts:321)). The subsequent check uses a fresh snapshot under PostgreSQL’s [READ COMMITTED semantics](https://www.postgresql.org/docs/16/transaction-iso.html#XACT-READ-COMMITTED). A refused claim returns before cancellation or refund effects ([cancelReturn.ts:78](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/server/handlers/customer/cancelReturn.ts:78)).
+
+   **P2 RESOLVED — FOUNDATION.** Admission now reports the persisted `cause` and stable hold UUID; manually completed holds retain `resolved-by-hand:<id>` ([admission.ts:80](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/settlement/admission.ts:80)). Neither identity nor ownership is inferred from text.
+
+2. **The declared policy is consistent for all four causes**, with an operational limitation:
+   - **stock-short:** release permits another attempt, which can hold again if stock remains short.
+   - **exchange-rejected:** release permits settlement recovery; it does not restore customer cancellation when operations already exist.
+   - **legacy-plan:** release alone cannot repair the frozen plan; manual resolution remains necessary.
+   - **operator:** release resumes automation when appropriate; take/manual settlement/done records completion.
+
+   These exits use explicit ownership transitions—**FOUNDATION** ([holdResolution.ts:56](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/settlement/holdResolution.ts:56), [holdResolution.ts:98](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/settlement/holdResolution.ts:98)). **Money can remain pending indefinitely if nobody acts.** There is no guaranteed automatic completion, but there is an operator exit for every cause. `--done` records actual manual settlement; it does not issue a refund itself ([holdResolution.ts:137](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/settlement/holdResolution.ts:137)). The overdue digest covers taken holds, not every untouched open hold ([ledger.ts:485](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/settlement/ledger.ts:485)).
+
+3. **No broken in-repo `stock-held:` parser found.** Code, scripts and alerts consume generic `held:` status or propagate the reason unchanged ([auto-approve/route.ts:210](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/app/api/cron/auto-approve/route.ts:210), [recovery.ts:60](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/lib/settlement/recovery.ts:60)). The plan retains stale wording, including the former cancellation policy ([plan:98](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/docs/superpowers/plans/2026-11-26-fx-exchange-stock-truth-rev2.md:98), [plan:139](/Users/santiagogerickeparga/Proyectos/1_Shameless/shameless-returns-web/docs/superpowers/plans/2026-11-26-fx-exchange-stock-truth-rev2.md:139)); the appended correction supersedes it. Nonblocking documentation inconsistency.
+
+4. **No new blocker or PATCH mechanism found in this commit.** `tsc --noEmit --incremental false` passed. Runtime tests were not run under the no-file-write constraint; the PostgreSQL race fixture creates temporary files.
+
+APPROVED

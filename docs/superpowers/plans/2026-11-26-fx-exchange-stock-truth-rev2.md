@@ -95,7 +95,7 @@ op whose `after` is not `done` (`ledger.ts:337-339`), as do `recoverableOperatio
 **Admission unit.** `expandAdmission` (`admission.ts:34-44`) admits every non-approved CAMBIO line whenever ANY line of
 a submission with one is requested (today only when a requested line is CAMBIO, :40), so a refund sibling can never
 be admitted without its exchange gate (Codex #4 "refund sibling").
-**Admission stock read (d).** Only when the exchange op will be NEWLY planned: blocking hold → `held:stock-held:<id>`
+**Admission stock read (d).** Only when the exchange op will be NEWLY planned: blocking hold → `held:stock-held:<id>` [SUPERSEDED 2026-11-26: `<cause>:<id>`, see Follow-up: operator hold]
 or `held:resolved-by-hand:<id>`; `readAvailable` unreadable → `held:stock-unreadable:<reason>` (no record; transient,
 the cron reports it); short → `insertHold` (#7) → `held:stock-short:<hold id>`, no ops; covered → plan + `insertAdmission`.
 `readDraftExists` (`facts.ts:110-113`) and the reservation read (`admission.ts:116-122`) are deleted.
@@ -136,7 +136,7 @@ state='accepted' AND holder IS DISTINCT FROM 'cancellation'`, exactly as `insert
   (`autoApproveGate.ts:71`). Counts are compared as `voidForeignReconciliation` does (:99-101).
 A worker that read "enough" and a worker that recorded "short" cannot both win: whichever commits second fails the CAS
 and re-reads (the hold, or the ops). `claim` gains `AND NOT EXISTS (blocking hold for o.submission_id)` and
-`recoverableOperations` the same filter on its pending/rejected branch. Cancellation is unchanged
+`recoverableOperations` the same filter on its pending/rejected branch. Cancellation is unchanged [SUPERSEDED 2026-11-26: a blocking hold now refuses cancellation, see Follow-up: operator hold]
 (`submissionScope.ts:319-344` UPDATEs the same row, so it serializes): a held submission may still be cancelled while
 `cancelEligibility` allows it; a hold left on a cancelled submission is inert (admission and `resolveHold` require
 `accepted`).
@@ -488,3 +488,5 @@ order. Before, a cancellation could beat `--take` on an open stock-short hold. T
 `<cause>:<id>` from the stored cause. Not changed: tracking (`claimTracking`) still proceeds under a hold. It moves
 no money and no order, and a refunded-by-hand customer still has to send the garment back.
 Revert-and-fail: with cancellation ignoring holds, 1 test fails; with the write ignoring in-flight ops, 1 fails.
+Codex fix check: **APPROVED** (docs …-operator-hold-codex-fixcheck.md). Open, non-blocking: an untouched OPEN hold is in
+no overdue digest (only taken holds are); money can wait indefinitely if nobody acts on the alert.

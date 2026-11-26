@@ -36,7 +36,6 @@ function build(o: any) {
     order: o,
     customerGid: "gid://shopify/Customer/1",
     lines: [{ productsorderId: 1, newVariantId: "gid://shopify/ProductVariant/1", quantity: 1 }],
-    holdExisted: false,
   });
   if (result.ok) sent.push({ variables: result.variables });
   return result;

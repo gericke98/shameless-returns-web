@@ -50,7 +50,6 @@ export type PlanInput = {
   isReplacement: boolean;
   /** Required for refund-tender money outside a returnProcess (root/residual). */
   paying: PayingOrder | null;
-  reservation: { draftOrderId: string; existed: boolean } | null;
   /** Santi's recorded approvals for lines of this submission (drizzle/0010). */
   approved?: ReadonlyMap<number, { amountCents: number; basis: string }>;
   order: ExchangeOrderSource & { id: string };
@@ -68,6 +67,7 @@ export const scopeKeys = {
   money: (s: string, po: number) => `money:${s}:${po}`,
   goods: (s: string, po: number) => `goods:${s}:${po}`,
   exchange: (s: string) => `exchange:${s}`,
+  /** Historical only: release_hold ops admitted before FX (none is planned now). */
   hold: (s: string) => `hold:${s}`,
   residual: (s: string) => `residual:${s}`,
   /** One store-credit card for the paying lines one admission covers (ids sorted). */
@@ -124,6 +124,20 @@ export function planAdmission(input: PlanInput): Plan {
 
   if (s.state !== "accepted") return held(`not-accepted:${s.state}`);
   if (s.holder === "cancellation") return held("cancelling");
+  if (s.holder === "manual") return held("taken-by-hand");
+
+  // FX §#4 — exchange first. A submission with an exchange gets ONE
+  // replacement order, and it is the gate of everything else planned for the
+  // submission: goods, refunds, cards and the residual all carry
+  // `after: gate`, so nothing of the submission moves before the replacement
+  // order exists (claim, recovery and settle.runnable already honour `after`).
+  // The gate id is fixed here, before any other op is planned: the existing
+  // exchange op's, or the one about to be planned. An approved line's exchange
+  // was made before the ledger: what is approved is money (D1), never a
+  // second replacement order.
+  const cambio = lines.filter((l) => l.action === "CAMBIO" && !input.approved?.has(l.productsorderId));
+  const existingExchange = input.existing.find((o) => o.scopeKey === scopeKeys.exchange(s.id));
+  const gate: string | null = cambio.length > 0 ? existingExchange?.id ?? input.newId() : null;
 
   for (const po of input.admit) {
     const line = byId.get(po);
@@ -177,7 +191,7 @@ export function planAdmission(input: PlanInput): Plan {
           kind: "process_goods",
           scope_key: scopeKeys.goods(s.id, po),
           members: [po],
-          after: null,
+          after: gate,
           request: {
             kind: "process_goods",
             variables: {
@@ -210,7 +224,7 @@ export function planAdmission(input: PlanInput): Plan {
         if (!ownsMoney(po)) creditShares.push({ po, ret });
         continue;
       }
-      const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po]);
+      const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po], gate);
       if ("held" in money) return held(money.held);
       add(money);
       continue;
@@ -277,7 +291,7 @@ export function planAdmission(input: PlanInput): Plan {
         kind: "process_refund",
         scope_key: scopeKeys.money(s.id, po),
         members: [po],
-        after: null,
+        after: gate,
         request,
         amount_cents: line.payCents,
       });
@@ -291,7 +305,7 @@ export function planAdmission(input: PlanInput): Plan {
       kind: "process_goods",
       scope_key: scopeKeys.goods(s.id, po),
       members: [po],
-      after: null,
+      after: gate,
       request: { kind: "process_goods", variables: goodsInput(), check: goodsCheck },
       amount_cents: 0,
     });
@@ -304,83 +318,56 @@ export function planAdmission(input: PlanInput): Plan {
     } else if (line.payCents > 0) {
       const moneyClosed = notOpen(ret, scopeKeys.money(s.id, po));
       if (moneyClosed) return moneyClosed;
-      const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po]);
+      const money = moneyOperation(input, ret, line.payCents, scopeKeys.money(s.id, po), [po], gate);
       if ("held" in money) return held(money.held);
       add(money);
     }
   }
 
-  // One replacement order for every exchanged garment of the submission, and
-  // the hold released only after it exists (L6).
-  // An approved line's exchange was made before the ledger: what is approved
-  // is money (D1), never a second replacement order.
-  const cambio = lines.filter((l) => l.action === "CAMBIO" && !input.approved?.has(l.productsorderId));
-  if (cambio.length > 0 && cambio.some((l) => input.admit.includes(l.productsorderId))) {
+  // One replacement order for every exchanged garment of the submission,
+  // always with the shop's inventory policy (FX §#4): Shopify refuses an
+  // oversell instead of creating a stockless order. Its own `after` is null.
+  if (gate && !existingExchange) {
     const members = cambio.map((l) => l.productsorderId);
-    const existingExchange = input.existing.find((o) => o.scopeKey === scopeKeys.exchange(s.id));
-    let exchangeId = existingExchange?.id ?? null;
-    if (!existingExchange) {
-      // The customer the order is created for: the one on the return's order.
-      const anyReturn = input.returns.get(input.rows.get(members[0])?.returnId ?? "");
-      if (!anyReturn) return held("shopify-unreadable:exchange");
-      const exchangeClosed = notOpen(anyReturn, scopeKeys.exchange(s.id));
-      if (exchangeClosed) return exchangeClosed;
-      exchangeId = input.newId();
-      const built = buildExchangeOrderVariables({
-        opId: exchangeId,
-        order: input.order,
-        customerGid: anyReturn.customerGid,
-        lines: cambio.map((l) => ({
-          productsorderId: l.productsorderId,
-          newVariantId: l.newVariantId,
-          quantity: l.quantity,
-        })),
-        holdExisted: input.reservation?.existed === true,
-      });
-      if (!built.ok) return held(built.reason);
-      const lineItems = built.variables.order.lineItems as Array<{ variantId: string; quantity: number }>;
-      add({
-        id: exchangeId,
+    // The customer the order is created for: the one on the return's order.
+    const anyReturn = input.returns.get(input.rows.get(members[0])?.returnId ?? "");
+    if (!anyReturn) return held("shopify-unreadable:exchange");
+    const exchangeClosed = notOpen(anyReturn, scopeKeys.exchange(s.id));
+    if (exchangeClosed) return exchangeClosed;
+    const built = buildExchangeOrderVariables({
+      opId: gate,
+      order: input.order,
+      customerGid: anyReturn.customerGid,
+      lines: cambio.map((l) => ({
+        productsorderId: l.productsorderId,
+        newVariantId: l.newVariantId,
+        quantity: l.quantity,
+      })),
+    });
+    if (!built.ok) return held(built.reason);
+    const lineItems = built.variables.order.lineItems as Array<{ variantId: string; quantity: number }>;
+    add({
+      id: gate,
+      kind: "exchange_order",
+      scope_key: scopeKeys.exchange(s.id),
+      members,
+      after: null,
+      request: {
         kind: "exchange_order",
-        scope_key: scopeKeys.exchange(s.id),
-        members,
-        after: null,
-        request: {
-          kind: "exchange_order",
-          variables: built.variables,
-          check: {
-            sourceIdentifier: exchangeId,
-            customerGid: anyReturn.customerGid,
-            lines: cambio.map((l, i) => ({
-              sourceProductsorderId: l.productsorderId,
-              variantGid: lineItems[i].variantId,
-              quantity: l.quantity,
-              stripeFundedCents: l.stripeFundedCents,
-            })),
-          },
+        variables: built.variables,
+        check: {
+          sourceIdentifier: gate,
+          customerGid: anyReturn.customerGid,
+          lines: cambio.map((l, i) => ({
+            sourceProductsorderId: l.productsorderId,
+            variantGid: lineItems[i].variantId,
+            quantity: l.quantity,
+            stripeFundedCents: l.stripeFundedCents,
+          })),
         },
-        amount_cents: 0,
-      });
-    }
-    if (input.reservation) {
-      const holdReturn = input.returns.get(input.rows.get(members[0])?.returnId ?? "");
-      if (!holdReturn) return held("shopify-unreadable:hold");
-      const holdClosed = notOpen(holdReturn, scopeKeys.hold(s.id));
-      if (holdClosed) return holdClosed;
-      add({
-        id: input.newId(),
-        kind: "release_hold",
-        scope_key: scopeKeys.hold(s.id),
-        members,
-        after: exchangeId,
-        request: {
-          kind: "release_hold",
-          variables: { input: { id: input.reservation.draftOrderId } },
-          check: { draftOrderId: input.reservation.draftOrderId, orderId: input.order.id },
-        },
-        amount_cents: 0,
-      });
-    }
+      },
+      amount_cents: 0,
+    });
   }
 
   // The submission's own indivisible cents: once, and only when this
@@ -420,7 +407,8 @@ export function planAdmission(input: PlanInput): Plan {
         ret,
         cents,
         completes ? scopeKeys.residual(s.id) : scopeKeys.credit(s.id, sharePos),
-        members
+        members,
+        gate
       );
       if ("held" in money) return held(money.held);
       add(money);
@@ -435,7 +423,8 @@ export function planAdmission(input: PlanInput): Plan {
       ret,
       s.residualCents,
       scopeKeys.residual(s.id),
-      payLines.map((l) => l.productsorderId)
+      payLines.map((l) => l.productsorderId),
+      gate
     );
     if ("held" in money) return held(money.held);
     add(money);
@@ -454,7 +443,9 @@ function moneyOperation(
   ret: ReturnFacts,
   cents: number,
   scopeKey: string,
-  members: number[]
+  members: number[],
+  /** The submission's exchange op when it has one (FX §#4): money waits for it. */
+  after: string | null
 ): NewOperation | { held: string } {
   const id = input.newId();
   const marker = `[${id}]`;
@@ -467,7 +458,7 @@ function moneyOperation(
       kind: "gift_card",
       scope_key: scopeKey,
       members,
-      after: null,
+      after,
       currency: input.submission.currency,
       amount_cents: cents,
       request: {
@@ -495,7 +486,7 @@ function moneyOperation(
     kind: "root_refund",
     scope_key: scopeKey,
     members,
-    after: null,
+    after,
     currency: input.submission.currency,
     amount_cents: cents,
     request: {

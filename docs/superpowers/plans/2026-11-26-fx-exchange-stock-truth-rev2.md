@@ -1,0 +1,259 @@
+# FX: an exchange's replacement is backed by Amphora's stock (HEAVY) — plan rev 2, 2026-11-26
+
+Base: `feat/f1-server-boundary` @ `75d3d9a`. Supersedes rev 1 (`2026-11-26-fx-exchange-stock-truth.md`) wherever they
+differ. Rev 1 §Foundation 4 (customer decision, agreement revision, `replacement_shortfalls`) and D1 (refund
+conversion) are **superseded** by Santi's scope decision after Codex r1: they move to F4. D2 and D3 stand.
+Answers Codex r1 (`2026-11-26-fx-codex-review-r1.md`) #1 #2 #4 #7 #8. #3 is accepted as a stated residual; #5 #6 #9 → F4.
+
+Owner's rules, verbatim:
+1. Fix the root cause. Never a heuristic, tie-breaker, special case, flag, retry, regex over words, "until phase N" stopgap, or workaround for an existing weakness. If the root fix is bigger than the ask, say so and do the root fix (or stop and ask) — never ship the patch silently.
+2. Before designing anything, read the official skills and docs for what already exists, and reuse it instead of rebuilding. State in the design which official primitive you use, or why none fits.
+4. Identity, state and ownership are explicit data with stable ids — never derived from content, position, object identity, names, lineage or quote text.
+5. Plan once, then build: every open decision is made in the plan, not left to the implementer.
+
+## Scope (Santi, 2026-11-26 — not widened here)
+(a) No new Shopify draft holds; an authorized migration releases the existing ones (#D604, #D613 already deleted by
+hand 2026-11-26, pointers cleared). (b) The server refuses a replacement Amphora cannot cover, at line save AND at
+submit. (c) At settlement the exchange order is created FIRST with `DECREMENT_OBEYING_POLICY`; goods and sibling money
+run only after it exists. (d) Amphora short at settlement → the whole submission is held: explicit record + outbox
+alert, nothing planned. Held cases: Santi resolves by email + by hand, and records it with an operator command so
+nothing settles twice. Out: customer choice, refund conversion, partial Stripe refunds (F4).
+
+**Residual, stated plainly (Codex #3, bound to Amphora's answer).** Amphora allocates nothing for a NEW order
+(foundation plan :94-96). Once our replacement order exists and before Amphora starts preparing it, Amphora's
+`available` still includes that unit, so two settlements — even hours apart — can both see the last unit and both
+create orders. Nothing on our side can close this; only an Amphora allocation can (Santi's 3 questions, rev 1 §Questions).
+Likewise accept-time checks between two concurrent customers are not serialized (Q5); D2 priority at settlement decides.
+
+**Official primitives (rule 2).** Shopify `orderCreate` `options.inventoryBehaviour = DECREMENT_OBEYING_POLICY`
+(enum `OrderCreateInputsInventoryBehavior`; variants are `inventoryPolicy: DENY`, tested in rev 1) and
+`draftOrderDelete`; Amphora Company API v1.15.0 `GET /inventory/{company_id}` → `InventoryLevels`
+(`company-api-live.yaml:301-353, 5232-5286`); Postgres conditional `UPDATE … RETURNING` CTEs, partial unique index,
+CHECK constraints — i.e. the existing settlement ledger. The LangChain skills named in the owner's rules do not apply:
+this is a deterministic money ledger, not an agent (agent checkpoints give neither warehouse allocation nor
+exactly-once external effects; Codex r1 agrees).
+
+---
+
+## #2 — The stock pool (one reader, `lib/server/amphoraStock.ts`, `server-only`)
+**Source.** `GET {AMPHORA_COMPANY_API_URL}/inventory/{AMPHORA_TENANT_ID}?warehouses={W}&shop_name={AMPHORA_SHOP_NAME}`
+(spec :301-340; the tenant is the same `{company_id}` the existing client puts in its paths, `lib/server/amphora.ts:28-48`;
+the inventory path puts it after `/inventory/`, so the reader builds its own URL with the same key/header). One call
+returns the whole catalogue; no pagination in the spec.
+**Which rows count.** Exactly the rows with `location_id = W` (Q1: the one warehouse that ships Shopify orders,
+explicit config) and `product_type = 'ITEM'`. The count is `available_quantity` ("stock available to place new
+orders", :5272-5274). `reserved`, `pending`, `committed` never count.
+**Variant → SKU.** Reuse `getVariantSkusByIds` (`db/queries.ts:651-698`; Amphora SKU == Shopify variant SKU, verified
+there). SKU is the identifier both systems declare for the product (Amphora returns/orders key items by `sku`,
+`amphora.ts:66,126`); it is validated, not trusted: for each SKU there must be **exactly one** row at `W`.
+**Result type.** `readAvailable(variantGids) → { ok: true; bySku: Map<sku, { productId, locationId, available }>,
+skuOf: Map<variantGid, sku> } | { ok: false; reason }`. Unreadable is a value, never 0 and never "enough":
+`amphora-http:<status>` / thrown transport; `no-sku:<variant>` (absent from `getVariantSkusByIds`, which skips
+sku-less nodes, :688); `not-at-amphora:<sku>` (0 rows at W); `ambiguous:<sku>` (>1 row at W, or two `product_id`s);
+`not-item:<sku>`; `bad-count:<sku>` (non-integer or negative).
+**Demand (pure, `lib/stockCoverage.ts`).** `need(lines) → Map<sku, units>` sums `quantity` over every CAMBIO line
+mapped to that SKU (two lines × 1 against available 1 → short). `covers(need, available, earlier) →
+{ ok } | { short: [{ sku, need, available, earlier }] }` with covered ⇔ `available − earlier ≥ need` per SKU.
+**Open demand (D2).** One read (`openExchangeDemand`, `readQuery`): lines with `sl.action='CAMBIO'` of submissions
+`state='accepted' AND holder IS DISTINCT FROM 'cancellation'`, `sl.settled_at IS NULL`, row `p.refunded IS NOT TRUE`
+(settled outside the ledger, e.g. #310542/#310848), not covered by a `settlement_approvals` row, whose submission has no
+`exchange_order` op in `done`/`void`, and no `manual` hold (open holds: Q3). Returns `(submission_id, accepted_at,
+new_variant_id, quantity)`; SKUs mapped in the same batched read.
+- **Accept time** (save, submit): `earlier` = all open demand except this order's unconfirmed basket; `need` = the basket.
+- **Settlement**: `earlier` = open demand of submissions with `accepted_at <= mine AND id <> mine`. Equal timestamps
+  count both ways (both promises stand; no tie-breaker). A later submission can never take an earlier one's unit.
+- `accepted_at` becomes total: migration adds `CHECK (state <> 'accepted' OR accepted_at IS NOT NULL)` (precondition
+  P0 verifies zero violations; legacy submissions get `now()` at recording, `legacyTerms.ts:159-163`).
+**Serialization (Codex #2).** A submission's coverage depends only on Amphora and on EARLIER-accepted lines, which are
+fixed data long before its admission (admission opens ≥2 days after receipt, `autoApproveGate.ts:84`), so two
+admissions never decide on each other's promises. Within one submission all writes share the `admission_seq` fence (#7).
+
+## #1 — Accept: the server refuses (b)
+- `lib/replacementCatalogue.ts:17-29`: `isOfferedReplacement` → `isOfferedProduct({ productStatus })` (ACTIVE only).
+  Stock leaves the shared predicate; it is not an offer rule any more.
+- `orderScope.setLineSelection` (`lib/server/orderScope.ts:75-103`): after the ACTIVE check, `readAvailable` for the
+  variant; `need` = this row's quantity + the order's other unconfirmed CAMBIO rows on the same SKU (from `read()`);
+  refusals `replacement-unavailable`, `stock-unreadable` added to the closed union (`:78`), the handler
+  (`handlers/customer/lines.ts:31`) and `dialogForm.tsx:236-239` + i18n `action.replacementUnavailable`,
+  `action.stockUnreadable` (`lib/i18n/{es,en}.ts`, next to `variantNotOffered` :210/:201).
+- Submit, bound to the exact agreement persisted (Codex #1): `proposeCurrentSelection` (`lib/submissionProposal.ts:96-113`)
+  checks `current.agreement.lines` × `current.lines[].newVariantId` BEFORE `proposeSubmission`; `ProposalRefusal`
+  (:26) gains both values; they flow through `createStripeUrl` (`payments.ts:16-18,44-45`) and `submitReturn`
+  (`submitReturn.ts:39,188-198`, its `alertSubmitRefused` unchanged) to `asyncButton.tsx:80-84` (new messages).
+- The Stripe webhook does not re-check (refusing after payment would need a refund: F4). Settlement is the gate.
+- Picker: Q2.
+
+## #4 — Exchange first (`lib/settlement/plan.ts`) and its lifecycle (c)
+**Plan.** If the submission has a non-approved CAMBIO line (`plan.ts:317`), the gate op id is fixed BEFORE the loop:
+`gate = existingExchange?.id ?? newId()`. The `exchange_order` op has `after: null`; **every** other op planned for
+that submission — `process_goods` (:180, :294), `process_refund` (:280), credit/residual/root money
+(`moneyOperation` :474, :498 gain an `after` parameter) — gets `after: gate`. `inventoryBehaviour` is always
+`DECREMENT_OBEYING_POLICY` (`exchangeOrderInput.ts:159`; `holdExisted` :116-117 and :338 deleted). The `release_hold`
+block (:365-383) and `PlanInput.reservation` (:53) are deleted. Existing primitive reused: `claim` already refuses an
+op whose `after` is not `done` (`ledger.ts:337-339`), as do `recoverableOperations` (:661-664) and `settle.runnable`
+(`settle.ts:30-31`).
+**Admission unit.** `expandAdmission` (`admission.ts:34-44`) admits every non-approved CAMBIO line whenever ANY line of
+a submission with one is requested (today only when a requested line is CAMBIO, :40), so a refund sibling can never
+be admitted without its exchange gate (Codex #4 "refund sibling").
+**Admission stock read (d).** Only when the exchange op will be NEWLY planned: blocking hold → `held:stock-held:<id>`
+or `held:resolved-by-hand:<id>`; `readAvailable` unreadable → `held:stock-unreadable:<reason>` (no record; transient,
+the cron reports it); short → `insertHold` (#7) → `held:stock-short:<hold id>`, no ops; covered → plan + `insertAdmission`.
+`readDraftExists` (`facts.ts:110-113`) and the reservation read (`admission.ts:116-122`) are deleted.
+**Transitions of the exchange op** (dependents wait in every non-done state):
+| Outcome | What happens |
+|---|---|
+| `done` (answer, or evidence search by `sourceIdentifier`, `run.ts:159-165`) | replacement lines recorded (`ledger.ts:591-610`); dependents become claimable |
+| definite rejection (`userErrors`, `run.ts:111-114`; or operator `--rejected`, `operator.ts:126-131`) | `recordRejected` for `exchange_order` writes, in the SAME statement, a hold (`cause='exchange-rejected'`, `exchange_operation_id`), bumps `admission_seq`, and its outbox row. `claim` refuses ops of a submission with a blocking hold, so recovery no longer re-sends it every 15 min (Codex #4) |
+| no answer | stays `dispatched`; recovery reads evidence (`run.ts:230-241`); a zero search is `unresolved`, never re-sent (`ledger.ts:368`, `evidence.ts:297-301`) |
+| `unresolved` | existing atomic alert (`ledger.ts:454-479`); operator `done` (with `--order`) or `rejected` (→ hold) via `resolve-operation.ts`, unchanged |
+An unknown `orderCreate` is never turned into a fresh order or a refund: only a definite rejection (or an operator's
+`rejected`) makes it claimable again, and only after `release` (#7). `takeOver` of dispatched non-exchange ops stays
+unblocked (evidence-first recovery of effects that may have happened).
+**Rollout.** P0 verifies no `settlement_operations` of a non-`reconciled`/`voided` submission is in
+`pending|claimed|dispatched|rejected|unresolved` (the coordinator verified none today) — so no frozen
+`DECREMENT_IGNORING_POLICY` request or `after:null` sibling can run after deploy. If P0 finds any: stop and ask.
+No code path handles them.
+
+## #7 — Holds serialized on the admission fence; outbox in the same statement
+**Table** (`drizzle/0014_settlement_holds.sql`, additive): `settlement_holds(id uuid pk, submission_id uuid NOT NULL
+REFERENCES return_submissions, cause text CHECK IN ('stock-short','exchange-rejected'), exchange_operation_id uuid NULL
+REFERENCES settlement_operations, detail jsonb NOT NULL, created_at, resolution text NULL CHECK IN ('release','manual'),
+resolved_by text, evidence text, resolved_at timestamptz)`; CHECKs: `(cause='exchange-rejected') = (exchange_operation_id
+IS NOT NULL)`; resolution/resolved_by/evidence/resolved_at all null or all set (non-blank); partial unique
+`(submission_id) WHERE resolved_at IS NULL` (one open hold). "Blocking" = open, or `resolution='manual'`.
+**The fence.** Every write that changes what may be planned for a submission is ONE statement whose first CTE is the
+submission CAS `UPDATE return_submissions SET admission_seq = admission_seq + 1 WHERE id=$s AND admission_seq=$seen AND
+state='accepted' AND holder IS DISTINCT FROM 'cancellation'`, exactly as `insertAdmission` (`ledger.ts:274-285`):
+- `insertAdmission`: + `AND NOT EXISTS (blocking hold)`.
+- `insertHold` (stock-short): `s` → `INSERT settlement_holds … FROM s` → outbox row.
+- `recordRejected` on `exchange_order`: its existing fenced op UPDATE `r` → `INSERT settlement_holds … FROM r ON
+  CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING` → seq bump on that submission → outbox row.
+- `resolveHold` (operator): `s` (CAS on the seq the operator read) → `UPDATE settlement_holds … WHERE id=$h AND
+  resolved_at IS NULL` → for `manual`: refused if any op of the submission is `claimed|dispatched|unresolved`
+  (an effect may have happened); else every not-done op → `void` (the 0012 primitive: no fence matches it,
+  `voidReconciliation.ts:83-93`), and `productsorder.refunded = true` on the submission's rows (the existing permanent
+  "we settled that garment" record, `submissionScope.ts:375-377`), so the gate never picks them again
+  (`autoApproveGate.ts:71`). Counts are compared as `voidForeignReconciliation` does (:99-101).
+A worker that read "enough" and a worker that recorded "short" cannot both win: whichever commits second fails the CAS
+and re-reads (the hold, or the ops). `claim` gains `AND NOT EXISTS (blocking hold for o.submission_id)` and
+`recoverableOperations` the same filter on its pending/rejected branch. Cancellation is unchanged
+(`submissionScope.ts:319-344` UPDATEs the same row, so it serializes): a held submission may still be cancelled while
+`cancelEligibility` allows it; a hold left on a cancelled submission is inert (admission and `resolveHold` require
+`accepted`).
+**Outbox, named.** The ledger's atomic outbox pattern: `INSERT INTO ops_alerts (dedupe_key, subject, body) SELECT … FROM
+<state CTE> ON CONFLICT (dedupe_key) DO NOTHING` inside the state statement, as `recordRejected`/`recordUnresolved`
+(`ledger.ts:418-479`). Key `settlement-held:<hold id>`; body: order number, submission, cause, the shortfall per SKU
+(`need/available/earlier`) or the userErrors, and the two `resolve-hold` commands. Never `alertOps`
+(`opsAlert.ts:31`), never a separate `enqueueOpsAlert`. (The auto-approve cron's own daily `alertNotSettled`,
+`app/api/cron/auto-approve/route.ts:223-226,296-311`, still fires for any `held:` line — unchanged; moving it to the
+outbox is F5's.)
+**Operator command** `scripts/resolve-hold.ts --hold <uuid> (--release | --manual) --evidence "<what was done>" [--by]
+[--write]`, dry-run by default, `systemTarget("resolve-hold")` (F1 §11 G2), logic in `lib/settlement/holdResolution.ts`
+modelled on `scripts/void-reconciliation.ts`. `--release` (Q4): the hold closes; a stock-short submission is re-admitted
+by the next gate run with a fresh Amphora read (short again → a NEW hold row); an exchange-rejected op becomes
+claimable again (a rejection proved no order exists; `claim` starts a new attempt, `ledger.ts:330-331`). `--manual`:
+Santi settled it himself; nothing of that submission is ever planned or sent again.
+
+## #8 — Releasing the existing drafts: a new migration authority
+- `effects.ts:75-90`: `HoldReleaseAuthority.by` becomes `"migration"` only; minted only in
+  `lib/settlement/holdRelease.ts` (scripts may not import `effects.ts`, `settlementImportGraph.test.ts:67-72`; they import
+  `holdRelease.ts`, as `void-reconciliation.ts` imports its `lib/settlement` module).
+- `releaseHoldDraftsForMigration(cap: SystemTarget, { write })`: input = the persisted pointers
+  `SELECT id, exchange_reservation_id FROM orders WHERE exchange_reservation_id IS NOT NULL` (draft id + owning order id
+  are explicit data; never found by tag/name). Per draft: read `draftOrder(id){ id status order { id } }` (new query
+  in `reads.ts`, schema-validated like the others) → `unreadable` | `already-gone` (null) | `completed` (status
+  COMPLETED or an order: never deleted) | else `draftOrderDelete` through `releaseHoldDraft`, then **read back**:
+  null → `deleted`, present → `still-exists`.
+- Per-draft record, one statement each: `INSERT hold_draft_releases(id, order_id, draft_order_id, outcome, detail,
+  released_by, pointer_cleared)` + for `deleted|already-gone` only `UPDATE orders SET exchange_reservation_id = NULL
+  WHERE id=$o AND exchange_reservation_id=$d` (conditional: a changed pointer is reported, not overwritten). Table in
+  0014; append-only history; re-running is idempotent (a crash after delete reads `already-gone` next time).
+- Script `scripts/release-hold-drafts.ts [--write]`: prints every draft's outcome and the remaining pointer count.
+- **Deploy order:** P0 preconditions (read-only) → P1 apply 0014 by hand → P2 deploy FX (no creator, no
+  `release_hold` planning) → P3 after the old deployment's functions have drained (≥ its maxDuration), run dry, then
+  `--write`; re-run until every remaining pointer has a non-releasable outcome → P4 `drizzle/0015`: `ALTER TABLE orders
+  ADD CONSTRAINT orders_no_exchange_reservation CHECK (exchange_reservation_id IS NULL)` (validated; it fails if any
+  pointer remains → stop, Santi decides each `completed`/`still-exists` by hand). After P4 no code path can set a hold.
+- Readers: cancel/revert no longer release anything (their helpers are deleted at P2; any hold of a cancelled order is
+  released at P3 — pointer-driven, not state-driven). Historical `release_hold` requests keep their frozen draft id
+  (`types.ts:94-98`); `judgeDraftOrderGone` already accepts a deleted draft (`evidence.ts:305-311`); after P4 the
+  `clearReservation` CTE (`ledger.ts:611-618`) matches 0 rows, harmlessly.
+
+## Edit / retain / delete map (Codex #1 + own grep)
+| Site | Disposition |
+|---|---|
+| `lib/exchangeReservation.ts` (whole, `RESERVATION_TAG` :46) | DELETE |
+| `lib/server/exchangeReservation.ts` (whole, `reserveExchangeStock` :71) | DELETE |
+| `lib/submissionConfirmation.ts:22-23` imports; `:81-104` revert release block; `:305-325` reserve call | DELETE (keep `revalidatePath` :105, :327) |
+| `lib/server/handlers/customer/cancelReturn.ts:14`, step 3 `:133-143` | DELETE; renumber steps |
+| `lib/settlement/holdRelease.ts` (cancellation/revert mints :37-135) | REWRITE → migration authority (#8) |
+| `lib/settlement/effects.ts:9-17,75-90` | EDIT (`by: "migration"`, header) |
+| `app/api/webhooks/stripe/route.ts:135-136` | DELETE the stock-hold guidance lines |
+| `lib/settlement/recovery.ts:94` | EDIT text ("the stock hold" removed) |
+| `lib/settlement/plan.ts:53, 180, 280, 294, 313-384, 474, 498` | EDIT (#4) |
+| `lib/settlement/admission.ts:15, 33-44, 116-122, 124-139` | EDIT (#4, stock read, hold) |
+| `lib/settlement/facts.ts:110-113` `readDraftExists` | DELETE (`DRAFT_ORDER_QUERY` retained for run/operator) |
+| `lib/settlement/exchangeOrderInput.ts:9-10, 116-117, 155-159` | EDIT (always OBEYING) |
+| `lib/settlement/ledger.ts:268-312` insertAdmission, `:325-344` claim, `:418-448` recordRejected, `:657-673` recoverable | EDIT (#7); new `insertHold`, `holdOf`, `openExchangeDemand` |
+| `lib/settlement/ledger.ts:493-494, 525-530, 611-618` | RETAIN (historical `release_hold` done records) |
+| `lib/settlement/types.ts:9, 94-98`; `run.ts:118-127, 167-170, 180-182`; `evidence.ts:305-311`; `operator.ts:12-13, 93-106`; `scripts/resolve-operation.ts:17`; `drizzle/0007:56` kind CHECK | RETAIN (historical ops must parse, judge and be operator-resolvable; none is non-done today — P0) |
+| `lib/settlement/settle.ts` | RETAIN (`runnable` already honours `after`; `claim` enforces holds) |
+| `lib/replacementCatalogue.ts`; `lib/server/orderScope.ts:15, 69-103`; `handlers/customer/lines.ts:31` | EDIT (#1) |
+| `lib/submissionProposal.ts:26, 96-113`; `payments.ts:16-18`; `asyncButton.tsx:80-84`; `dialogForm.tsx:12, 23-25, 236-239`; `lib/i18n/{es,en}.ts` | EDIT (#1) |
+| `dialogForm.tsx:544-605` picker disable; `db/queries.ts:471-476, 497` | per Q2 |
+| `db/queries.ts:563-575` `VariantInfo` comment (fields retained: the dashboard reads it, `app/dashboard/page.tsx:50`) | EDIT comment |
+| `db/schema.ts:70-74` `exchangeReservationId` | RETAIN column (migration input + history); EDIT comment; CHECK at P4 |
+| `scripts/audit-exchange-overcharges.ts:165,203`; `scripts/verify-311749-fix.ts:84` | RETAIN (pricing audit display; no stock authority) |
+| `scripts/set-line-action.ts` | RETAIN (legacy lines; settlement's stock gate covers any CAMBIO it sets) |
+| New: `lib/server/amphoraStock.ts`, `lib/stockCoverage.ts`, `lib/settlement/holdResolution.ts`, `scripts/resolve-hold.ts`, `scripts/release-hold-drafts.ts`, `drizzle/0014`, `drizzle/0015` | ADD |
+| Tests DELETE: `exchangeReservation.test.ts`, `exchangeReservationAction.test.ts`; the `buildReservationDraft` half of `exchangeReservationGid.test.ts` (keep the `buildReturnInput` half) | |
+| Tests EDIT (drop stale mocks): `noReturnableLinesLeft:85-90`, `replacementReturnTransactionGuard:120-125`, `returnRevertGuard:105-110`, `selfBookedSettlement:133-138`, `confirmFromSnapshot:92-97,145-150` (assert NO draft is created), `revertKeepsLiveReturnIntact:27-35,102` (its live-return refusal stays), `cancelReturn:176,252-255` | |
+| Tests EDIT (behaviour): `exchangeOrderBatching:11,74-84` (OBEYING; no `release_hold`; every non-exchange op `after = exchange`), `exchangeOrderAddress:39`, `orderScopeDb:26-32,80-84` (Amphora mock: covered/short/unreadable/not ACTIVE), `support/planFixtures.ts:95`, `freshExchangeSizes.render` (Q2) | |
+| Tests EDIT (historical fixtures built by the planner FX removes): `settlementEvidenceMatrix:82-90,321-345`, `settlementLedgerDb:165-170,424-434` → literal frozen `release_hold` request; `settlementHoldRelease` → rewritten for the migration authority | |
+
+## Verification (gate: all green, single-fork suite, `tsc`, lint)
+- **Unit.** Reader: each unreadable case ≠ 0. Coverage: 2 lines × 1 vs 1 → short; qty 2 vs 1 → short; D2 earlier
+  demand incl. equal `accepted_at`. Plan: exchange `after:null`, every other op `after = exchange`, OBEYING always,
+  no `release_hold`. Admission: covered → ops; short → one hold + one `ops_alerts` row, zero ops; unreadable → held, no
+  row; blocking hold → held. `recordRejected(exchange_order)` → hold + alert + seq bump in one statement; claim refuses;
+  `--release` → claimable. `--manual` → voids, `refunded`, refused with an in-flight op. Migration: each outcome;
+  conditional pointer clear; rerun idempotent. Save/submit refusals and their i18n keys (es, en).
+- **Revert-and-fail.** Restore `DECREMENT_IGNORING_POLICY` → "every planned exchange obeys policy" fails; set a goods
+  op `after:null` → "no goods/money claimable before the exchange is done" fails; drop the admission stock read → the
+  short-stock admission test admits and fails; drop the seq bump from `insertHold` → concurrency test (1) fails; drop
+  the hold filter from `claim` → the rejected-exchange test re-sends and fails.
+- **Concurrent connections** (pg16, pattern of `tests/settlementConcurrency.test.ts:9-15`, ≥15 rounds each): (1)
+  `insertHold` vs `insertAdmission` on the same seen seq → exactly one; (2) `resolveHold --manual` vs `insertAdmission`
+  → never both; (3) two `resolveHold` with different resolutions → exactly one; (4) `recordRejected(exchange)` vs
+  `claim` of a dependent → the dependent is never claimed.
+- **Neon-branch E2E** (local `next dev`, senders off except Amphora/Shopify reads): CAMBIO to a SKU Amphora shows 0 →
+  refused at save; stock dropped between save and submit → refused at submit, nothing proposed; a seeded accepted
+  submission short at Amphora → admission writes one hold + one alert row, no ops; `resolve-hold --release` → re-held
+  with a new id; `--manual` → rows `refunded`, admission refuses forever; `release-hold-drafts` dry run against the
+  branch's copied pointers lists outcomes.
+- **After deploy (prod).** P0–P4 in order with counts before/after; first real exchange settlement: ledger shows
+  `exchange_order` done before any goods/money op is claimed, request OBEYING; each of the 7 remaining sold-out lines
+  (foundation plan :105-107) gets exactly one hold + one alert when it reaches the gate; no new
+  `exchange_reservation_id` ever set (P4 CHECK). Then one Codex review of the code against this plan.
+
+## FOUNDATION / PATCH self-judgement
+| Mechanism | Judgement |
+|---|---|
+| One Amphora reader; unreadable is a value; pinned location + ITEM + exactly-one-row identity | FOUNDATION |
+| Server refusal at save and at proposal, closed unions, bound to the persisted agreement | FOUNDATION |
+| Exchange op as the explicit `after` gate of every sibling op (existing ledger dependency primitive) | FOUNDATION |
+| `DECREMENT_OBEYING_POLICY` always | FOUNDATION (Shopify's own guard; does not allocate at Amphora — residual stated) |
+| Holds as rows written on the `admission_seq` CAS, outbox in the same statement | FOUNDATION |
+| Rejected exchange → hold (no silent re-send every recovery run) | FOUNDATION |
+| D2 priority by `accepted_at` (made total by CHECK), equal stamps count both ways | FOUNDATION |
+| Draft release by an explicit migration authority over persisted pointers, per-draft record, CHECK after | FOUNDATION |
+| Picker display (Q2 A) | FOUNDATION only if B; A keeps a display-only mirror number — Santi decides |
+| Accept-time promises not serialized among themselves (Q5 A) | Stated residual, not a mechanism; same class as the Amphora residual |
+
+## Decisions (Santi, 2026-11-26) — all A
+1. **Stock pool location: A.** Live read 2026-11-26: Amphora `GET /inventory/Shameless` returns 353 rows, all at
+   `location_id = '10'` (349 ITEM, 2 PACKAGING, 2 MARKETING PAPER), SKUs unique. `W = '10'`, explicit config.
+2. **Size picker: A.** Shopify `inventoryQuantity` stays a display hint only; the server's Amphora read is the authority.
+3. **An open hold's demand still counts: A** (strict decide-by-time).
+4. **Resolution kinds: A** (`--release` and `--manual`).
+5. **Accept-time race: A** (not serialized; the later-accepted submission is held at settlement).

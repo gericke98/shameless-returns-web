@@ -302,10 +302,12 @@ export async function recordConfirmation(
  * - `in-transit`: a self-booked return whose tracking was claimed first; the
  *   parcel is presumed in the network (cancelEligibility's own rule).
  * - `cancelled`: another cancellation holds it, or has already finished it.
+ * - `held`: a settlement hold blocks it (open, or settled by hand — FX §#7):
+ *   an operator decides it, never the customer.
  * - `settled`: settlement holds it, has planned operations for it, or it is
  *   no longer an accepted submission.
  */
-export type CancellationClaimOutcome = "claimed" | "in-transit" | "cancelled" | "settled";
+export type CancellationClaimOutcome = "claimed" | "in-transit" | "cancelled" | "held" | "settled";
 
 /** Take the submission for cancellation, or say exactly why not. */
 export async function claimForCancellation(sub: VerifiedSubmission): Promise<CancellationClaimOutcome> {
@@ -329,6 +331,9 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<Can
          AND state = 'accepted'
          AND holder IS NULL
          AND NOT EXISTS (SELECT 1 FROM settlement_operations o WHERE o.submission_id = ${sub.id})
+         AND NOT EXISTS (SELECT 1 FROM settlement_holds h
+                          WHERE h.submission_id = ${sub.id}
+                            AND (h.resolved_at IS NULL OR h.resolution = 'manual'))
          AND NOT EXISTS (SELECT 1 FROM orders o
                           WHERE o.id = ${sub.orderId}
                             AND o.return_method = 'SELF'
@@ -338,7 +343,10 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<Can
       SELECT s.state, s.holder,
              EXISTS (SELECT 1 FROM orders o
                       WHERE o.id = s.order_id AND o.return_method = 'SELF'
-                        AND o.locator IS NOT NULL) AS in_transit
+                        AND o.locator IS NOT NULL) AS in_transit,
+             EXISTS (SELECT 1 FROM settlement_holds h
+                      WHERE h.submission_id = s.id
+                        AND (h.resolved_at IS NULL OR h.resolution = 'manual')) AS held
         FROM return_submissions s
        WHERE s.id = ${sub.id} AND s.order_id = ${sub.orderId}`,
   ]);
@@ -347,6 +355,7 @@ export async function claimForCancellation(sub: VerifiedSubmission): Promise<Can
   if (!row) throw new Error(`submission ${sub.id} of order ${sub.orderId} vanished under its own lock`);
   if (row.in_transit === true) return "in-transit";
   if (row.state === "cancelled" || row.holder === "cancellation") return "cancelled";
+  if (row.held === true) return "held";
   return "settled";
 }
 

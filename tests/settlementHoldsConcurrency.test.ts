@@ -137,7 +137,9 @@ describe.skipIf(!pg16Available)("FX hold races on PostgreSQL 16", () => {
     }
   });
 
-  it("(5) --take vs the customer's cancellation, in both orders: exactly one owner", async () => {
+  // A blocking hold refuses the customer's cancellation under its own lock
+  // (operator-hold review P1), so in every order the operator owns it.
+  it("(5) --take vs the customer's cancellation, in both orders: the hold wins, never a cancellation refund", async () => {
     const { claimForCancellation } = await import("@/lib/server/submissionScope");
     for (let i = 0; i < ROUNDS; i += 1) {
       await env.reset();
@@ -152,10 +154,10 @@ describe.skipIf(!pg16Available)("FX hold races on PostgreSQL 16", () => {
           : mode === 1
             ? await (async () => { const c = await cancel(); return [await take(), c] as const; })()
             : await Promise.all([take(), cancel()]);
-      expect(taken.ok !== (cancelled === "claimed")).toBe(true);
+      expect(taken.ok).toBe(true);
+      expect(cancelled).toBe("held");
       const [s] = await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]);
-      expect(s.holder).toBe(taken.ok ? "manual" : "cancellation");
-      if (taken.ok) expect(cancelled).toBe("settled");
+      expect(s.holder).toBe("manual");
     }
   });
 

@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { sys } from "./support/verified";
+import { sys, vsub } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
@@ -78,7 +78,7 @@ describe("resolve-hold --open", () => {
     expect(alert.body).toMatch(/refunded 40,55 by hand/);
 
     // Stock is there, so without the hold admission would plan the exchange.
-    expect(await admit(s.id, [1])).toMatchObject({ ok: false, held: expect.stringContaining(hold.id) });
+    expect(await admit(s.id, [1])).toEqual({ ok: false, held: `operator:${hold.id}` });
     expect(await opsOf(s.id)).toHaveLength(0);
     expect(sent).toHaveLength(0);
 
@@ -130,6 +130,46 @@ describe("resolve-hold --open", () => {
     expect(await open(t.id)).toMatchObject({ ok: false, reason: expect.stringMatching(/cancelled, not accepted/) });
     await q(`UPDATE return_submissions SET state='accepted', holder='manual' WHERE id=$1`, [t.id]);
     expect(await open(t.id)).toMatchObject({ ok: false, reason: expect.stringMatching(/held by manual/) });
+  });
+
+  it("a customer cannot cancel a held submission (no refund), before or after --take", async () => {
+    const s = await seedSubmission(env.pg, { lines: [exchangeLine(1)] });
+    expect(await open(s.id)).toMatchObject({ ok: true });
+    const { claimForCancellation } = await import("@/lib/server/submissionScope");
+    expect(await claimForCancellation(vsub(s.orderId, s.id))).toBe("held");
+    expect((await q(`SELECT holder FROM return_submissions WHERE id=$1`, [s.id]))[0].holder).toBeNull();
+
+    const [hold] = await holds(s.id);
+    expect(await resolve(hold.id, "take")).toMatchObject({ ok: true });
+    expect(await claimForCancellation(vsub(s.orderId, s.id))).toBe("held");
+    expect(await resolve(hold.id, "done", "refunded by hand")).toMatchObject({ ok: true });
+    expect(await claimForCancellation(vsub(s.orderId, s.id))).toBe("held");
+    expect((await q(`SELECT holder FROM return_submissions WHERE id=$1`, [s.id]))[0].holder).toBe("manual");
+  });
+
+  it("the write re-checks: an operation that went in flight after the read is not held over", async () => {
+    const s = await seedSubmission(env.pg, { lines: [exchangeLine(1)] });
+    await q(`UPDATE return_submissions SET holder='settlement' WHERE id=$1`, [s.id]);
+    const real = env.readQuery;
+    let done = false;
+    (env as any).readQuery = async (stmt: any) => {
+      const out = await real(stmt);
+      if (!done) {
+        done = true;
+        await q(
+          `INSERT INTO settlement_operations (id, submission_id, kind, scope_key, request, state, attempt, dispatched_at)
+           VALUES (gen_random_uuid(), $1, 'process_refund', 'money:race', '{}'::jsonb, 'dispatched', 1, now())`,
+          [s.id]
+        );
+      }
+      return out;
+    };
+    try {
+      expect(await open(s.id)).toMatchObject({ ok: false, reason: expect.stringMatching(/changed meanwhile/) });
+    } finally {
+      (env as any).readQuery = real;
+    }
+    expect(await holds(s.id)).toHaveLength(0);
   });
 
   it("the write re-checks: a submission that moved after the read is not held", async () => {

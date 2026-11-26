@@ -479,3 +479,12 @@ usual. Santi's decision for #313127: he keeps the refund and orders the M himsel
 take → done), pending ops never claimed and then voided by take, the refusals, and a fence lost after the read.
 Revert-and-fail: with no hold row 3 tests fail; with no seq CAS 1 fails; with no in-flight check 1 fails.
 **Rollout:** apply 0016 by hand BEFORE deploy; then open, take and done #313127 (submission be625e8f…).
+**Codex review (CHANGES-REQUIRED) → fixed.** P1: `claimForCancellation` never read holds, so a customer could cancel
+(Stripe refund) a submission an operator had opened a hold on. Now its locked UPDATE refuses any blocking hold, and it
+answers `held` (shown to the customer as `already-settled`). **Behaviour change:** while ANY hold blocks a submission
+(open, or resolved by hand), customer cancellation is refused, so pg16 race (5) now has the hold winning in every
+order. Before, a cancellation could beat `--take` on an open stock-short hold. This also closes the E2E wording gap
+(a taken return answered `settled`). P2: admission's held reason was `stock-held:<id>` for every hold; it is now
+`<cause>:<id>` from the stored cause. Not changed: tracking (`claimTracking`) still proceeds under a hold. It moves
+no money and no order, and a refunded-by-hand customer still has to send the garment back.
+Revert-and-fail: with cancellation ignoring holds, 1 test fails; with the write ignoring in-flight ops, 1 fails.

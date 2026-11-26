@@ -220,6 +220,7 @@ describe.skipIf(!pg16Available)("FX hold races on PostgreSQL 16", () => {
       await writer.query("COMMIT");
       expect(await pending).toBeNull();
     } finally {
+      await writer.query("ROLLBACK").catch(() => undefined); // never return a connection mid-transaction
       writer.release();
     }
     expect(await stateOf(sibling.id)).toBe("claimed");
@@ -237,6 +238,7 @@ describe.skipIf(!pg16Available)("FX hold races on PostgreSQL 16", () => {
       await writer.query("ROLLBACK");
       expect(await pending).not.toBeNull();
     } finally {
+      await writer.query("ROLLBACK").catch(() => undefined); // never return a connection mid-transaction
       writer.release();
     }
     expect(await stateOf(sibling.id)).toBe("dispatched");

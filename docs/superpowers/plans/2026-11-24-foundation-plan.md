@@ -75,7 +75,7 @@ on a killed function, and the crash screen after a booked return.
 **Check:** on a Neon branch, kill the function after `returnCreate` and recovery completes; a second
 return on one order books its own parcel; cancel reaches the real `RET` record.
 
-## FX: An exchange's replacement is backed by the stock that ships it (HEAVY, found 2026-11-25)
+## FX: An exchange's replacement is backed by the stock that ships it (HEAVY, found 2026-11-25) — SHIPPED 2026-11-26 (#52)
 **Root weakness:** the exchange hold is a Shopify draft order with `reserveInventoryUntil`. It only raises Shopify
 `committed`; Amphora (the WMS that picks and ships) never sees it, and its inventory sync overwrites Shopify `available`
 with its own number. So Amphora keeps selling the held unit. At settlement `orderCreate` runs with

@@ -15,6 +15,7 @@ import {
   recoverableOperations,
   stuckCancellations,
   submissionsToFinalize,
+  takenHoldsNotDone,
 } from "./ledger";
 import { recoverDispatched, run, type RunResult } from "./run";
 import type { WriteCapability } from "@/lib/server/identity";
@@ -25,6 +26,8 @@ export type RecoveryReport = {
   admittedApprovals: Array<{ submission: string; lines: number[]; outcome: string }>;
   finalized: Array<{ submission: string; lines: number[] }>;
   stuckCancellations: number;
+  /** A2: holds an operator took to settle by hand over 24 h ago and never recorded as done. */
+  takenHoldsNotDone: number;
   budgetExhausted: boolean;
 };
 
@@ -35,6 +38,7 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
     admittedApprovals: [],
     finalized: [],
     stuckCancellations: 0,
+    takenHoldsNotDone: 0,
     budgetExhausted: false,
   };
 
@@ -91,8 +95,24 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
       body: [
         `A customer cancellation took submission ${s.id} (order ${s.orderId}) over an hour ago and never finished.`,
         `Settlement can never take this submission while cancellation holds it, so nothing will be paid automatically.`,
-        `Check the Amphora return, the Shopify return, the stock hold and the Stripe refund for this order by hand,`,
+        `Check the Amphora return, the Shopify return and the Stripe refund for this order by hand,`,
         `then finish or release the cancellation.`,
+      ].join("\n"),
+    }))
+  );
+
+  // A2: a hold taken to settle by hand stays in this digest, once a day, until --done.
+  const taken = await takenHoldsNotDone();
+  report.takenHoldsNotDone = taken.length;
+  const day = new Date().toISOString().slice(0, 10);
+  await enqueueOpsAlerts(
+    taken.map((h) => ({
+      dedupeKey: `hold-taken-not-done:${h.id}:${day}`,
+      subject: `[returns] HOLD TAKEN BY HAND, NOT DONE — submission ${h.submissionId}`,
+      body: [
+        `${h.takenBy} took settlement hold ${h.id} (submission ${h.submissionId}) at ${h.takenAt.toISOString()} to settle it by hand,`,
+        `and it is not recorded as done. Nothing automated will ever touch this submission. Once it is settled:`,
+        `  npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/resolve-hold.ts --hold ${h.id} --done --evidence "<what was done>" --write`,
       ].join("\n"),
     }))
   );

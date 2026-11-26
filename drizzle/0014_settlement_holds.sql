@@ -46,13 +46,16 @@ CREATE TABLE IF NOT EXISTS "settlement_holds" (
   CONSTRAINT "settlement_holds_resolution_fields_check"
     CHECK (
       ("resolution" IS NULL AND "resolved_by" IS NULL AND "evidence" IS NULL AND "resolved_at" IS NULL)
-      OR ("resolution" IS NOT NULL AND length(trim("resolved_by")) > 0
-          AND length(trim("evidence")) > 0 AND "resolved_at" IS NOT NULL)
+      -- IS NOT NULL first: length(trim(NULL)) is NULL, and a NULL CHECK passes.
+      OR ("resolution" IS NOT NULL
+          AND "resolved_by" IS NOT NULL AND length(trim("resolved_by")) > 0
+          AND "evidence" IS NOT NULL AND length(trim("evidence")) > 0
+          AND "resolved_at" IS NOT NULL)
     ),
   CONSTRAINT "settlement_holds_taken_check"
     CHECK (
       ("taken_by" IS NULL AND "taken_at" IS NULL)
-      OR (length(trim("taken_by")) > 0 AND "taken_at" IS NOT NULL)
+      OR ("taken_by" IS NOT NULL AND length(trim("taken_by")) > 0 AND "taken_at" IS NOT NULL)
     ),
   -- A2: settled by hand only after it was taken; a taken hold is never released.
   CONSTRAINT "settlement_holds_manual_taken_check"

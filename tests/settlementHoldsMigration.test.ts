@@ -80,6 +80,28 @@ describe("drizzle/0014 settlement_holds", () => {
     )).toMatch(/resolution_fields_check/);
   });
 
+  // Codex FX code review #4: length(trim(NULL)) is NULL and a NULL CHECK
+  // passes, so each field is omitted (NULL) on its own, not only blanked.
+  it("a resolution missing any ONE of who, evidence or when is refused (NULL, not only blank)", async () => {
+    await submission();
+    await hold({ taken_by: "'santi'", taken_at: "now()" });
+    const full = { resolution: "'manual'", resolved_by: "'santi'", evidence: "'refunded by hand'", resolved_at: "now()" };
+    for (const missing of ["resolved_by", "evidence", "resolved_at"] as const) {
+      const set = Object.entries({ ...full, [missing]: "NULL" }).map(([k, v]) => `${k} = ${v}`).join(", ");
+      expect(await violated(q(`UPDATE settlement_holds SET ${set}`)), missing).toMatch(/resolution_fields_check/);
+    }
+    const set = Object.entries(full).map(([k, v]) => `${k} = ${v}`).join(", ");
+    await q(`UPDATE settlement_holds SET ${set}`);
+  });
+
+  it("a taken hold without its taker (NULL) is refused, as is one without its time", async () => {
+    await submission();
+    await hold();
+    expect(await violated(q(`UPDATE settlement_holds SET taken_by = NULL, taken_at = now()`))).toMatch(/taken_check/);
+    expect(await violated(q(`UPDATE settlement_holds SET taken_by = 'santi', taken_at = NULL`))).toMatch(/taken_check/);
+    expect(await violated(q(`UPDATE settlement_holds SET taken_by = ' ', taken_at = now()`))).toMatch(/taken_check/);
+  });
+
   it("manual only after it was taken; a taken hold is never released", async () => {
     await submission();
     await hold();

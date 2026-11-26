@@ -144,10 +144,14 @@ describe.skipIf(!pg16Available)("FX hold races on PostgreSQL 16", () => {
       const { seeded, holdId } = await heldSubmission();
       const cancel = () => claimForCancellation(vsub(seeded.orderId, seeded.id));
       const take = () => resolve(holdId, "take");
+      // Take first, cancel first, and both at once on two connections.
+      const mode = i % 3;
       const [taken, cancelled] =
-        i % 2 === 0
-          ? await Promise.all([take(), cancel()])
-          : await Promise.all([cancel(), take()]).then(([c, t]) => [t, c] as const);
+        mode === 0
+          ? await (async () => { const t = await take(); return [t, await cancel()] as const; })()
+          : mode === 1
+            ? await (async () => { const c = await cancel(); return [await take(), c] as const; })()
+            : await Promise.all([take(), cancel()]);
       expect(taken.ok !== (cancelled === "claimed")).toBe(true);
       const [s] = await q("SELECT holder FROM return_submissions WHERE id=$1", [seeded.id]);
       expect(s.holder).toBe(taken.ok ? "manual" : "cancellation");

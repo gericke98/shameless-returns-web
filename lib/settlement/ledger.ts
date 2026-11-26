@@ -579,33 +579,36 @@ export async function earlierExchangeDemand(submissionId: string): Promise<OpenD
 // ── L4: claim → dispatch → record ──────────────────────────────────────────
 
 /**
- * A3's hold, as CTEs `h`, `seq`, `a` that follow a CTE `legacy(id,
- * submission_id)` naming the refused op: a `legacy-plan` hold for its
- * submission listing every not-done legacy op of it, the admission sequence
- * bump, and the hold's outbox row — unless a blocking hold or a manual holder
- * is already there.
+ * A3's hold, as CTEs `seq`, `h`, `a` that follow a CTE `legacy(id,
+ * submission_id)` naming the refused op. The submission fence comes FIRST
+ * (§#7: the admission_seq bump takes the submission row lock before the hold
+ * row is written — the order every hold writer and dispatch lock in; the hold
+ * first, the row second, deadlocked against insertHold), unless a blocking
+ * hold or a manual holder is already there; then the `legacy-plan` hold
+ * listing every not-done legacy op of the submission; then its outbox row.
  */
 function legacyHoldCtes(detail: string[]): SQL {
   const holdId = randomUUID();
   const alert = holdAlert(holdId, "{submission}", "legacy-plan", detail);
   return sql`
-      h AS (
-        INSERT INTO settlement_holds (id, submission_id, cause, detail)
-        SELECT ${holdId}, l.submission_id, 'legacy-plan',
-               jsonb_build_object('operations',
-                 (SELECT jsonb_agg(x.id ORDER BY x.created_at, x.scope_key) FROM settlement_operations x
-                   WHERE x.submission_id = l.submission_id AND x.state NOT IN ('done', 'void')
-                     AND ${legacyShape(sql`x`)}))
-          FROM legacy l
-         WHERE NOT ${blockingHold(sql`l.submission_id`)}
-           AND NOT ${takenByHand(sql`l.submission_id`)}
-        ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
-        RETURNING id, submission_id
-      ),
       seq AS (
         UPDATE return_submissions rs SET admission_seq = rs.admission_seq + 1
-          FROM h WHERE rs.id = h.submission_id
-        RETURNING 1
+          FROM legacy l
+         WHERE rs.id = l.submission_id
+           AND NOT ${blockingHold(sql`rs.id`)}
+           AND NOT ${takenByHand(sql`rs.id`)}
+        RETURNING rs.id AS submission_id
+      ),
+      h AS (
+        INSERT INTO settlement_holds (id, submission_id, cause, detail)
+        SELECT ${holdId}, f.submission_id, 'legacy-plan',
+               jsonb_build_object('operations',
+                 (SELECT jsonb_agg(x.id ORDER BY x.created_at, x.scope_key) FROM settlement_operations x
+                   WHERE x.submission_id = f.submission_id AND x.state NOT IN ('done', 'void')
+                     AND ${legacyShape(sql`x`)}))
+          FROM seq f
+        ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+        RETURNING id, submission_id
       ),
       a AS (
         INSERT INTO ops_alerts (dedupe_key, subject, body)
@@ -816,18 +819,19 @@ export async function recordRejected(cap: WriteCapability, op: Operation, fence:
     const rows = rowsOf(
       await writeDb(cap).execute(sql`
         WITH ${update},
-        h AS (
-          INSERT INTO settlement_holds (id, submission_id, cause, exchange_operation_id, detail)
-          SELECT ${holdId}, r.submission_id, 'exchange-rejected', r.id,
-                 ${JSON.stringify({ error: error.slice(0, 2000) })}::jsonb
-            FROM r
-          ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
-          RETURNING id, submission_id
-        ),
         seq AS (
+          -- The submission row lock BEFORE the hold row (§#7 lock order; see legacyHoldCtes).
           UPDATE return_submissions rs SET admission_seq = rs.admission_seq + 1
             FROM r WHERE rs.id = r.submission_id
-          RETURNING 1
+          RETURNING r.id AS operation_id, r.submission_id
+        ),
+        h AS (
+          INSERT INTO settlement_holds (id, submission_id, cause, exchange_operation_id, detail)
+          SELECT ${holdId}, f.submission_id, 'exchange-rejected', f.operation_id,
+                 ${JSON.stringify({ error: error.slice(0, 2000) })}::jsonb
+            FROM seq f
+          ON CONFLICT (submission_id) WHERE resolved_at IS NULL DO NOTHING
+          RETURNING id, submission_id
         ),
         a AS (
           INSERT INTO ops_alerts (dedupe_key, subject, body)

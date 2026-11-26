@@ -442,3 +442,23 @@ a new idempotency key, so use it ONLY when Shopify proves the effect never happe
 6. Portal submit with the sold-out variant → refused before any Shopify/Amphora/Stripe call; Shopify returns unchanged.
 7. Exemption reverted, temp route deleted, worktree clean.
 Note: `admit` needs the Next runtime (React `cache()`); release-hold-drafts and resolve-hold run under plain tsx.
+
+## Rollout (2026-11-26) — DONE
+- P0 read-only prod check: 0 in-flight ops (33 legacy unresolved only), 0 bad accepted/holder rows, 44 pointers.
+- P1 0014 applied by Santi; verified tables + 3 CHECKs.
+- P2 F1 merged (#51, `142d1b1`), FX merged (#52, `f44bd7e`); production deploy success 17:59Z; `/` 200, protected routes 401.
+- P3 `release-hold-drafts` dry 44/44 OPEN, then `--write` at 18:09Z: 44 deleted, 0 pointers, 44 `hold_draft_releases` rows.
+- P4 0015 applied by Santi; `orders_no_exchange_reservation` validated.
+Still to observe: the first real exchange admission (expect a `stock-short` hold + alert for the 7 sold-out cases when they pass the gate).
+
+## Sold-out cases: customer answers + Santi's decisions (2026-11-26 ~18:40Z)
+All 4 CAMBIO lines will be HELD at warehouse arrival (replacement SKUs at 0); resolve by hand: `--take` → act → `--done`.
+Agreements are frozen: never rewrite `action`/`new_variant_id` in place.
+| Order | Line | Decision | Amount / action at arrival |
+|---|---|---|---|
+| #312939 | 1345 | refund | 38,65 € (35,15 garment + 3,50 unused outbound; paid 8,50 upfront = 5,00 return + 3,50 outbound) |
+| #313061 | 1322 | refund | 22,80 € (SELF, not posted yet) |
+| #313090 | 1321 | refund | 20,90 € |
+| #313008 | 1327 | Mad Air Knit M (20261903) instead, NO price difference (goodwill) | create order by hand |
+| #313470 | 1448, 1450 | customer cancels himself in the portal | nothing |
+| #313114 | 1374 | customer cancels SELF, redoes with Correos, pays 5,00 € | check the new Amphora registration after |

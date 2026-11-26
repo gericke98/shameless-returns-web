@@ -312,9 +312,12 @@ left open or a deviation the code forced. Coordinator: review each.
    demand); only `need` SKUs are validated at Amphora (demand on another SKU cannot change the answer). Extra
    unreadable reasons beyond §#2: `amphora-transport:<msg>`, `amphora-body` (no `inventory_levels` array),
    `shopify-skus:<msg>`, `bad-variant:<id>`. "Two product_ids" is covered by `ambiguous` (>1 row at W).
-3. **Q2 (A) picker.** `dialogForm.tsx` `offered = isOfferedProduct({status}) && inventoryQuantity > 0`, labelled a
-   display hint; behaviour of the picker is unchanged (`freshExchangeSizes.render` unchanged). The server ignores
-   Shopify's number.
+3. **Q2 (A) picker — Decision 2 as Santi chose it.** `dialogForm.tsx` `offered = isOfferedProduct({status}) &&
+   inventoryQuantity > 0`: the picker keeps greying out sizes from Shopify's number (`freshExchangeSizes.render`
+   unchanged); the server's Amphora read is the authority at save, submit and settlement. Codex FX code review #5
+   judged this PATCH (Amphora may have a unit Shopify's mirror shows as 0, and the customer cannot pick it). Santi,
+   2026-11-26, keeps it: "worst case a size shows greyed out for a few minutes after it comes back in stock". Not a
+   deviation to fix.
 4. **One coverage module for all three call sites**: `lib/settlement/stockGate.ts` — `exchangeCoverage` (admission +
    A1, `earlier` = accepted_at ≤ mine, itself excluded), `acceptCoverage` (submit: whole agreement basket, `earlier` =
    all open demand), `lineCoverage` (save: this row + the order's other unconfirmed CAMBIO rows whose SKU equals this
@@ -330,15 +333,31 @@ left open or a deviation the code forced. Coordinator: review each.
    `holder IS DISTINCT FROM 'cancellation'`, so a `manual` holder (A2) is refused too.
 8. **Hold ids are generated in JS** (`randomUUID`) so each hold's outbox row (`settlement-held:<id>`, built by
    `holdAlert`, `ledger.ts:111`) carries its own `resolve-hold` commands; the order number is filled in SQL.
-9. **A1 details** (`run.ts:76,92`; `ledger.ts:790 returnClaimForStock`). Short: the statement's first CTE is the
-   submission seq CAS on the seq read at authorization; if it lost, nothing is written, the run returns
-   `not-claimed` and the undispatched claim lapses with its lease (reclaimable, never sent). Unreadable: fenced on
-   owner + lease_gen + never-dispatched only. Attempt returned as `GREATEST(attempt-1, 0)`.
-10. **A3 details** (`ledger.ts:89 legacyShape`, `claim` :565). Detected only when the op is in a state `claim`
-    would take (pending / rejected / expired undispatched claim). A legacy op already `dispatched` stays
-    evidence-only through `takeOver` (never a fresh send). The hold's `detail.operations` lists every not-done legacy
-    op of the submission; no hold is added if a blocking hold or a manual holder already exists. The legacy alert's
-    body names the submission.
+9. **A1 details** (`run.ts` `authorizeExchangeSend`; `ledger.ts` `returnClaimForStock`). Short: the statement's
+   first CTE is the submission seq CAS on the seq read at authorization; if it lost, nothing is written, the run
+   returns `not-claimed` and the undispatched claim lapses with its lease (reclaimable, never sent). Unreadable:
+   fenced on owner + lease_gen + never-dispatched only, result `wait` with the reader's reason. Attempt returned as
+   `GREATEST(attempt-1, 0)`. **"Reported by the existing cron digest" (review #6):** `runOutcome` keeps the reason;
+   recovery's report carries `ran[].reason`, and every op left `wait` is in the recovery digest
+   (`enqueueOpsAlerts`, key `exchange-stock-unreadable:<op id>:<UTC day>`, the taken-hold digest's mechanism: once a
+   day per op while it repeats). Never a hold. The digest fires on the first unreadable run of a day, not after N
+   runs: nothing records a count, and permanent reasons (`no-sku`, `not-at-amphora`, `ambiguous`, `bad-count`) need
+   a human on day one.
+10. **A3 details** (`ledger.ts` `legacyShape`, `legacyHoldCtes`, `claim`, `takeOver`). CORRECTED after Codex FX
+    code review #1: the first version claimed a dispatched legacy op "stays evidence-only through `takeOver`" — false,
+    `takeOver` checked neither A3 nor the exchange dependency, and recovery re-sent a legacy sibling whose evidence
+    was absent while its exchange was pending and the submission held. Now: `claim` refuses a legacy op in a state it
+    would take (pending / rejected / expired undispatched claim); `takeOver` (recovery's re-send authority) refuses
+    one in a state it would take over (dispatched over a lease ago / expired takeover claim). Both record the
+    `legacy-plan` hold in the same statement (shared CTEs). `takeOver` also requires what `claim` requires: its
+    `after` op done, no blocking hold, no manual holder. Evidence is always read first and applied
+    (`recoverDispatched`), so a legacy dispatched op is observed and completed from evidence only — absence never
+    authorizes its replay. A gift card (whose re-send was its probe) is read instead when its re-send is refused; a
+    search miss is `unresolved` (the existing `judgeGiftCardSearch` rule). The hold's `detail.operations` lists every
+    not-done legacy op of the submission; no hold is added if a blocking hold or a manual holder already exists. The
+    legacy alert's body names the submission. **Open (coordinator):** a legacy op that stays `dispatched` with absent
+    evidence has no operator verb today — `resolve-operation.ts` takes only `unresolved` ops and `--take` refuses
+    while an op is in flight — so the hold stays until the effect appears in Shopify. Not decided here.
 11. **A2 CLI** (`scripts/resolve-hold.ts`, `lib/settlement/holdResolution.ts:68`): `--take [--by]`,
     `--done --evidence [--by]` (resolved_by = `--by` or the taker), `--release --evidence [--by]`. §#7's `--manual`
     is replaced by `--take`/`--done` per A2. Every verb is ONE statement whose first CTE is the submission seq CAS.
@@ -355,10 +374,40 @@ left open or a deviation the code forced. Coordinator: review each.
     toolkit's `validate.mjs` posts telemetry to Shopify, so it was not run.
 14. **0014 naming.** `settlement_holds_resolution_fields_check` (Postgres' auto-name for the column CHECK took
     `_resolution_check`); A2's columns add `settlement_holds_taken_check`, `_manual_taken_check`,
-    `_release_untaken_check`.
+    `_release_untaken_check`. Review #4: each populated branch requires the actor/evidence `IS NOT NULL` before the
+    trimmed length (`length(trim(NULL))` is NULL and a NULL CHECK passes). 0014 is applied nowhere yet; its
+    `CREATE TABLE IF NOT EXISTS` would NOT add the corrected CHECKs to a table created by an earlier draft.
 15. **`amphora.ts` `getConfig` → exported `amphoraConfig`** so the stock reader shares key/tenant/base/shop.
-16. **Test doubles.** Checkout unit tests with no database (`checkoutBinding`, `exchangeFallbackAlert`,
-    `selfBookedFee`, `submissionProposalTender`) mock `@/lib/settlement/stockGate` as covered; every stock behaviour
+16. **Test doubles.** The checkout unit tests (`checkoutBinding`, `exchangeFallbackAlert`, `selfBookedFee`,
+    `submissionProposalTender`) mock `@/lib/settlement/stockGate` as covered (they do use a database — Codex
+    corrected the first wording); every stock behaviour
     test mocks the reader at `@/lib/server/amphoraStock` (`tests/support/amphoraStockMock.ts`).
 17. **Commit granularity.** `c64392f` (plan) does not typecheck on its own (admission still passed `reservation`);
     the next commit `1bb8de0` restores it.
+18. **Review fixes (Codex FX code review, 2026-11-26, CHANGES-REQUIRED; implementation mistakes, same spec).**
+    - **#2 dispatch serializes on the submission** (`ledger.ts` `dispatch`): ONE transaction, the F1 §10 pattern
+      (`claimForCancellation`): (1) `SELECT … FROM return_submissions … FOR UPDATE` (the row every hold writer locks
+      through its `admission_seq` bump), (2) the dispatch UPDATE on a fresh READ COMMITTED snapshot with
+      `NOT blocking hold`, `NOT manual holder` and the existing owner/lease_gen/state/lease checks. A hold committed
+      after a claim now stops that claim's send; a hold writer that comes second waits and commits after the send.
+    - **`resolveHold` takes the same lock first** (all three verbs: `[FOR UPDATE, statement]`), so `--take`'s
+      in-flight check never reads a snapshot older than a dispatch that committed while it waited (otherwise its
+      void CTE could void a just-dispatched op). Not in the review's list; same mechanism, closes the take↔dispatch
+      interleaving review #7 asked for.
+    - **Lock order, found by the new race (10)** (deadlock): `claim`'s A3 hold wrote the hold row (its one-open
+      unique entry) before bumping `admission_seq`, while `insertHold` bumps first. Every hold writer now locks the
+      submission row first and writes the hold FROM that bump (`legacyHoldCtes`; `recordRejected(exchange)`: op →
+      seq → hold), the order of `insertHold`, `returnClaimForStock`, `resolveHold` and `dispatch`. This is §#7's
+      "first CTE is the submission CAS"; the spec's listing of `recordRejected` (hold, then seq) is reordered.
+    - **#3 D2 in SQL** (`ledger.ts` `earlierExchangeDemand(submissionId)`): `s.accepted_at <= m.accepted_at` where
+      `m` is that submission's own row looked up by id inside the query; no Date is passed back.
+      `SubmissionForAdmission.acceptedAt` is removed; `exchangeCoverage(submissionId, lines)`; a submission with no
+      `accepted_at` (or none at all) → `unreadable:no-accepted-at`. `openExchangeDemand()` (accept time) keeps all
+      open demand.
+    - **#1, #4, #6**: items 10, 14, 9 above. **#5**: item 3 (Santi's decision, no change).
+    - **#7 interleavings** (pg16 `settlementHoldsConcurrency` 6–11): claim → A3 hold → dispatch; claim →
+      stock-short hold → dispatch; a paused hold writer holding the lock (dispatch blocks, then refuses); the same
+      lock rolled back (dispatch blocks, then sends); dispatch vs two hold writers at once (15 rounds); `--take` vs
+      release → claim → dispatch (15 rounds). PGlite (`settlementHolds`): legacy dispatched sibling with absent
+      evidence, legacy gift card, gated sibling before its exchange is done, under a blocking hold until
+      `--release`; D2 microsecond-equal / -earlier; the unreadable digest. Migration: each NULL field alone.

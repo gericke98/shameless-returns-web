@@ -266,4 +266,39 @@ r1 #1 #2 RESOLVED; #4 #7 #8 NOT RESOLVED because of:
   exclude it: a customer cancel can refund by card a return Santi already settled by hand.
 - R2-3 Cutover: P0 runs before old functions drain, so an old cron/dashboard request can still admit a frozen
   `IGNORING_POLICY` exchange that the new recovery then executes.
-Status: open, A/B to Santi.
+Status: decided by Santi 2026-11-26 (all A) — amendments below SUPERSEDE the sections they name.
+
+## Amendments after round 2 (binding for the implementer)
+**A1 (R2-1) Stock is authorized before EVERY fresh exchange send.** In `lib/settlement/run.ts`, after `claim` and
+before `dispatch`, an `exchange_order` op on a fresh attempt (claimed from `pending` or from `rejected` after a
+`--release`; never a `takeOver` of a `dispatched` op, which stays evidence-only) calls
+`authorizeExchangeSend(op)`: demand = the frozen `request.check.lines` (variantGid, quantity) — never re-derived from
+rows; Amphora read and `earlier` demand exactly as #2 (accepted_at of this op's submission, itself excluded).
+- covered → `dispatch` as today.
+- short → ONE fenced statement (op's `lease_gen` + submission `admission_seq` CAS): op back to `pending`, owner/lease
+  cleared, attempt NOT consumed; `INSERT settlement_holds (cause 'stock-short', detail = shortfall)`; outbox row. The
+  open hold then blocks `claim` (#7).
+- unreadable → ONE fenced statement: op back to `pending`, owner/lease cleared, attempt not consumed; no hold, no
+  alert (transient); run result `wait`. Repeated unreadable is reported by the existing cron digest only.
+Admission keeps its own stock read (#4) so a short submission is never planned at all; A1 covers the time between.
+**A2 (R2-2) Manual resolution: take first, then act.** Reuse the ledger's single-owner column: `return_submissions.holder`
+gains the value `'manual'` (migration 0014 widens `return_submissions_holder_check`). `resolve-hold.ts` becomes:
+- `--take --hold <id> --by <who>`: ONE statement under the submission CAS: hold open AND state='accepted' AND
+  (holder IS NULL OR (holder='settlement' AND no op of the submission is `claimed|dispatched|unresolved`)) →
+  `holder='manual', holder_since=now()`, `settlement_holds.taken_by/taken_at` set (new columns), every not-done op
+  → `void`. Refused otherwise, with the reason. Cancellation (`submissionScope.ts:325` requires `holder IS NULL`),
+  admission, `claim` and A1 all refuse a `manual` holder — no new predicate in cancellation is needed, and a test pins it.
+  Santi runs `--take` BEFORE touching Shopify/Stripe.
+- `--done --hold <id> --evidence "<what was done>"`: requires holder='manual' taken on this hold; closes the hold
+  (`resolution='manual'`), sets `productsorder.refunded=true` on the submission's rows; holder stays `manual` forever.
+- `--release` (unchanged meaning) requires holder IS NULL or 'settlement' and is refused on a taken hold.
+- A taken-but-not-done hold older than 24h is listed by the existing settlement-recovery alert digest until `--done`.
+**A3 (R2-3) Cutover: the new code refuses old shapes.** `claim` (and so recovery) refuses, and records a hold for, any
+op whose frozen request has an old shape: `exchange_order` with `inventoryBehaviour <> 'DECREMENT_OBEYING_POLICY'`,
+`release_hold`, or a non-exchange op of a submission that has an `exchange_order` op while its own `after` is not that
+op. ONE fenced statement: hold `cause='legacy-plan'` (added to the CHECK), detail = op ids, outbox row; ops untouched.
+Resolution by `--take/--done` or `--release` after an operator voids them. Shapes are read from the frozen request
+(explicit data), never from deploy timing. P0 becomes informational; the 0015 CHECK still waits for P3.
+**Tests added:** recovery and `--release` with Amphora 0 / Shopify positive → no orderCreate, one hold; `--take` vs
+customer cancel in both orders on two connections; cancel eligibility snapshot taken before `--take` → refused; an op
+frozen with `DECREMENT_IGNORING_POLICY` → never dispatched, one `legacy-plan` hold; revert-and-fail for each.

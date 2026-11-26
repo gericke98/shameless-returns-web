@@ -92,3 +92,10 @@ Reviewed 69e8014, before D1–D3 were recorded. Substance:
 8. Releasing 44 drafts has no valid authority (releaseHoldDraft mints only for cancel/revert).
 9. Decisions + "until then" operator path.
 Status: open, to Santi (scope).
+
+## Scope decision after r1 (Santi, 2026-11-26): stop the cause now, choices in F4
+FX builds only permanent parts: drop the draft holds (proper migration authority); the server refuses a replacement
+Amphora cannot cover; the exchange order is created FIRST and goods are processed only after it exists, obeying stock;
+Amphora short at settlement → the whole submission is held (explicit record + outbox alert), nothing is planned.
+Held cases: Santi resolves by email + by hand. Customer choice (agreement revisions, conversion money, partial Stripe
+refund) → F4. Hard allocation → Amphora (Santi asks the 3 questions). Codex r1 #3 accepted as residual; #5 #6 #9 → F4.

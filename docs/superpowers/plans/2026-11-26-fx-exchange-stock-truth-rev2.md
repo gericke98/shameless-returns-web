@@ -462,3 +462,20 @@ Agreements are frozen: never rewrite `action`/`new_variant_id` in place.
 | #313008 | 1327 | Mad Air Knit M (20261903) instead, NO price difference (goodwill) | create order by hand |
 | #313470 | 1448, 1450 | customer cancels himself in the portal | nothing |
 | #313114 | 1374 | customer cancels SELF, redoes with Correos, pays 5,00 € | check the new Amphora registration after |
+
+## Follow-up: operator hold (`resolve-hold --open`), 2026-11-26 (LIGHT tier: CLI + additive CHECK)
+**Gap.** #313127 was refunded BY HAND in Shopify (08:11Z, 40,55 €, PENDING, irrevocable), while its submission stayed
+`accepted` as a CAMBIO. Its replacement was back in stock (45), so at warehouse receipt + grace, settlement would ALSO
+have created the exchange order: a double payment. No operator command could stop a submission before a hold existed;
+`resolve-hold` acted only on an existing hold.
+**Fix (root: an explicit operator decision, recorded as data).** `openHold` (lib/settlement/holdResolution.ts) and
+`scripts/resolve-hold.ts --submission <id> --open --by <you> --evidence "<why>"` hold an accepted submission no hold
+covers yet, with cause `operator` (migration 0016 widens `settlement_holds_cause_check`). It uses insertHold's single
+fenced statement (admission_seq CAS; accepted; holder NULL or settlement; nothing claimed, dispatched or unresolved; no
+blocking hold) plus the atomic outbox alert `settlement-held:<id>`, after the F1 §10 row lock. The existing hold
+predicates are cause-agnostic, so admission, claim and A1 all refuse the submission. Then `--take` and `--done` run as
+usual. Santi's decision for #313127: he keeps the refund and orders the M himself.
+**Tests:** tests/settlementOperatorHold.test.ts covers Jacobo's shape (stock 45 → open → nothing admitted or sent →
+take → done), pending ops never claimed and then voided by take, the refusals, and a fence lost after the read.
+Revert-and-fail: with no hold row 3 tests fail; with no seq CAS 1 fails; with no in-flight check 1 fails.
+**Rollout:** apply 0016 by hand BEFORE deploy; then open, take and done #313127 (submission be625e8f…).

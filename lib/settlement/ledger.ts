@@ -100,7 +100,7 @@ const orderNumberOf = (submissionId: SQL) => sql`COALESCE(
   (SELECT ho.order_number FROM return_submissions hs JOIN orders ho ON ho.id = hs.order_id
     WHERE hs.id = ${submissionId}), '(unknown order)')`;
 
-export type HoldCause = "stock-short" | "exchange-rejected" | "legacy-plan";
+export type HoldCause = "stock-short" | "exchange-rejected" | "legacy-plan" | "operator";
 
 /**
  * The durable alert a hold writes in its own statement (outbox key
@@ -127,7 +127,7 @@ export function holdAlert(holdId: string, submissionId: string, cause: HoldCause
 }
 
 /** The alert columns of a hold's outbox row, with `{order}` resolved in SQL. */
-const holdAlertColumns = (alert: ReturnType<typeof holdAlert>, submissionId: SQL) => sql`
+export const holdAlertColumns = (alert: ReturnType<typeof holdAlert>, submissionId: SQL) => sql`
   ${alert.dedupeKey},
   replace(${alert.subject}, '{order}', ${orderNumberOf(submissionId)}),
   replace(${alert.body}, '{order}', ${orderNumberOf(submissionId)})`;

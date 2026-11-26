@@ -429,3 +429,16 @@ ce6862f → fix-check 2: **APPROVED** (docs …-fx-codex-code-review.md, -fixche
 coordinator: tsc clean, single-fork suite 157 files / 1731 tests.
 Operator rule (existing authority, Codex fix-check 2 #3): `resolve-operation --rejected` re-authorizes a fresh send with
 a new idempotency key, so use it ONLY when Shopify proves the effect never happened; a search miss is not proof.
+
+## E2E verification (2026-11-26, FX @ 10b9a59, Neon branch fx-e2e; Shopify/Amphora read-only, no live writes) — 7/7 PASS
+1. 0014 applied cleanly on a copy of live data. `release-hold-drafts` dry run: 42 pointers → 42 `would-delete` (OPEN),
+   branch unchanged (md5 of pointers identical, 0 release rows).
+2. 0015 after clearing pointers (branch only): CHECK validated; setting a pointer fails.
+3. Real `admit()` for #313127 (SKU 20240802, Amphora 0): one `stock-short` hold, one outbox alert, 0 ops, seq +1; a
+   second admit → `stock-held`, no duplicate.
+4. `--take` → holder `manual`; `claimForCancellation` never "claimed" (answers `in-transit`/`settled`, not "taken by
+   hand" — wording gap, not safety); `--done` → resolved manual, row refunded; next admit → `resolved-by-hand`.
+5. Portal save on #38594: sold-out Medium → `replacement-unavailable` + Spanish message, row unchanged; Small saves.
+6. Portal submit with the sold-out variant → refused before any Shopify/Amphora/Stripe call; Shopify returns unchanged.
+7. Exemption reverted, temp route deleted, worktree clean.
+Note: `admit` needs the Next runtime (React `cache()`); release-hold-drafts and resolve-hold run under plain tsx.

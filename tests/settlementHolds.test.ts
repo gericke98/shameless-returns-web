@@ -330,6 +330,30 @@ describe("A1: Amphora authorizes every fresh orderCreate", () => {
   });
 });
 
+describe("A1 unreadable reaches an operator through the recovery digest (review #6)", () => {
+  it("recovery reports the reason and digests it once a day per operation; never a hold", async () => {
+    const s = await seeded();
+    const exchange = (await admittedDirectly(s)).find((o) => o.kind === "exchange_order");
+    stock.reason = "not-at-amphora:gid://shopify/ProductVariant/11";
+    const { recoverSettlements } = await import("@/lib/settlement/recovery");
+    const first = await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
+    expect(first.ran).toEqual([
+      { op: exchange.id, kind: "exchange_order", from: "pending", result: "wait", reason: "not-at-amphora:gid://shopify/ProductVariant/11" },
+    ]);
+    const day = new Date().toISOString().slice(0, 10);
+    const keys = () => digest.filter((d) => d.dedupeKey.startsWith("exchange-stock-unreadable:")).map((d) => d.dedupeKey);
+    expect(keys()).toEqual([`exchange-stock-unreadable:${exchange.id}:${day}`]);
+    expect(digest.find((d) => d.dedupeKey.startsWith("exchange-stock-unreadable:"))!.body).toContain("not-at-amphora");
+
+    // Repeated on the next run: the SAME daily key (the outbox's dedupe sends it once).
+    await recoverSettlements(sys, { deadline: Date.now() + 60_000 });
+    expect(new Set(keys())).toEqual(new Set([`exchange-stock-unreadable:${exchange.id}:${day}`]));
+    expect(await holds(s.id)).toEqual([]);
+    expect(await alerts()).toEqual([]);
+    expect(sends("SettlementOrderCreate")).toHaveLength(0);
+  });
+});
+
 describe("A3: old shapes are refused and held", () => {
   it("an exchange frozen with DECREMENT_IGNORING_POLICY is never dispatched: one legacy-plan hold", async () => {
     const s = await seeded();

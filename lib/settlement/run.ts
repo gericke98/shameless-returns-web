@@ -70,13 +70,21 @@ function fenceOf(op: Operation): Fence {
 
 /** Run one operation from the top. */
 export async function run(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunResult> {
+  return (await runOutcome(cap, opId, me)).result;
+}
+
+/** A run's result, and why — for `wait`, the reason Amphora could not be read (A1). */
+export type RunOutcome = { result: RunResult; reason?: string };
+
+/** `run`, keeping the reason a fresh exchange send waits (recovery reports and digests it). */
+export async function runOutcome(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunOutcome> {
   const claimed = await claim(cap, opId, me);
-  if (!claimed) return "not-claimed";
+  if (!claimed) return { result: "not-claimed" };
   if (claimed.kind === "exchange_order") {
     const authorized = await authorizeExchangeSend(cap, claimed, me);
-    if (authorized !== "covered") return authorized;
+    if (authorized.result !== "covered") return authorized as RunOutcome;
   }
-  return dispatchAndSend(cap, claimed, me);
+  return { result: await dispatchAndSend(cap, claimed, me) };
 }
 
 /**
@@ -93,9 +101,9 @@ async function authorizeExchangeSend(
   cap: WriteCapability,
   op: Operation,
   me: string
-): Promise<"covered" | "held" | "wait" | "not-claimed"> {
+): Promise<{ result: "covered" | "held" | "not-claimed" } | { result: "wait"; reason: string }> {
   const request = op.request;
-  if (request.kind !== "exchange_order") return "covered";
+  if (request.kind !== "exchange_order") return { result: "covered" };
   const loaded = await loadSubmission(op.submissionId);
   const coverage = loaded
     ? await exchangeCoverage(
@@ -103,15 +111,17 @@ async function authorizeExchangeSend(
         request.check.lines.map((l) => ({ variantGid: l.variantGid, quantity: l.quantity }))
       )
     : ({ kind: "unreadable", reason: "no-submission" } as const);
-  if (coverage.kind === "covered") return "covered";
+  if (coverage.kind === "covered") return { result: "covered" };
   if (coverage.kind === "unreadable") {
-    return (await returnClaimForStock(cap, op, me, null)) ? "wait" : "not-claimed";
+    return (await returnClaimForStock(cap, op, me, null))
+      ? { result: "wait", reason: coverage.reason }
+      : { result: "not-claimed" };
   }
   const held = await returnClaimForStock(cap, op, me, {
     seenSeq: loaded!.submission.admissionSeq,
     short: coverage.short,
   });
-  return held ? "held" : "not-claimed";
+  return { result: held ? "held" : "not-claimed" };
 }
 
 async function dispatchAndSend(cap: WriteCapability, claimed: Operation, me: string): Promise<RunResult> {

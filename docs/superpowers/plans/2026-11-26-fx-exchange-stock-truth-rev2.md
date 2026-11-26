@@ -257,3 +257,13 @@ Santi settled it himself; nothing of that submission is ever planned or sent aga
 3. **An open hold's demand still counts: A** (strict decide-by-time).
 4. **Resolution kinds: A** (`--release` and `--manual`).
 5. **Accept-time race: A** (not serialized; the later-accepted submission is held at settlement).
+
+## Codex plan review round 2 (final, 2026-11-26): CHANGES-REQUIRED, 3 blockers → Santi (full text: …-codex-review-r2.md)
+r1 #1 #2 RESOLVED; #4 #7 #8 NOT RESOLVED because of:
+- R2-1 Stock is checked only when the exchange op is first planned; a recovered pending op or a rejected op released by
+  `--release` is sent later without a fresh Amphora read.
+- R2-2 `--manual` records AFTER Santi's by-hand effect and cancellation's claim (`submissionScope.ts:325`) does not
+  exclude it: a customer cancel can refund by card a return Santi already settled by hand.
+- R2-3 Cutover: P0 runs before old functions drain, so an old cron/dashboard request can still admit a frozen
+  `IGNORING_POLICY` exchange that the new recovery then executes.
+Status: open, A/B to Santi.

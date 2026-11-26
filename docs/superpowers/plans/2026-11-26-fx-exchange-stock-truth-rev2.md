@@ -302,3 +302,63 @@ Resolution by `--take/--done` or `--release` after an operator voids them. Shape
 **Tests added:** recovery and `--release` with Amphora 0 / Shopify positive → no orderCreate, one hold; `--take` vs
 customer cancel in both orders on two connections; cancel eligibility snapshot taken before `--take` → refused; an op
 frozen with `DECREMENT_IGNORING_POLICY` → never dispatched, one `legacy-plan` hold; revert-and-fail for each.
+
+## § As built (implementer, 2026-11-26) — where the code differs from, or decides inside, the text above
+Branch `feat/fx-exchange-stock`. Nothing below changes a decision (1–5, A1–A3); each item is either a detail the text
+left open or a deviation the code forced. Coordinator: review each.
+1. **W is a code constant.** `SHOPIFY_WAREHOUSE_ID = "10"` (`lib/server/amphoraStock.ts:36`), explicit, not an env var.
+2. **Reader signature.** `readAvailable(need, demand = [])`: SKUs of `need` AND `demand` (other customers' open lines)
+   are mapped in ONE `getVariantSkusByIds` call; a demand variant with no SKU fails the read closed (unattributable
+   demand); only `need` SKUs are validated at Amphora (demand on another SKU cannot change the answer). Extra
+   unreadable reasons beyond §#2: `amphora-transport:<msg>`, `amphora-body` (no `inventory_levels` array),
+   `shopify-skus:<msg>`, `bad-variant:<id>`. "Two product_ids" is covered by `ambiguous` (>1 row at W).
+3. **Q2 (A) picker.** `dialogForm.tsx` `offered = isOfferedProduct({status}) && inventoryQuantity > 0`, labelled a
+   display hint; behaviour of the picker is unchanged (`freshExchangeSizes.render` unchanged). The server ignores
+   Shopify's number.
+4. **One coverage module for all three call sites**: `lib/settlement/stockGate.ts` — `exchangeCoverage` (admission +
+   A1, `earlier` = accepted_at ≤ mine, itself excluded), `acceptCoverage` (submit: whole agreement basket, `earlier` =
+   all open demand), `lineCoverage` (save: this row + the order's other unconfirmed CAMBIO rows whose SKU equals this
+   row's, read in the same call).
+5. **Plan.** The exchange op is planned whenever the submission has a non-approved CAMBIO line and no exchange op
+   exists — independent of `admit` — because every sibling's `after` references it (FK). `expandAdmission` takes the
+   approved set so approved (money-only) CAMBIO lines are not dragged in. `planAdmission` also holds
+   `taken-by-hand` for `holder = 'manual'`.
+6. **Admission hold check runs for EVERY admission**, not only when the exchange is newly planned: `holdOf` first →
+   `held:stock-held:<id>` (any open hold, whatever its cause) / `held:resolved-by-hand:<id>`; then `taken-by-hand`.
+   `insertAdmission`'s CAS refuses a blocking hold regardless; the early check only names the reason.
+7. **Fence predicate.** `insertAdmission`, `insertHold` use `(holder IS NULL OR holder = 'settlement')` instead of
+   `holder IS DISTINCT FROM 'cancellation'`, so a `manual` holder (A2) is refused too.
+8. **Hold ids are generated in JS** (`randomUUID`) so each hold's outbox row (`settlement-held:<id>`, built by
+   `holdAlert`, `ledger.ts:111`) carries its own `resolve-hold` commands; the order number is filled in SQL.
+9. **A1 details** (`run.ts:76,92`; `ledger.ts:790 returnClaimForStock`). Short: the statement's first CTE is the
+   submission seq CAS on the seq read at authorization; if it lost, nothing is written, the run returns
+   `not-claimed` and the undispatched claim lapses with its lease (reclaimable, never sent). Unreadable: fenced on
+   owner + lease_gen + never-dispatched only. Attempt returned as `GREATEST(attempt-1, 0)`.
+10. **A3 details** (`ledger.ts:89 legacyShape`, `claim` :565). Detected only when the op is in a state `claim`
+    would take (pending / rejected / expired undispatched claim). A legacy op already `dispatched` stays
+    evidence-only through `takeOver` (never a fresh send). The hold's `detail.operations` lists every not-done legacy
+    op of the submission; no hold is added if a blocking hold or a manual holder already exists. The legacy alert's
+    body names the submission.
+11. **A2 CLI** (`scripts/resolve-hold.ts`, `lib/settlement/holdResolution.ts:68`): `--take [--by]`,
+    `--done --evidence [--by]` (resolved_by = `--by` or the taker), `--release --evidence [--by]`. §#7's `--manual`
+    is replaced by `--take`/`--done` per A2. Every verb is ONE statement whose first CTE is the submission seq CAS.
+    `--take` sets `holder='manual', holder_since=now()`, `taken_by/at`, voids every not-done op; `--done` sets
+    `resolution='manual'` and `productsorder.refunded=true` for the submission's rows. Reported counts are the
+    write's own (a stale pre-read is never compared after commit).
+12. **A2 digest** (`recovery.ts:105`): taken-not-done > 24 h → `enqueueOpsAlerts` with key
+    `hold-taken-not-done:<hold id>:<UTC day>` (the recovery's existing digest path, not the atomic outbox).
+13. **Migration authority** (`holdRelease.ts:70`): dry run reads and reports (`would-delete` for an open draft),
+    writes nothing; a draft with an `order` is `completed` whatever its status; a failed read-back after the delete
+    is recorded `unreadable` (pointer kept; the next run reads `already-gone`). `released_by` = `--by` or the OS user.
+    New read `HOLD_DRAFT_QUERY` (`reads.ts:140`) checked against the bundled Admin 2026-04 schema
+    (`draftOrder(id: ID!)`, `DraftOrder.status: DraftOrderStatus!`, `DraftOrder.order: Order`) offline — the
+    toolkit's `validate.mjs` posts telemetry to Shopify, so it was not run.
+14. **0014 naming.** `settlement_holds_resolution_fields_check` (Postgres' auto-name for the column CHECK took
+    `_resolution_check`); A2's columns add `settlement_holds_taken_check`, `_manual_taken_check`,
+    `_release_untaken_check`.
+15. **`amphora.ts` `getConfig` → exported `amphoraConfig`** so the stock reader shares key/tenant/base/shop.
+16. **Test doubles.** Checkout unit tests with no database (`checkoutBinding`, `exchangeFallbackAlert`,
+    `selfBookedFee`, `submissionProposalTender`) mock `@/lib/settlement/stockGate` as covered; every stock behaviour
+    test mocks the reader at `@/lib/server/amphoraStock` (`tests/support/amphoraStockMock.ts`).
+17. **Commit granularity.** `c64392f` (plan) does not typecheck on its own (admission still passed `reservation`);
+    the next commit `1bb8de0` restores it.

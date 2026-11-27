@@ -13,7 +13,7 @@ import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import type { ReturnMethod } from "@/lib/returnMethods";
 import { stripeClient } from "@/lib/stripe";
-import { stripeEnv } from "@/lib/server/serviceEnv";
+import { stripeWebhookEnv } from "@/lib/server/serviceEnv";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -216,7 +216,7 @@ export async function POST(req: Request) {
     const event = stripeClient().webhooks.constructEvent(
       body,
       signature,
-      stripeEnv().webhookSecret
+      stripeWebhookEnv().webhookSecret
     );
     const session = event.data.object as Stripe.Checkout.Session;
 

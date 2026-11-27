@@ -10,7 +10,6 @@ describe("verifyWithCarrier", () => {
   it.each(["nacex", "bpost", "correos"] as const)("is unreadable when %s's body cannot be read", async (verifier) => {
     process.env.USERNAME_CORREOS ??= "u";
     process.env.PASSWORD_CORREOS ??= "p";
-    process.env.CODIGO_ETIQUETADOR_CORREOS ??= "c";
     vi.stubGlobal("fetch", async () => ({
       ok: true,
       status: 200,

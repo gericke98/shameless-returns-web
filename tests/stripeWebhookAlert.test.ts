@@ -174,7 +174,6 @@ beforeEach(() => {
   behaviour.agreedMethod = "CORREOS";
   ORDER.products = [];
   // The route reads the signing secret through serviceEnv; the client is mocked.
-  process.env.STRIPE_API_KEY = "sk_test_x";
   process.env.STRIPE_WEBHOOK_SECRET = "whsec_x";
   vi.resetModules();
 });

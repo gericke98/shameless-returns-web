@@ -17,6 +17,7 @@ const ROOT = resolve(__dirname, "..");
 const OWNER = "lib/server/serviceEnv.ts";
 
 const SERVICE_KEYS = new Set([
+  "NEXT_PUBLIC_APP_URL",
   "SHOPIFY_ADMIN_TOKEN",
   "SHOPIFY_SHOP_URL",
   // The client-inlined names they replaced: never read again, anywhere.
@@ -26,6 +27,7 @@ const SERVICE_KEYS = new Set([
   "AMPHORA_TENANT_ID",
   "AMPHORA_COMPANY_API_URL",
   "AMPHORA_SHOP_NAME",
+  "AMPHORA_WEBHOOK_SECRET",
   "CODIGO_ETIQUETADOR_CORREOS",
   "USERNAME_CORREOS",
   "PASSWORD_CORREOS",
@@ -102,7 +104,7 @@ describe("F2a: service keys are read only by lib/server/serviceEnv.ts", () => {
          const b = process.env["POSTMARK_SERVER_TOKEN"];
          const { USERNAME_CORREOS, SHOPIFY_ADMIN_TOKEN: t } = process.env;
          // process.env.AMPHORA_API_KEY in a comment is not a read
-         const c = process.env.NEXT_PUBLIC_APP_URL;`
+         const c = process.env.TRACKING_EMAILS_ENABLED;`
       )
     ).toEqual([
       "STRIPE_API_KEY (line 1)",
@@ -165,9 +167,57 @@ describe("the accessors refuse, typed, when a service is absent", () => {
     const saved = { ...process.env };
     try {
       delete process.env.STRIPE_API_KEY;
-      delete process.env.STRIPE_WEBHOOK_SECRET;
+      process.env.STRIPE_WEBHOOK_SECRET = "whsec_x";
       const { stripeClient } = await import("@/lib/stripe");
-      expect(() => stripeClient()).toThrow(/Stripe not configured in this environment/);
+      expect(() => stripeClient()).toThrow(/Stripe not configured in this environment \(missing STRIPE_API_KEY\)/);
+    } finally {
+      process.env = saved;
+    }
+  });
+
+  it("each operation requires only its own keys", async () => {
+    const saved = { ...process.env };
+    try {
+      for (const k of ["STRIPE_API_KEY", "STRIPE_WEBHOOK_SECRET", "USERNAME_CORREOS", "PASSWORD_CORREOS",
+        "CODIGO_ETIQUETADOR_CORREOS", "AMPHORA_API_KEY", "AMPHORA_TENANT_ID", "AMPHORA_WEBHOOK_SECRET"]) {
+        delete process.env[k];
+      }
+      const env = await import("@/lib/server/serviceEnv");
+
+      process.env.STRIPE_API_KEY = "sk_test_x";
+      expect(env.stripeApiEnv()).toEqual({ apiKey: "sk_test_x" });
+      expect(() => env.stripeWebhookEnv()).toThrow(/missing STRIPE_WEBHOOK_SECRET/);
+      delete process.env.STRIPE_API_KEY;
+      process.env.STRIPE_WEBHOOK_SECRET = "whsec_x";
+      expect(env.stripeWebhookEnv()).toEqual({ webhookSecret: "whsec_x" });
+      expect(() => env.stripeApiEnv()).toThrow(/missing STRIPE_API_KEY/);
+
+      process.env.USERNAME_CORREOS = "u";
+      process.env.PASSWORD_CORREOS = "p";
+      expect(env.correosTrackingEnv()).toEqual({ username: "u", password: "p" });
+      expect(() => env.correosLabelEnv()).toThrow(/missing CODIGO_ETIQUETADOR_CORREOS/);
+      process.env.CODIGO_ETIQUETADOR_CORREOS = "AZXT";
+      expect(env.correosLabelEnv()).toEqual({ username: "u", password: "p", labellerCode: "AZXT" });
+
+      process.env.AMPHORA_WEBHOOK_SECRET = "s3cret";
+      expect(env.amphoraWebhookEnv()).toEqual({ secret: "s3cret" });
+      expect(() => env.amphoraEnv()).toThrow(/missing AMPHORA_API_KEY, AMPHORA_TENANT_ID/);
+    } finally {
+      process.env = saved;
+    }
+  });
+
+  it("the app URL refuses when absent; an alert's dashboard line says why instead of a blank link", async () => {
+    const saved = { ...process.env };
+    try {
+      delete process.env.NEXT_PUBLIC_APP_URL;
+      const env = await import("@/lib/server/serviceEnv");
+      expect(() => env.appEnv()).toThrow(/public URL not configured in this environment \(missing NEXT_PUBLIC_APP_URL\)/);
+      expect(env.dashboardLinkForAlert()).toBe(
+        "(no dashboard link: The app's public URL not configured in this environment (missing NEXT_PUBLIC_APP_URL))"
+      );
+      process.env.NEXT_PUBLIC_APP_URL = "https://returns.test";
+      expect(env.dashboardLinkForAlert()).toBe("https://returns.test/dashboard");
     } finally {
       process.env = saved;
     }

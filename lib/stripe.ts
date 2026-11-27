@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { stripeEnv } from "@/lib/server/serviceEnv";
+import { stripeApiEnv } from "@/lib/server/serviceEnv";
 
 let client: Stripe | null = null;
 
@@ -10,7 +10,7 @@ let client: Stripe | null = null;
  */
 export function stripeClient(): Stripe {
   if (!client) {
-    client = new Stripe(stripeEnv().apiKey, {
+    client = new Stripe(stripeApiEnv().apiKey, {
       apiVersion: "2025-05-28.basil",
       typescript: true,
     });

@@ -42,7 +42,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   process.env.USERNAME_CORREOS = "user";
   process.env.PASSWORD_CORREOS = "pass";
-  process.env.CODIGO_ETIQUETADOR_CORREOS = "AZXT";
 });
 
 describe("obtainLastStatus", () => {

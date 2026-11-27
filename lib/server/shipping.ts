@@ -27,10 +27,12 @@ import { preregisterDomesticReturn } from "./amphoraReturn";
 import { alertOps } from "./opsAlert";
 import { describeError } from "@/lib/describeError";
 import {
-  correosEnv,
+  correosLabelEnv,
+  correosTrackingEnv,
   postmarkEnv,
   ServiceNotConfigured,
-  type CorreosEnv,
+  type CorreosLabelEnv,
+  type CorreosTrackingEnv,
 } from "./serviceEnv";
 
 /**
@@ -38,9 +40,9 @@ import {
  * none — logged, because a read that cannot happen must say why. Callers map
  * null to the same "told us nothing" answer as a failed lookup.
  */
-function correosCredentials(): CorreosEnv | null {
+function correosCredentials(): CorreosTrackingEnv | null {
   try {
-    return correosEnv();
+    return correosTrackingEnv();
   } catch (error) {
     if (!(error instanceof ServiceNotConfigured)) throw error;
     console.error(`[correos] tracking not read: ${error.message}`);
@@ -213,9 +215,9 @@ async function sendShippingLabel(
   name: string,
   firstSurname: string
 ): Promise<ShippingResponse> {
-  let correos: CorreosEnv;
+  let correos: CorreosLabelEnv;
   try {
-    correos = correosEnv();
+    correos = correosLabelEnv();
   } catch (error) {
     // Nothing was sent to Correos: refuse before building the envelope.
     if (error instanceof ServiceNotConfigured) return { status: 502, error: error.message };

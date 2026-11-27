@@ -20,9 +20,10 @@ import "server-only";
 //
 // DATABASE_URL is not a service key here: db/drizzle.ts owns it.
 
-export type ServiceName = "shopify" | "amphora" | "correos" | "postmark" | "stripe";
+export type ServiceName = "app" | "shopify" | "amphora" | "correos" | "postmark" | "stripe";
 
 const LABEL: Record<ServiceName, string> = {
+  app: "The app's public URL",
   shopify: "Shopify",
   amphora: "Amphora",
   correos: "Correos",
@@ -58,6 +59,26 @@ function required<K extends string>(service: ServiceName, names: readonly K[]): 
   return values;
 }
 
+/** This deployment's own public URL: links in customer emails, Stripe's
+ *  return URLs, the dashboard link in ops alerts. */
+export function appEnv(): { publicUrl: string } {
+  return { publicUrl: required("app", ["NEXT_PUBLIC_APP_URL"]).NEXT_PUBLIC_APP_URL };
+}
+
+/**
+ * The dashboard link written into an ops alert. An alert must never be lost
+ * because a link cannot be built, so without the app's URL the line says why,
+ * in the alert itself — never a silent "" that reads as a working link.
+ */
+export function dashboardLinkForAlert(): string {
+  try {
+    return `${appEnv().publicUrl}/dashboard`;
+  } catch (error) {
+    if (!(error instanceof ServiceNotConfigured)) throw error;
+    return `(no dashboard link: ${error.message})`;
+  }
+}
+
 export type ShopifyEnv = { adminToken: string; shopUrl: string };
 
 /** The Shopify Admin API. Server-only names: the `NEXT_PUBLIC_` ones they
@@ -84,10 +105,23 @@ export function amphoraEnv(): AmphoraEnv {
   };
 }
 
-export type CorreosEnv = { username: string; password: string; labellerCode: string };
+/** Verifying Amphora's inbound webhooks. Independent of the outbound Company
+ *  API keys: an environment can receive without being able to call. */
+export function amphoraWebhookEnv(): { secret: string } {
+  return { secret: required("amphora", ["AMPHORA_WEBHOOK_SECRET"]).AMPHORA_WEBHOOK_SECRET };
+}
 
-/** Correos: label pre-registration and the tracking API share one account. */
-export function correosEnv(): CorreosEnv {
+export type CorreosTrackingEnv = { username: string; password: string };
+export type CorreosLabelEnv = CorreosTrackingEnv & { labellerCode: string };
+
+/** Correos tracking lookups: the account's credentials only. */
+export function correosTrackingEnv(): CorreosTrackingEnv {
+  const env = required("correos", ["USERNAME_CORREOS", "PASSWORD_CORREOS"]);
+  return { username: env.USERNAME_CORREOS, password: env.PASSWORD_CORREOS };
+}
+
+/** Correos label pre-registration: the credentials and our labeller code. */
+export function correosLabelEnv(): CorreosLabelEnv {
   const env = required("correos", ["USERNAME_CORREOS", "PASSWORD_CORREOS", "CODIGO_ETIQUETADOR_CORREOS"]);
   return {
     username: env.USERNAME_CORREOS,
@@ -103,11 +137,12 @@ export function postmarkEnv(): PostmarkEnv {
   return { serverToken: env.POSTMARK_SERVER_TOKEN };
 }
 
-export type StripeEnv = { apiKey: string; webhookSecret: string };
+/** The Stripe API client (checkout sessions, refunds). */
+export function stripeApiEnv(): { apiKey: string } {
+  return { apiKey: required("stripe", ["STRIPE_API_KEY"]).STRIPE_API_KEY };
+}
 
-/** Stripe: the API key and the webhook signing secret belong to one account
- *  and one mode (test or live), so they are configured together. */
-export function stripeEnv(): StripeEnv {
-  const env = required("stripe", ["STRIPE_API_KEY", "STRIPE_WEBHOOK_SECRET"]);
-  return { apiKey: env.STRIPE_API_KEY, webhookSecret: env.STRIPE_WEBHOOK_SECRET };
+/** Stripe webhook signature verification. */
+export function stripeWebhookEnv(): { webhookSecret: string } {
+  return { webhookSecret: required("stripe", ["STRIPE_WEBHOOK_SECRET"]).STRIPE_WEBHOOK_SECRET };
 }

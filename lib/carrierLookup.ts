@@ -6,7 +6,7 @@
 // "unreadable": a lookup that told us nothing is not evidence about the parcel,
 // so it sends the number to ops rather than refusing or approving it.
 import { nacexParts } from "@/lib/carriers";
-import { correosEnv, ServiceNotConfigured } from "@/lib/server/serviceEnv";
+import { correosTrackingEnv, ServiceNotConfigured } from "@/lib/server/serviceEnv";
 import {
   bpostVerdict,
   correosVerdict,
@@ -30,7 +30,7 @@ async function correos(number: string): Promise<Verdict> {
   let username: string;
   let password: string;
   try {
-    ({ username, password } = correosEnv());
+    ({ username, password } = correosTrackingEnv());
   } catch (error) {
     if (!(error instanceof ServiceNotConfigured)) throw error;
     console.error(`[carrier-lookup] Correos not read: ${error.message}`);

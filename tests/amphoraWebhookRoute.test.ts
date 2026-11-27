@@ -116,10 +116,27 @@ describe("POST /api/webhooks/amphora", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects everything when the secret is not configured", async () => {
+  it("refuses everything with a 503, logged, when the secret is not configured — not a 401", async () => {
     delete process.env.AMPHORA_WEBHOOK_SECRET;
-    const res = await post(TRACKING, "s3cret");
-    expect(res.status).toBe(401);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await post(TRACKING, "s3cret");
+      expect(res.status).toBe(503);
+      expect(writes).toHaveLength(0);
+      expect(emails).toHaveLength(0);
+      expect(errors.mock.calls.map((c) => c.join(" ")).join("\n")).toContain(
+        "Amphora not configured in this environment (missing AMPHORA_WEBHOOK_SECRET)"
+      );
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("needs only its own secret, not the outbound Amphora keys", async () => {
+    delete process.env.AMPHORA_API_KEY;
+    delete process.env.AMPHORA_TENANT_ID;
+    expect((await post(TRACKING, "wrong")).status).toBe(401);
+    expect((await post(TRACKING, "s3cret")).status).toBe(200);
   });
 
   it("persists tracking and emails the customer", async () => {

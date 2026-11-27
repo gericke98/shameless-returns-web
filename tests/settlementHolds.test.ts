@@ -5,6 +5,10 @@ import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import { giftCardObject, orderObject, returnObject } from "./support/shopifyEvidence";
 import type { SubmissionLineRow } from "@/lib/settlement/ledger";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // FX: Amphora authorizes the replacement (§#4 (d), A1), holds stop a
 // submission on the admission fence (§#7), a rejected exchange is held, not

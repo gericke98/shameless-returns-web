@@ -26,7 +26,7 @@ import axios from "axios";
 import { getVariantSkusByIds } from "@/db/queries";
 import { variantGid } from "@/lib/shopifyIds";
 import type { StockRead, StockRow } from "@/lib/stockCoverage";
-import { amphoraConfig } from "./amphora";
+import { amphoraEnv, ServiceNotConfigured, type AmphoraEnv } from "./serviceEnv";
 
 /**
  * Decision 1 (Santi, 2026-11-26): the one Amphora warehouse that ships
@@ -38,7 +38,14 @@ export const SHOPIFY_WAREHOUSE_ID = "10";
 const numericOf = (gid: string) => gid.replace(/^gid:\/\/shopify\/ProductVariant\//, "");
 
 async function inventoryAtWarehouse(): Promise<{ ok: true; rows: any[] } | { ok: false; reason: string }> {
-  const cfg = amphoraConfig();
+  let cfg: AmphoraEnv;
+  try {
+    cfg = amphoraEnv();
+  } catch (error) {
+    // Nothing read: the send waits, back to pending, like any unreadable stock (A1).
+    if (error instanceof ServiceNotConfigured) return { ok: false, reason: "amphora-not-configured" };
+    throw error;
+  }
   try {
     const res = await axios.get(`${cfg.base}/inventory/${encodeURIComponent(cfg.tenant)}`, {
       params: { warehouses: SHOPIFY_WAREHOUSE_ID, shop_name: cfg.shopName },

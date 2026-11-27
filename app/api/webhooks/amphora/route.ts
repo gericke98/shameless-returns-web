@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getOrderByIdFresh, getOrderByNumberFresh } from "@/db/queries";
 import { applyReturnStatus } from "@/lib/server/amphoraStatusSync";
 import { verifiedByAmphoraSecret } from "@/lib/server/identity";
+import { amphoraWebhookEnv, ServiceNotConfigured } from "@/lib/server/serviceEnv";
 import {
   orderIdFromWebhook,
   type AmphoraWebhookReturn,
@@ -26,24 +27,39 @@ import {
  * and /login. The shared `X-Secret` is the ONLY thing in front of this
  * endpoint, so it is checked before any parsing or database access.
  */
-function authorized(req: Request): boolean {
-  const expected = process.env.AMPHORA_WEBHOOK_SECRET;
-  // An unconfigured deployment must be CLOSED, not open.
-  if (!expected) return false;
+/**
+ * The shared `X-Secret`, checked before any parsing or database access.
+ * `not-configured` (this environment holds no secret) is a deployment fault,
+ * not a bad caller: the endpoint stays CLOSED, and says why (503, logged), so
+ * it is never mistaken for Amphora sending the wrong secret (401).
+ */
+function authorize(req: Request): "ok" | "invalid" | ServiceNotConfigured {
+  let expected: string;
+  try {
+    expected = amphoraWebhookEnv().secret;
+  } catch (error) {
+    if (error instanceof ServiceNotConfigured) return error;
+    throw error;
+  }
 
   const got = req.headers.get("x-secret");
-  if (!got) return false;
+  if (!got) return "invalid";
 
   const a = Buffer.from(got);
   const b = Buffer.from(expected);
   // timingSafeEqual throws on a length mismatch, so the lengths are compared
   // first; the comparison stays constant-time for equal-length inputs.
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  if (a.length !== b.length) return "invalid";
+  return timingSafeEqual(a, b) ? "ok" : "invalid";
 }
 
 export async function POST(req: Request) {
-  if (!authorized(req)) {
+  const auth = authorize(req);
+  if (auth instanceof ServiceNotConfigured) {
+    console.error(`[amphora-webhook] refusing every request: ${auth.message}`);
+    return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
+  }
+  if (auth !== "ok") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

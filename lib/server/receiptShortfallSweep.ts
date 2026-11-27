@@ -25,6 +25,7 @@ import {
 } from "@/db/receiptShortfalls";
 import { matchReturnsToOrderIds } from "@/lib/amphoraReturnMatch";
 import { observeReturnReceipt, type ObservedLine } from "@/lib/receiptObservation";
+import { dashboardLinkForAlert } from "./serviceEnv";
 
 export const ESCALATE_AFTER_DAYS = 7;
 const MS_PER_DAY = 86_400_000;
@@ -185,7 +186,7 @@ export function shortfallAlert(
   stage: 1 | 2
 ): { dedupeKey: string; subject: string; body: string } {
   const label = order?.orderNumber ?? `order id ${row.orderId}`;
-  const dashboard = `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`;
+  const dashboard = dashboardLinkForAlert();
   return {
     dedupeKey: shortfallAlertKey(row, stage),
     subject:

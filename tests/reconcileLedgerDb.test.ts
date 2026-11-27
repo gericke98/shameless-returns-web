@@ -1,6 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { settlementDatabase } from "./support/settlementDb";
 import { vid, sys } from "./support/verified";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // S3 R1 `--write`, D1/D2 approval and D3 on PGlite with the real migrations
 // (0004, 0006–0009): paid → done operation + refunded, idempotent; ambiguous →

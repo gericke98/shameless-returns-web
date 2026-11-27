@@ -15,6 +15,7 @@ import "server-only";
 
 import axios from "axios";
 import { describeError } from "@/lib/describeError";
+import { postmarkEnv, ServiceNotConfigured } from "./serviceEnv";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 const OPS_ADDRESS = "hello@shamelesscollective.com";
@@ -28,18 +29,24 @@ const OPS_ADDRESS = "hello@shamelesscollective.com";
  * row is cleared moments later, which drops it out of the dashboard too, so
  * the inbox becomes the only place the problem still exists.
  *
- * Best effort and silent on failure. It is already the fallback path. For an
- * alert that must not be lost, enqueue it with `enqueueOpsAlert`
- * (actions/opsAlertOutbox.ts) instead.
+ * Best effort: never throws, and a failure — including an environment with
+ * no Postmark — is logged, not swallowed. It is already the fallback path. For
+ * an alert that must not be lost, enqueue it with `enqueueOpsAlert`
+ * (lib/server/opsAlertOutbox.ts) instead.
  */
 export async function alertOps(subject: string, body: string): Promise<void> {
   console.error(`[ops] ${subject}: ${body}`);
 
-  if (!process.env.POSTMARK_SERVER_TOKEN) return;
-
   const result = await sendOpsAlert(subject, body);
-  if (!result.ok) console.error("Could not send ops alert:", result.error);
+  if (!result.ok) console.error(`Could not send ops alert (${result.reason}):`, result.error);
 }
+
+/** Why an ops email was not accepted. `not-configured`: this environment has
+ *  no Postmark, nothing was sent. `rejected`: Postmark refused it or could not
+ *  be reached. Either way the outbox keeps the row pending. */
+export type OpsAlertSendResult =
+  | { ok: true }
+  | { ok: false; reason: "not-configured" | "rejected"; error: string };
 
 /**
  * Send one ops email and say whether Postmark accepted it. Same transport as
@@ -49,12 +56,14 @@ export async function alertOps(subject: string, body: string): Promise<void> {
  * Accepted means HTTP 2xx AND `ErrorCode: 0` in the body: Postmark reports some
  * rejections with a non-zero ErrorCode, and a 200 is not, on its own, proof.
  */
-export async function sendOpsAlert(
-  subject: string,
-  body: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return { ok: false, error: "POSTMARK_SERVER_TOKEN is not set" };
+export async function sendOpsAlert(subject: string, body: string): Promise<OpsAlertSendResult> {
+  let token: string;
+  try {
+    token = postmarkEnv().serverToken;
+  } catch (error) {
+    if (error instanceof ServiceNotConfigured) return { ok: false, reason: "not-configured", error: error.message };
+    return { ok: false, reason: "rejected", error: describeError(error) };
+  }
 
   try {
     const response = await axios.post(
@@ -82,10 +91,10 @@ export async function sendOpsAlert(
       }
     );
     if (response.data?.ErrorCode !== 0) {
-      return { ok: false, error: `Postmark ErrorCode ${response.data?.ErrorCode}: ${response.data?.Message ?? ""}` };
+      return { ok: false, reason: "rejected", error: `Postmark ErrorCode ${response.data?.ErrorCode}: ${response.data?.Message ?? ""}` };
     }
     return { ok: true };
   } catch (error: any) {
-    return { ok: false, error: describeError(error) };
+    return { ok: false, reason: "rejected", error: describeError(error) };
   }
 }

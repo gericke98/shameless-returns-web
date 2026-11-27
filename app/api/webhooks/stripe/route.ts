@@ -12,7 +12,8 @@ import { getOrderById, getOrderByIdFresh } from "@/db/queries";
 import { orders } from "@/db/schema";
 import { parseCheckoutMetadata } from "@/lib/checkoutMetadata";
 import type { ReturnMethod } from "@/lib/returnMethods";
-import { stripe } from "@/lib/stripe";
+import { stripeClient } from "@/lib/stripe";
+import { stripeWebhookEnv } from "@/lib/server/serviceEnv";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
@@ -212,10 +213,10 @@ export async function POST(req: Request) {
   }
 
   try {
-    const event = stripe.webhooks.constructEvent(
+    const event = stripeClient().webhooks.constructEvent(
       body,
       signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      stripeWebhookEnv().webhookSecret
     );
     const session = event.data.object as Stripe.Checkout.Session;
 

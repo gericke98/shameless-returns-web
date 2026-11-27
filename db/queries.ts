@@ -10,18 +10,16 @@ import { OrderData, OrderLineItem, type Product } from "@/types";
 import type { ReturnCreateInput } from "@/lib/returnPayload";
 import { pickRefundTransaction } from "@/lib/refundTransaction";
 import type { VerifiedOrderId } from "@/lib/server/identity";
+import { shopifyEnv } from "@/lib/server/serviceEnv";
 
-const createSession = (): RequestInit => {
-  if (
-    !process.env.NEXT_PUBLIC_ACCESS_TOKEN ||
-    !process.env.NEXT_PUBLIC_SHOP_URL
-  ) {
-    throw new Error("Missing Shopify access token or shop URL");
-  }
-
+// The shop to call and the headers to call it with. Refuses with
+// `ServiceNotConfigured` when this environment holds no Shopify keys.
+const createSession = (): { shopUrl: string; headers: Record<string, string> } => {
+  const { adminToken, shopUrl } = shopifyEnv();
   return {
+    shopUrl,
     headers: {
-      "X-Shopify-Access-Token": process.env.NEXT_PUBLIC_ACCESS_TOKEN,
+      "X-Shopify-Access-Token": adminToken,
       "Content-Type": "application/json",
     },
   };
@@ -224,10 +222,10 @@ export const getOrderProductsById = cache(async (id: string) => {
 export async function getOrderQuery(orderNumber: string) {
   const session = createSession();
   // El %23 es lo mismo que poner #
-  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/orders.json?query=name:%23${orderNumber}`;
+  const url = `${session.shopUrl}/admin/api/2024-04/orders.json?query=name:%23${orderNumber}`;
 
   try {
-    const response = await fetch(url, session);
+    const response = await fetch(url, { headers: session.headers });
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -242,10 +240,10 @@ export async function getOrderQuery(orderNumber: string) {
 export async function getOrderTotal(orderId: string) {
   const session = createSession();
   // El %23 es lo mismo que poner #
-  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2024-04/orders.json?query=id:${orderId}`;
+  const url = `${session.shopUrl}/admin/api/2024-04/orders.json?query=id:${orderId}`;
 
   try {
-    const response = await fetch(url, session);
+    const response = await fetch(url, { headers: session.headers });
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -264,7 +262,7 @@ export async function getOrderTotal(orderId: string) {
  */
 export async function getOrderTransactions(orderId: string) {
   const session = createSession();
-  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const url = `${session.shopUrl}/admin/api/2025-01/graphql.json`;
   const query = `
     query orderTransactions($id: ID!) {
       order(id: $id) {
@@ -300,7 +298,7 @@ export async function getOrderTransactions(orderId: string) {
  */
 export async function createReturn(input: ReturnCreateInput) {
   const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/2025-01/graphql.json`;
 
   const query = `
       mutation CreateReturn($input: ReturnInput!) {
@@ -384,8 +382,8 @@ export async function createReturn(input: ReturnCreateInput) {
 }
 
 export async function getFulfillmentLineItems(fulfillmentId: string) {
-  const session = createSession(); // Replace with your session creation logic
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const session = createSession();
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/2025-01/graphql.json`;
 
   const query = `
     query FulfillmentShow($id: ID!) {
@@ -522,7 +520,7 @@ function toProduct(node: any): Product {
 
 export async function getProduct(id: string): Promise<Product> {
   const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/graphql.json`;
 
   const query = `
     query getProduct($id: ID!) {
@@ -583,7 +581,7 @@ export async function getVariantsByIds(variantIds: string[]): Promise<Record<str
   }
 
   const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/2025-01/graphql.json`;
 
   const query = `
     query getVariants($ids: [ID!]!) {
@@ -659,7 +657,7 @@ export async function getVariantSkusByIds(
   if (numericIds.length === 0) return {};
 
   const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/2025-01/graphql.json`;
   const gids = numericIds.map((id) => `gid://shopify/ProductVariant/${id}`);
   const query = `
     query getVariantSkus($ids: [ID!]!) {
@@ -727,7 +725,7 @@ function toGrams(weight: { value: number; unit: string } | null | undefined) {
 
 export async function getProducts() {
   const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/graphql.json`;
 
   const query = `
     query getProducts {
@@ -832,7 +830,7 @@ export async function getReturnStatusesByIds(
   if (ids.length === 0) return {};
 
   const session = createSession();
-  const shopifyGraphQLUrl = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`;
+  const shopifyGraphQLUrl = `${session.shopUrl}/admin/api/2025-01/graphql.json`;
   const query = `
     query getReturnStatuses($ids: [ID!]!) {
       nodes(ids: $ids) {

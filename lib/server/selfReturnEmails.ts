@@ -18,6 +18,7 @@ import {
   type EmailPayload,
 } from "@/lib/emails";
 import type { Locale } from "@/lib/i18n";
+import { appEnv, postmarkEnv, ServiceNotConfigured } from "./serviceEnv";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
@@ -25,10 +26,10 @@ async function sendSelfReturnEmail(
   payload: EmailPayload,
   to: string
 ): Promise<number> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return 500;
-
   try {
+    // Inside the try: an environment with no Postmark is logged below and
+    // reported as a failed send, never skipped in silence.
+    const token = postmarkEnv().serverToken;
     const res = await axios.post(
       POSTMARK_API_URL,
       {
@@ -62,16 +63,34 @@ async function sendSelfReturnEmail(
   }
 }
 
+/**
+ * Build the email with this deployment's portal URL and send it. Without the
+ * URL the email is not sent — a link to "" is a broken email — and the refusal
+ * is logged and reported as a failed send, like any other.
+ */
+async function sendWithPortalUrl(
+  to: string,
+  build: (portalUrl: string) => EmailPayload
+): Promise<number> {
+  let portalUrl: string;
+  try {
+    portalUrl = appEnv().publicUrl;
+  } catch (error) {
+    if (!(error instanceof ServiceNotConfigured)) throw error;
+    console.error(`Self-return email not sent: ${error.message}`);
+    return 500;
+  }
+  return sendSelfReturnEmail(build(portalUrl), to);
+}
+
 export async function sendSelfReturnInstructions(
   to: string,
   name: string,
   locale: Locale,
   orderId: string
 ): Promise<number> {
-  const portalUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  return sendSelfReturnEmail(
-    buildSelfReturnInstructionsEmail(name, locale, orderId, portalUrl),
-    to
+  return sendWithPortalUrl(to, (portalUrl) =>
+    buildSelfReturnInstructionsEmail(name, locale, orderId, portalUrl)
   );
 }
 
@@ -81,10 +100,8 @@ export async function sendSelfReturnReminder(
   locale: Locale,
   orderId: string
 ): Promise<number> {
-  const portalUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  return sendSelfReturnEmail(
-    buildSelfReturnReminderEmail(name, locale, orderId, portalUrl),
-    to
+  return sendWithPortalUrl(to, (portalUrl) =>
+    buildSelfReturnReminderEmail(name, locale, orderId, portalUrl)
   );
 }
 
@@ -95,9 +112,7 @@ export async function sendSelfTrackingRejected(
   orderId: string,
   number: string
 ): Promise<number> {
-  const portalUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-  return sendSelfReturnEmail(
-    buildSelfTrackingRejectedEmail(name, locale, orderId, portalUrl, number),
-    to
+  return sendWithPortalUrl(to, (portalUrl) =>
+    buildSelfTrackingRejectedEmail(name, locale, orderId, portalUrl, number)
   );
 }

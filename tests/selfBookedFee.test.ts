@@ -75,7 +75,7 @@ vi.mock("@/lib/loadBasket", () => ({
   loadBasket: async () => ({ order, catalogue: [], basket }),
 }));
 vi.mock("@/lib/stripe", () => ({
-  stripe: {
+  stripeClient: () => ({
     checkout: {
       sessions: {
         create: async (args: any) => {
@@ -84,7 +84,7 @@ vi.mock("@/lib/stripe", () => ({
         },
       },
     },
-  },
+  }),
 }));
 
 async function priceIt(method: "AMPHORA" | "SELF") {

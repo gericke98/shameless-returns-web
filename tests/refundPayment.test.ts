@@ -11,7 +11,7 @@ let sessions: any[] = [];
 let refundThrows = false;
 
 vi.mock("@/lib/stripe", () => ({
-  stripe: {
+  stripeClient: () => ({
     refunds: {
       create: async (args: any, options: any) => {
         if (refundThrows) throw new Error("stripe down");
@@ -31,7 +31,7 @@ vi.mock("@/lib/stripe", () => ({
         },
       },
     },
-  },
+  }),
 }));
 
 beforeEach(() => {

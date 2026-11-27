@@ -11,6 +11,8 @@
 // non-2xx, unparseable body). A no-answer says nothing about whether the
 // effect happened; the ledger treats it as "stays dispatched".
 
+import { ServiceNotConfigured, shopifyEnv, type ShopifyEnv } from "@/lib/server/serviceEnv";
+
 /** Every settlement call is made against this version (see the S2 plan). */
 export const SHOPIFY_API_VERSION = "2026-04";
 
@@ -25,13 +27,19 @@ export async function shopifyGraphQL(
   query: string,
   variables: Record<string, unknown>
 ): Promise<ShopifyAnswer> {
-  const shop = process.env.NEXT_PUBLIC_SHOP_URL;
-  const token = process.env.NEXT_PUBLIC_ACCESS_TOKEN;
-  if (!shop || !token) return { kind: "no-answer", error: "missing Shopify credentials" };
+  let shopify: ShopifyEnv;
   try {
-    const response = await fetch(`${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    shopify = shopifyEnv();
+  } catch (error) {
+    // Nothing was sent. Reported the way the transport has always reported
+    // absent credentials, so the ledger's handling of it is unchanged.
+    if (error instanceof ServiceNotConfigured) return { kind: "no-answer", error: error.message };
+    throw error;
+  }
+  try {
+    const response = await fetch(`${shopify.shopUrl}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
       method: "POST",
-      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      headers: { "X-Shopify-Access-Token": shopify.adminToken, "Content-Type": "application/json" },
       body: JSON.stringify({ query, variables }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });

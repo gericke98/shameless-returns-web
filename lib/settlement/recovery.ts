@@ -17,7 +17,7 @@ import {
   submissionsToFinalize,
   takenHoldsNotDone,
 } from "./ledger";
-import { recoverDispatched, runOutcome, type RunResult } from "./run";
+import { recoverDispatchedOutcome, runOutcome, type RunResult } from "./run";
 import type { WriteCapability } from "@/lib/server/identity";
 
 export type RecoveryReport = {
@@ -78,7 +78,7 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
       break;
     }
     const outcome = hasDispatched(op)
-      ? { result: await recoverDispatched(cap, op, me) }
+      ? await recoverDispatchedOutcome(cap, op, me)
       : await runOutcome(cap, op.id, me);
     report.ran.push({ op: op.id, kind: op.kind, from: op.state, ...outcome });
   }
@@ -100,6 +100,25 @@ export async function recoverSettlements(cap: WriteCapability, options: { deadli
       ].join("\n"),
     }))
   );
+
+  // F2a: an environment without Shopify keys runs nothing; every operation is
+  // left as it was. Once a day, one alert says so: in production that is a
+  // missing key, and no money moves until it is set.
+  const notConfigured = report.ran.filter((r) => r.result === "not-configured");
+  if (notConfigured.length > 0) {
+    await enqueueOpsAlerts([
+      {
+        dedupeKey: `settlement-not-configured:${day}`,
+        subject: `[returns] SETTLEMENT NOT RUNNING — ${notConfigured[0].reason}`,
+        body: [
+          `Recovery ran no settlement operation: ${notConfigured[0].reason}.`,
+          `Nothing was claimed or sent; ${notConfigured.length} operation(s) wait as they were:`,
+          ...notConfigured.map((r) => `  ${r.op} (${r.kind}, ${r.from})`),
+          `Set the keys for this environment; the next run picks them up. This alert repeats once a day.`,
+        ].join("\n"),
+      },
+    ]);
+  }
 
   for (const submission of await submissionsToFinalize()) {
     const lines = await finalize(cap, submission);

@@ -28,7 +28,7 @@ async function main() {
     },
   });
   const { fundReplacementLine } = await import("@/lib/settlement/replacementFunding");
-  const { stripe } = await import("@/lib/stripe");
+  const stripe = (await import("@/lib/stripe")).stripeClient();
   const readSession = async (id: string) => {
     try {
       const s = await stripe.checkout.sessions.retrieve(id);

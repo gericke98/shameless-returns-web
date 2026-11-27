@@ -67,8 +67,8 @@ const orderProduct = {
 } as never;
 
 beforeEach(() => {
-  process.env.NEXT_PUBLIC_SHOP_URL = "https://shop.invalid";
-  process.env.NEXT_PUBLIC_ACCESS_TOKEN = "placeholder";
+  process.env.SHOPIFY_SHOP_URL = "https://shop.invalid";
+  process.env.SHOPIFY_ADMIN_TOKEN = "placeholder";
   vi.stubGlobal("fetch", fakeShopifyFetch(SHOPIFY));
 });
 afterEach(() => {

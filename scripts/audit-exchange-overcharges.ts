@@ -77,7 +77,7 @@
  * decision belongs to a human.
  *
  * Run:
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/audit-exchange-overcharges.ts \
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/audit-exchange-overcharges.ts \
  *     > .superpowers/sdd/2026-09-01-exchange-keeps-sale-price/exchange-overcharges.csv
  *
  * Output: CSV on stdout (order_id,order_number,email,status,difference_eur,
@@ -118,7 +118,7 @@ import {
   type LineStatus,
   type ReconstructedStatus,
 } from "@/lib/exchangeOverchargeAudit";
-import { stripe } from "@/lib/stripe";
+import { stripeClient } from "@/lib/stripe";
 import type { Product } from "@/types";
 import type Stripe from "stripe";
 
@@ -148,10 +148,10 @@ import type Stripe from "stripe";
  * the store has 83 products total, verified well under that page size.
  */
 async function fetchCatalogueProducts(): Promise<Product[]> {
-  if (!process.env.NEXT_PUBLIC_SHOP_URL || !process.env.NEXT_PUBLIC_ACCESS_TOKEN) {
-    throw new Error("Missing NEXT_PUBLIC_SHOP_URL or NEXT_PUBLIC_ACCESS_TOKEN");
+  if (!process.env.SHOPIFY_SHOP_URL || !process.env.SHOPIFY_ADMIN_TOKEN) {
+    throw new Error("Missing SHOPIFY_SHOP_URL or SHOPIFY_ADMIN_TOKEN");
   }
-  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
+  const url = `${process.env.SHOPIFY_SHOP_URL}/admin/api/graphql.json`;
   const query = `
     query getProducts {
       products(first: 250) {
@@ -172,7 +172,7 @@ async function fetchCatalogueProducts(): Promise<Product[]> {
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "X-Shopify-Access-Token": process.env.NEXT_PUBLIC_ACCESS_TOKEN,
+      "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_TOKEN,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ query }),
@@ -233,7 +233,7 @@ async function buildSessionIndex(): Promise<SessionIndexResult> {
   const unmatchedPaid: SessionIndexResult["unmatchedPaid"] = [];
   let unmatchedUnpaid = 0;
   let scanned = 0;
-  for await (const session of stripe.checkout.sessions.list({ limit: 100 })) {
+  for await (const session of stripeClient().checkout.sessions.list({ limit: 100 })) {
     scanned++;
     const orderId = session.metadata?.id;
     if (!orderId) {
@@ -369,7 +369,7 @@ async function classifyCandidate(orderId: string, ctx: ClassifyContext): Promise
     };
   }
 
-  const lineItems = await stripe.checkout.sessions.listLineItems(session.id, { limit: 20 });
+  const lineItems = await stripeClient().checkout.sessions.listLineItems(session.id, { limit: 20 });
   const classification = classifySessionLines(lineItems.data);
 
   if (classification.status !== "indeterminate") {

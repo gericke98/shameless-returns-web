@@ -387,7 +387,7 @@ async function main() {
     const stripeSessions = async () => {
       if (!stripeRead) {
         try {
-          const { stripe } = await import("@/lib/stripe");
+          const stripe = (await import("@/lib/stripe")).stripeClient();
           const sessions: import("@/lib/settlement/legacyFunding").StripeSession[] = [];
           for await (const s of stripe.checkout.sessions.list({ limit: 100 })) {
             sessions.push({ id: s.id, payment_status: s.payment_status ?? null, metadata: (s.metadata ?? null) as any });

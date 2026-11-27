@@ -72,6 +72,13 @@ describe("readAvailable", () => {
     });
   });
 
+  it("is unreadable, reaching nobody, when this environment has no Amphora keys (F2a)", async () => {
+    delete process.env.AMPHORA_API_KEY;
+    const read = await (await reader())([V1]);
+    expect(read).toEqual({ ok: false, reason: "amphora-not-configured" });
+    expect(world.calls).toHaveLength(0);
+  });
+
   it("counts available_quantity only — never reserved, pending or committed", async () => {
     const read = await (await reader())([V2]);
     expect(read.ok && read.bySku.get("SKU-2")?.available).toBe(0);

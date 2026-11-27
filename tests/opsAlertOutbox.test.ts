@@ -47,7 +47,7 @@ vi.mock("@/lib/server/opsAlert", () => ({
   },
   sendOpsAlert: async (subject: string) => {
     sends.push(subject);
-    return postmark.ok ? { ok: true } : { ok: false, error: postmark.error };
+    return postmark.ok ? { ok: true } : { ok: false, reason: "rejected", error: postmark.error };
   },
 }));
 

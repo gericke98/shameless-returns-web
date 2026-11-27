@@ -12,11 +12,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const shop = process.env.NEXT_PUBLIC_SHOP_URL;
-const token = process.env.NEXT_PUBLIC_ACCESS_TOKEN;
+const shop = process.env.SHOPIFY_SHOP_URL;
+const token = process.env.SHOPIFY_ADMIN_TOKEN;
 if (!shop || !token) {
   console.error(
-    "NEXT_PUBLIC_SHOP_URL and NEXT_PUBLIC_ACCESS_TOKEN must be set — see the header of this file."
+    "SHOPIFY_SHOP_URL and SHOPIFY_ADMIN_TOKEN must be set — see the header of this file."
   );
   process.exit(1);
 }

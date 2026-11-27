@@ -27,6 +27,7 @@ import {
   type AmphoraWebhookReturn,
 } from "@/lib/amphoraWebhook";
 import { alertOps } from "@/lib/server/opsAlert";
+import { postmarkEnv } from "@/lib/server/serviceEnv";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
@@ -58,9 +59,10 @@ export type SyncOutcome = {
 };
 
 async function sendEmail(payload: Record<string, unknown>): Promise<number> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return 500;
   try {
+    // Inside the try: an environment with no Postmark is logged below and
+    // counted as a failed email, never skipped in silence.
+    const token = postmarkEnv().serverToken;
     const res = await axios.post(POSTMARK_API_URL, payload, {
       headers: {
         Accept: "application/json",

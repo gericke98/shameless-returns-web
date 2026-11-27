@@ -34,8 +34,8 @@ const line = (over: Record<string, unknown> = {}) => ({
 
 beforeEach(() => {
   sent.length = 0;
-  process.env.NEXT_PUBLIC_ACCESS_TOKEN = "shpat_test";
-  process.env.NEXT_PUBLIC_SHOP_URL = "https://example.myshopify.com";
+  process.env.SHOPIFY_ADMIN_TOKEN = "shpat_test";
+  process.env.SHOPIFY_SHOP_URL = "https://example.myshopify.com";
 
   vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
     sent.push(JSON.parse(String(init.body)));

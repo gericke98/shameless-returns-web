@@ -29,8 +29,8 @@ beforeEach(async () => {
   await env.reset();
   shopifyBody = "";
   shopifyResponse.value = { data: { returnCancel: { return: { id: "gid://x" }, userErrors: [] } } };
-  process.env.NEXT_PUBLIC_ACCESS_TOKEN = "token";
-  process.env.NEXT_PUBLIC_SHOP_URL = "https://shop.myshopify.com";
+  process.env.SHOPIFY_ADMIN_TOKEN = "token";
+  process.env.SHOPIFY_SHOP_URL = "https://shop.myshopify.com";
 });
 
 describe("cancelShopifyReturn", () => {
@@ -76,8 +76,8 @@ describe("cancelShopifyReturn", () => {
     // this function runs, the caller has already cancelled the Amphora return
     // and cannot undo that — an escaping throw here strands the customer with
     // no return and no refund, instead of a failure a caller can act on.
-    delete process.env.NEXT_PUBLIC_ACCESS_TOKEN;
-    delete process.env.NEXT_PUBLIC_SHOP_URL;
+    delete process.env.SHOPIFY_ADMIN_TOKEN;
+    delete process.env.SHOPIFY_SHOP_URL;
     const { cancelShopifyReturn } = await import("@/lib/submissionCancellation");
 
     await expect(cancelShopifyReturn("gid://shopify/Return/1")).resolves.toMatchObject({

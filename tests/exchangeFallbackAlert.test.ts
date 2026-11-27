@@ -122,7 +122,7 @@ vi.mock("@/db/fees", () => ({
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  stripe: {
+  stripeClient: () => ({
     checkout: {
       sessions: {
         create: async (args: any) => {
@@ -131,7 +131,7 @@ vi.mock("@/lib/stripe", () => ({
         },
       },
     },
-  },
+  }),
 }));
 
 vi.mock("@/lib/server/opsAlert", () => ({
@@ -141,6 +141,8 @@ vi.mock("@/lib/server/opsAlert", () => ({
 }));
 
 beforeEach(() => {
+  // Stripe's return URLs are built from it (lib/server/serviceEnv.ts appEnv).
+  process.env.NEXT_PUBLIC_APP_URL = "https://returns.test";
   fees = ZERO_FEES;
   alerts.length = 0;
   sessionsCreated.length = 0;

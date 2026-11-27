@@ -4,6 +4,10 @@ import { sys, vsub } from "./support/verified";
 import { pg16Available, startPg16 } from "./support/pg16";
 import { insertFrozenReleaseHold, planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // FX holds raced between CONNECTIONS on a real PostgreSQL 16 (the pattern of
 // tests/settlementConcurrency.test.ts): every hold mutation is one statement

@@ -6,6 +6,7 @@
 // "unreadable": a lookup that told us nothing is not evidence about the parcel,
 // so it sends the number to ops rather than refusing or approving it.
 import { nacexParts } from "@/lib/carriers";
+import { correosTrackingEnv, ServiceNotConfigured } from "@/lib/server/serviceEnv";
 import {
   bpostVerdict,
   correosVerdict,
@@ -26,9 +27,15 @@ async function get(url: string, headers: Record<string, string> = {}): Promise<R
 }
 
 async function correos(number: string): Promise<Verdict> {
-  const username = process.env.USERNAME_CORREOS;
-  const password = process.env.PASSWORD_CORREOS;
-  if (!username || !password) return "unreadable";
+  let username: string;
+  let password: string;
+  try {
+    ({ username, password } = correosTrackingEnv());
+  } catch (error) {
+    if (!(error instanceof ServiceNotConfigured)) throw error;
+    console.error(`[carrier-lookup] Correos not read: ${error.message}`);
+    return "unreadable";
+  }
   const auth = Buffer.from(`${username}:${password}`).toString("base64");
   const res = await get(
     `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${encodeURIComponent(number)}?codIdioma=ES&indUltEvento=S`,

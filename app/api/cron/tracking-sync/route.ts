@@ -13,6 +13,7 @@ import { tracksWithCorreos } from "@/lib/trackingStatus";
 import { readLocale } from "@/lib/i18n";
 import { alertOps } from "@/lib/server/opsAlert";
 import { verifyCronRequest } from "@/lib/server/cron";
+import { postmarkEnv, ServiceNotConfigured } from "@/lib/server/serviceEnv";
 
 /**
  * Tell customers where their return has got to.
@@ -55,9 +56,11 @@ function intEnv(name: string, fallback: number): number {
 }
 
 async function sendEmail(payload: Record<string, unknown>): Promise<number> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return 500;
   try {
+    // Inside the try: an environment with no Postmark is logged below and
+    // reported as a failed send, never a silent one. GET refuses the whole run
+    // before this is reached.
+    const token = postmarkEnv().serverToken;
     const res = await axios.post(POSTMARK_API_URL, payload, {
       headers: {
         Accept: "application/json",
@@ -67,7 +70,7 @@ async function sendEmail(payload: Record<string, unknown>): Promise<number> {
     });
     return res.status;
   } catch (error: any) {
-    console.error("[tracking-sync] email error:", error?.response?.data || error?.message);
+    console.error("[tracking-sync] email error:", error?.response?.data || error?.message || error);
     return 500;
   }
 }
@@ -121,13 +124,18 @@ export async function GET(req: Request) {
     seedParam !== null && seedParam !== "0" && seedParam !== "false";
 
   // Bail before the loop, not inside it. `sendEmail` returns 500 without
-  // attempting anything when the token is absent — so without this check a
-  // single run would persist every parcel's milestone, mail nobody, and report
-  // `notified: N` as though it had. Those milestones can never be re-sent.
-  // Seeding never sends, so it does not need a Postmark token to run.
-  if (!dry && !seed && !process.env.POSTMARK_SERVER_TOKEN) {
-    console.error("[tracking-sync] POSTMARK_SERVER_TOKEN is not set — refusing to run");
-    return NextResponse.json({ error: "Email not configured" }, { status: 503 });
+  // attempting anything when Postmark is not configured — so without this
+  // check a single run would persist every parcel's milestone, mail nobody,
+  // and report `notified: N` as though it had. Those milestones can never be
+  // re-sent. Seeding never sends, so it does not need Postmark to run.
+  if (!dry && !seed) {
+    try {
+      postmarkEnv();
+    } catch (error) {
+      if (!(error instanceof ServiceNotConfigured)) throw error;
+      console.error(`[tracking-sync] ${error.message} — refusing to run`);
+      return NextResponse.json({ error: "Email not configured" }, { status: 503 });
+    }
   }
 
   const parcels = (await getParcelsAwaitingTracking()) as any[];

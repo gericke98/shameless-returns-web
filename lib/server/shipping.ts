@@ -26,6 +26,29 @@ import { eq } from "drizzle-orm";
 import { preregisterDomesticReturn } from "./amphoraReturn";
 import { alertOps } from "./opsAlert";
 import { describeError } from "@/lib/describeError";
+import {
+  correosLabelEnv,
+  correosTrackingEnv,
+  postmarkEnv,
+  ServiceNotConfigured,
+  type CorreosLabelEnv,
+  type CorreosTrackingEnv,
+} from "./serviceEnv";
+
+/**
+ * Correos credentials for a tracking read, or null when this environment has
+ * none — logged, because a read that cannot happen must say why. Callers map
+ * null to the same "told us nothing" answer as a failed lookup.
+ */
+function correosCredentials(): CorreosTrackingEnv | null {
+  try {
+    return correosTrackingEnv();
+  } catch (error) {
+    if (!(error instanceof ServiceNotConfigured)) throw error;
+    console.error(`[correos] tracking not read: ${error.message}`);
+    return null;
+  }
+}
 
 // Types
 type ShippingResponse = {
@@ -123,7 +146,7 @@ function generateCustomsBlock(order: any): string {
  * Pinned by tests/correosDestination.test.ts — nothing else would notice this
  * drifting again.
  */
-function generateSoapBody(order: any, name: string, firstSurname: string) {
+function generateSoapBody(order: any, name: string, firstSurname: string, labellerCode: string) {
   const number = extractAddressNumber(order.shippingAddress1);
 
   return `
@@ -132,7 +155,7 @@ function generateSoapBody(order: any, name: string, firstSurname: string) {
       <soapenv:Body>
         <PreregistroEnvio>
           <IdiomaErrores>EN</IdiomaErrores>
-          <CodEtiquetador>${process.env.CODIGO_ETIQUETADOR_CORREOS}</CodEtiquetador>
+          <CodEtiquetador>${labellerCode}</CodEtiquetador>
           <ModDevEtiqueta>2</ModDevEtiqueta>
           <Remitente>
             <Identificacion>
@@ -187,13 +210,21 @@ function generateSoapBody(order: any, name: string, firstSurname: string) {
     </soapenv:Envelope>`;
 }
 
-async function sendShippingLabel(soapBody: string): Promise<ShippingResponse> {
-  const username = process.env.USERNAME_CORREOS;
-  const password = process.env.PASSWORD_CORREOS;
-
-  if (!username || !password) {
-    return { status: 502, error: "Missing credentials" };
+async function sendShippingLabel(
+  order: any,
+  name: string,
+  firstSurname: string
+): Promise<ShippingResponse> {
+  let correos: CorreosLabelEnv;
+  try {
+    correos = correosLabelEnv();
+  } catch (error) {
+    // Nothing was sent to Correos: refuse before building the envelope.
+    if (error instanceof ServiceNotConfigured) return { status: 502, error: error.message };
+    throw error;
   }
+  const { username, password } = correos;
+  const soapBody = generateSoapBody(order, name, firstSurname, correos.labellerCode);
 
   try {
     const response = await axios.post(CORREOS_API_URL, soapBody, {
@@ -240,9 +271,13 @@ async function sendEmail(
   locale: Locale,
   exchange: ExchangeInfo | null
 ): Promise<ShippingResponse> {
-  const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
-  if (!postmarkToken) {
-    return { status: 500, error: "POSTMARK_SERVER_TOKEN is not set" };
+  let postmarkToken: string;
+  try {
+    postmarkToken = postmarkEnv().serverToken;
+  } catch (error) {
+    // Refused, not sent: the caller's alert carries this message.
+    if (error instanceof ServiceNotConfigured) return { status: 500, error: error.message };
+    throw error;
   }
 
   try {
@@ -322,9 +357,7 @@ export async function createShippingLabel(id: VerifiedOrderId): Promise<number> 
   }
 
   const { name, firstSurname } = parseShippingName(order.shippingName);
-  const soapBody = generateSoapBody(order, name, firstSurname);
-
-  const shippingResponse = await sendShippingLabel(soapBody);
+  const shippingResponse = await sendShippingLabel(order, name, firstSurname);
   if (shippingResponse.status !== 200) {
     console.error(
       `Shipping label failed for order ${id} (${order.shippingZip} ${order.shippingProvince}): ${shippingResponse.error}`
@@ -489,9 +522,10 @@ export async function resendReturnLabel(id: VerifiedOrderId): Promise<number> {
 export async function obtainLastStatus(
   trackingNumber: string | null
 ): Promise<TrackingStatus> {
-  const username = process.env.USERNAME_CORREOS;
-  const password = process.env.PASSWORD_CORREOS;
-  if (!trackingNumber || !username || !password) return UNKNOWN_TRACKING;
+  if (!trackingNumber) return UNKNOWN_TRACKING;
+  const credentials = correosCredentials();
+  if (!credentials) return UNKNOWN_TRACKING;
+  const { username, password } = credentials;
 
   const authToken = Buffer.from(`${username}:${password}`).toString("base64");
   const url = `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${encodeURIComponent(
@@ -556,9 +590,9 @@ export async function readCarrierMovement(
   if (!locator) return "not-moved";
   if (!tracksWithCorreos(carrier)) return "not-moved";
 
-  const username = process.env.USERNAME_CORREOS;
-  const password = process.env.PASSWORD_CORREOS;
-  if (!username || !password) return "unreadable";
+  const credentials = correosCredentials();
+  if (!credentials) return "unreadable";
+  const { username, password } = credentials;
 
   const authToken = Buffer.from(`${username}:${password}`).toString("base64");
   const url = `https://localizador.correos.es/canonico/eventos_envio_servicio_auth/${encodeURIComponent(

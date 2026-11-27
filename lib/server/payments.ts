@@ -1,5 +1,5 @@
 import "server-only";
-import { stripe } from "@/lib/stripe";
+import { stripeClient } from "@/lib/stripe";
 import { alertOps } from "@/lib/server/opsAlert";
 import { centsToEuros, checkoutLines, type CheckoutLine } from "@/lib/fees";
 import { dictionaries, readLocale } from "@/lib/i18n";
@@ -7,11 +7,13 @@ import type { ReturnMethod } from "@/lib/returnMethods";
 import { proposeCurrentSelection, type ProposalRefusal } from "@/lib/submissionProposal";
 import type { VerifiedOrderId, VerifiedSubmission } from "./identity";
 import { attachStripeSession } from "./submissionScope";
+import { appEnv } from "./serviceEnv";
 
+/** Read per checkout, never at import: without the app's URL, a checkout
+ *  refuses (ServiceNotConfigured) before any Stripe session exists. */
 function absoluteUrl(path: string) {
-  return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
+  return `${appEnv().publicUrl}${path}`;
 }
-const returnUrl = absoluteUrl("/");
 
 export type CheckoutOutcome =
   | { ok: true; url: string | null; submission: VerifiedSubmission }
@@ -113,7 +115,8 @@ export const createStripeUrl = async (
     : [{ name: "Returns & Exchanges Fee", amountCents: agreement.stripeChargeCents }];
 
   const isCreditMeta = isCredit ? "true" : "false";
-  const stripeSession = await stripe.checkout.sessions.create({
+  const returnUrl = absoluteUrl("/");
+  const stripeSession = await stripeClient().checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
     customer_email: order.email,

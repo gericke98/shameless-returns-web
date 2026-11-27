@@ -12,12 +12,12 @@
  * is any: do not deploy R3 until it prints zero, and record the output in the
  * PR.
  *
- *   npx tsx --tsconfig tsconfig.scripts.json scripts/check-legacy-stripe-sessions.ts
+ *   npx tsx --conditions=react-server --tsconfig tsconfig.scripts.json scripts/check-legacy-stripe-sessions.ts
  */
 import "dotenv/config";
 
 async function main() {
-  const { stripe } = await import("@/lib/stripe");
+  const stripe = (await import("@/lib/stripe")).stripeClient();
   const { unboundSessions } = await import("@/lib/checkoutMetadata");
   const open: Array<{ id: string; metadata: Record<string, string> | null; created: number; expires_at: number }> = [];
   for await (const session of stripe.checkout.sessions.list({ status: "open", limit: 100 })) {

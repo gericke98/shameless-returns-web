@@ -4,7 +4,7 @@
  *
  * WHY A SCRIPT, NOT A COMMITTED TEST: this hits the production Postgres
  * database and the live Shopify Admin API over the network, using
- * DATABASE_URL / NEXT_PUBLIC_SHOP_URL / NEXT_PUBLIC_ACCESS_TOKEN from the
+ * DATABASE_URL / SHOPIFY_SHOP_URL / SHOPIFY_ADMIN_TOKEN from the
  * environment. A committed test under tests/ runs on every `vitest run` —
  * in CI (no such env vars, so it would simply fail) and on every other
  * developer's machine (where it WOULD have those vars, and would silently
@@ -64,7 +64,7 @@ const SMALLER_SIZE: Record<string, string> = {
  *  the module is evaluated (same reason scripts/audit-exchange-overcharges.ts
  *  reimplements it, see that file's module comment). */
 async function fetchLiveCatalogue(): Promise<Product[]> {
-  const url = `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/graphql.json`;
+  const url = `${process.env.SHOPIFY_SHOP_URL}/admin/api/graphql.json`;
   const query = `
     query getProducts {
       products(first: 250, query: "status:ACTIVE") {
@@ -94,7 +94,7 @@ async function fetchLiveCatalogue(): Promise<Product[]> {
   const res = await fetch(url, {
     method: "POST",
     headers: {
-      "X-Shopify-Access-Token": process.env.NEXT_PUBLIC_ACCESS_TOKEN!,
+      "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_TOKEN!,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ query }),

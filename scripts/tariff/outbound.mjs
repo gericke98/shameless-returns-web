@@ -23,10 +23,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const shop = process.env.NEXT_PUBLIC_SHOP_URL;
-const token = process.env.NEXT_PUBLIC_ACCESS_TOKEN;
+const shop = process.env.SHOPIFY_SHOP_URL;
+const token = process.env.SHOPIFY_ADMIN_TOKEN;
 if (!shop || !token) {
-  console.error("NEXT_PUBLIC_SHOP_URL and NEXT_PUBLIC_ACCESS_TOKEN must be set.");
+  console.error("SHOPIFY_SHOP_URL and SHOPIFY_ADMIN_TOKEN must be set.");
   process.exit(1);
 }
 const endpoint = `https://${shop.replace(/^https?:\/\//, "").replace(/\/$/, "")}/admin/api/2025-01/graphql.json`;

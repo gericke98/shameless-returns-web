@@ -5,6 +5,7 @@
 // these are internal steps of a submission, gated by their callers.
 import { getFulfillmentLineItems } from "@/db/queries";
 import type { FulfillmentLineItem, OrderData } from "@/types";
+import { shopifyEnv } from "@/lib/server/serviceEnv";
 
 /**
  * Resolve the Shopify FulfillmentLineItem id for each line, by its Shopify
@@ -67,13 +68,12 @@ const REFUNDABLE = `
 export async function refundableQuantities(
   fulfillmentLineItemIds: readonly string[]
 ): Promise<Map<string, number | null>> {
-  const token = process.env.NEXT_PUBLIC_ACCESS_TOKEN;
-  if (!token) throw new Error("Missing Shopify access token");
+  const { adminToken, shopUrl } = shopifyEnv();
   const response = await fetch(
-    `${process.env.NEXT_PUBLIC_SHOP_URL}/admin/api/2025-01/graphql.json`,
+    `${shopUrl}/admin/api/2025-01/graphql.json`,
     {
       method: "POST",
-      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      headers: { "X-Shopify-Access-Token": adminToken, "Content-Type": "application/json" },
       body: JSON.stringify({ query: REFUNDABLE, variables: { ids: fulfillmentLineItemIds } }),
     }
   );

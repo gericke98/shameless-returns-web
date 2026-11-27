@@ -135,7 +135,7 @@ vi.mock("next/headers", () => ({
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  stripe: {
+  stripeClient: () => ({
     webhooks: {
       constructEvent: () => ({
         type: "checkout.session.completed",
@@ -155,7 +155,7 @@ vi.mock("@/lib/stripe", () => ({
         },
       }),
     },
-  },
+  }),
 }));
 
 async function post() {
@@ -173,6 +173,9 @@ beforeEach(() => {
   behaviour.submissionId = "sub-1";
   behaviour.agreedMethod = "CORREOS";
   ORDER.products = [];
+  // The route reads the signing secret through serviceEnv; the client is mocked.
+  process.env.STRIPE_API_KEY = "sk_test_x";
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_x";
   vi.resetModules();
 });
 

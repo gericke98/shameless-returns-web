@@ -13,7 +13,7 @@ import "server-only";
 // Verified before removing: the only importers are `actions/cancelReturn.ts`
 // (a server module) and `tests/refundPayment.test.ts`.
 
-import { stripe } from "@/lib/stripe";
+import { stripeClient } from "@/lib/stripe";
 
 export type RefundOutcome = {
   refunded: boolean;
@@ -50,7 +50,7 @@ async function resolvePaymentIntentId(order: RefundableOrder): Promise<string | 
   let found: string | null = null;
   let scanned = 0;
 
-  await stripe.checkout.sessions
+  await stripeClient().checkout.sessions
     .list({
       customer_details: { email: order.email },
       status: "complete",
@@ -97,7 +97,7 @@ export async function refundOrderPayment(
     const paymentIntent = await resolvePaymentIntentId(order);
     if (!paymentIntent) return { refunded: false, reason: "not-found" };
 
-    await stripe.refunds.create(
+    await stripeClient().refunds.create(
       { payment_intent: paymentIntent },
       { idempotencyKey: `cancel:${submissionId}` }
     );

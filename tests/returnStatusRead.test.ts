@@ -26,8 +26,8 @@ afterEach(() => {
 });
 
 async function subject() {
-  process.env.NEXT_PUBLIC_SHOP_URL = "https://shop.test";
-  process.env.NEXT_PUBLIC_ACCESS_TOKEN = "token";
+  process.env.SHOPIFY_SHOP_URL = "https://shop.test";
+  process.env.SHOPIFY_ADMIN_TOKEN = "token";
   return (await import("@/db/queries")).getReturnStatusesByIds;
 }
 

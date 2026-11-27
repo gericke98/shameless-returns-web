@@ -9,7 +9,7 @@ vi.mock("react", async (importOriginal) => {
   return { ...actual, cache: (fn: unknown) => fn };
 });
 vi.mock("@/db/drizzle", async () => (await import("./support/drizzleMock")).drizzleModule(await (() => ({ default: {}, transact: async () => [] }))()));
-vi.mock("@/lib/stripe", () => ({ default: {}, stripe: {} }));
+vi.mock("@/lib/stripe", () => ({ stripeClient: () => ({}) }));
 
 const session = vi.hoisted(() => ({ orderId: null as string | null, admin: null as string | null }));
 vi.mock("@/lib/orderAccess", () => ({ currentOrderId: async () => session.orderId }));

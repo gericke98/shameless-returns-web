@@ -122,7 +122,7 @@ vi.mock("@/db/fees", () => ({
 }));
 
 vi.mock("@/lib/stripe", () => ({
-  stripe: {
+  stripeClient: () => ({
     checkout: {
       sessions: {
         create: async (args: any) => {
@@ -131,7 +131,7 @@ vi.mock("@/lib/stripe", () => ({
         },
       },
     },
-  },
+  }),
 }));
 
 vi.mock("@/lib/server/opsAlert", () => ({

@@ -14,6 +14,7 @@ import { sql } from "drizzle-orm";
 import db, { readQuery } from "@/db/drizzle";
 import { submissionForRow } from "@/lib/settlement/legacy";
 import { SHOPIFY_API_VERSION } from "@/lib/settlement/shopify";
+import { shopifyEnv } from "@/lib/server/serviceEnv";
 import type { VerifiedOrderId, VerifiedSubmission } from "@/lib/server/identity";
 import {
   claimForCancellation,
@@ -200,12 +201,10 @@ export async function cancelShopifyReturn(
   returnId: string
 ): Promise<{ success: boolean; errors?: unknown }> {
   try {
-    const shop = process.env.NEXT_PUBLIC_SHOP_URL;
-    const token = process.env.NEXT_PUBLIC_ACCESS_TOKEN;
-    if (!shop || !token) throw new Error("Missing Shopify access token or shop URL");
-    const response = await fetch(`${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    const { adminToken, shopUrl } = shopifyEnv();
+    const response = await fetch(`${shopUrl}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
       method: "POST",
-      headers: { "X-Shopify-Access-Token": token, "Content-Type": "application/json" },
+      headers: { "X-Shopify-Access-Token": adminToken, "Content-Type": "application/json" },
       body: JSON.stringify({ query: RETURN_CANCEL, variables: { id: returnId } }),
     });
     const data = await response.json();

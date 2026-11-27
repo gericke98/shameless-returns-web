@@ -1,5 +1,5 @@
 import "server-only";
-import { stripe } from "@/lib/stripe";
+import { stripeClient } from "@/lib/stripe";
 import { alertOps } from "@/lib/server/opsAlert";
 import { centsToEuros, checkoutLines, type CheckoutLine } from "@/lib/fees";
 import { dictionaries, readLocale } from "@/lib/i18n";
@@ -113,7 +113,7 @@ export const createStripeUrl = async (
     : [{ name: "Returns & Exchanges Fee", amountCents: agreement.stripeChargeCents }];
 
   const isCreditMeta = isCredit ? "true" : "false";
-  const stripeSession = await stripe.checkout.sessions.create({
+  const stripeSession = await stripeClient().checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],
     customer_email: order.email,

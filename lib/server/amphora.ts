@@ -1,5 +1,8 @@
 import "server-only";
 import axios from "axios";
+// Base, tenant, key and shop: refuses with `ServiceNotConfigured` when this
+// environment holds no Amphora keys.
+import { amphoraEnv } from "./serviceEnv";
 
 /**
  * Amphora Logistics Company API client (international returns/exchanges).
@@ -12,40 +15,15 @@ import axios from "axios";
  * render: a created return exposes `carrier` / `carrier_number` / `carrier_url`
  * (a tracking URL) which we surface in the customer confirmation email.
  *
- * Server-only: reads secret env vars. Do not import from a client component.
+ * Server-only: uses secret keys. Do not import from a client component.
  */
-
-const DEFAULT_BASE = "https://api.amphoralogistics.com/prod-integrations-api";
-const DEFAULT_SHOP_NAME = "shameless-collective-madrid.myshopify.com";
-
-export type AmphoraConfig = {
-  base: string;
-  tenant: string;
-  apiKey: string;
-  shopName: string;
-};
-
-/** The Company API's base, tenant, key and shop — shared with the stock reader (lib/server/amphoraStock.ts). */
-export function amphoraConfig(): AmphoraConfig {
-  const apiKey = process.env.AMPHORA_API_KEY;
-  const tenant = process.env.AMPHORA_TENANT_ID;
-  if (!apiKey || !tenant) {
-    throw new Error("Amphora is not configured (AMPHORA_API_KEY / AMPHORA_TENANT_ID missing)");
-  }
-  return {
-    apiKey,
-    tenant,
-    base: process.env.AMPHORA_COMPANY_API_URL || DEFAULT_BASE,
-    shopName: process.env.AMPHORA_SHOP_NAME || DEFAULT_SHOP_NAME,
-  };
-}
 
 async function amphoraRequest<T = any>(
   method: "GET" | "POST" | "PATCH",
   path: string,
   opts: { query?: Record<string, string>; body?: unknown } = {},
 ): Promise<T> {
-  const cfg = amphoraConfig();
+  const cfg = amphoraEnv();
   const url = `${cfg.base}/${encodeURIComponent(cfg.tenant)}${path}`;
   const res = await axios.request<T>({
     method,
@@ -254,7 +232,7 @@ export function buildCreateReturnBody(
 
 /** Create a return (Amphora arranges carrier + garment collection). */
 export async function createAmphoraReturn(input: CreateReturnInput): Promise<AmphoraReturn> {
-  const cfg = amphoraConfig();
+  const cfg = amphoraEnv();
   const data = await amphoraRequest<{ return_order: AmphoraReturn }>("POST", "/returns", {
     body: buildCreateReturnBody(input, cfg.shopName),
   });

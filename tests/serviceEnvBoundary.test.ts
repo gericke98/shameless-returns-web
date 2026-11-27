@@ -222,4 +222,21 @@ describe("the accessors refuse, typed, when a service is absent", () => {
       process.env = saved;
     }
   });
+
+  it("the app URL refuses a value that is not an absolute http(s) URL", async () => {
+    const saved = { ...process.env };
+    try {
+      const env = await import("@/lib/server/serviceEnv");
+      for (const bad of ["not-a-url", "returns.test", "ftp://returns.test", "javascript:alert(1)"]) {
+        process.env.NEXT_PUBLIC_APP_URL = bad;
+        expect(() => env.appEnv()).toThrow(/misconfigured in this environment \(NEXT_PUBLIC_APP_URL is not an absolute http\(s\) URL\)/);
+        expect(() => env.appEnv()).toThrow(env.ServiceNotConfigured);
+        expect(env.dashboardLinkForAlert()).toMatch(/^\(no dashboard link: .*misconfigured/);
+      }
+      process.env.NEXT_PUBLIC_APP_URL = "http://localhost:3000";
+      expect(env.appEnv().publicUrl).toBe("http://localhost:3000");
+    } finally {
+      process.env = saved;
+    }
+  });
 });

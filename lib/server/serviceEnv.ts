@@ -45,6 +45,16 @@ export class ServiceNotConfigured extends Error {
   }
 }
 
+/** A key is present but unusable. A refusal like a missing key (nothing was
+ *  sent), so every caller that handles "not configured" handles it too. */
+export class ServiceMisconfigured extends ServiceNotConfigured {
+  constructor(service: ServiceName, name: string, problem: string) {
+    super(service, [name]);
+    this.name = "ServiceMisconfigured";
+    this.message = `${LABEL[service]} misconfigured in this environment (${name} ${problem})`;
+  }
+}
+
 /** Read the named keys; all present (non-blank) or a refusal naming the absent ones. */
 function required<K extends string>(service: ServiceName, names: readonly K[]): Record<K, string> {
   const values = {} as Record<K, string>;
@@ -62,7 +72,19 @@ function required<K extends string>(service: ServiceName, names: readonly K[]): 
 /** This deployment's own public URL: links in customer emails, Stripe's
  *  return URLs, the dashboard link in ops alerts. */
 export function appEnv(): { publicUrl: string } {
-  return { publicUrl: required("app", ["NEXT_PUBLIC_APP_URL"]).NEXT_PUBLIC_APP_URL };
+  const publicUrl = required("app", ["NEXT_PUBLIC_APP_URL"]).NEXT_PUBLIC_APP_URL;
+  // Every link is built by appending a path, so the value must be an absolute
+  // http(s) URL; anything else is refused here, never written into a link.
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(publicUrl);
+  } catch {
+    parsed = null;
+  }
+  if (!parsed || (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+    throw new ServiceMisconfigured("app", "NEXT_PUBLIC_APP_URL", "is not an absolute http(s) URL");
+  }
+  return { publicUrl };
 }
 
 /**

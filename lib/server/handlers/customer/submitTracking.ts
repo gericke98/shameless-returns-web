@@ -15,6 +15,7 @@ import { pinSelfTracking } from "@/lib/pinSelfTracking";
 import { ok, refuse, type HandlerResult } from "@/lib/actionResult";
 import type { CustomerContext } from "@/lib/server/actions";
 import { alertOps } from "@/lib/server/opsAlert";
+import { dashboardLinkForAlert } from "@/lib/server/serviceEnv";
 import { activeSelfSubmission, claimTracking } from "@/lib/server/submissionScope";
 
 // Transport bounds only, deliberately above the domain limits
@@ -157,7 +158,7 @@ export async function submitTrackingHandler(
         ``,
         `Open the link. If the parcel is real, Confirm it in the dashboard;`,
         `otherwise Reject it and the customer is asked for the right number:`,
-        `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/dashboard`,
+        dashboardLinkForAlert(),
       ].join("\n")
     );
     return ok({ pending: true });

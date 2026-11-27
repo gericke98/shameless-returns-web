@@ -105,6 +105,8 @@ beforeEach(() => {
   written.length = 0;
   raceLoser = false;
   process.env.POSTMARK_SERVER_TOKEN = "test-token";
+  // The instructions link to the portal; without its URL the email refuses.
+  process.env.NEXT_PUBLIC_APP_URL = "https://returns.test";
 });
 
 describe("createSelfBookedReturn", () => {

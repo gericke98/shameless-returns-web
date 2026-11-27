@@ -7,11 +7,13 @@ import type { ReturnMethod } from "@/lib/returnMethods";
 import { proposeCurrentSelection, type ProposalRefusal } from "@/lib/submissionProposal";
 import type { VerifiedOrderId, VerifiedSubmission } from "./identity";
 import { attachStripeSession } from "./submissionScope";
+import { appEnv } from "./serviceEnv";
 
+/** Read per checkout, never at import: without the app's URL, a checkout
+ *  refuses (ServiceNotConfigured) before any Stripe session exists. */
 function absoluteUrl(path: string) {
-  return `${process.env.NEXT_PUBLIC_APP_URL}${path}`;
+  return `${appEnv().publicUrl}${path}`;
 }
-const returnUrl = absoluteUrl("/");
 
 export type CheckoutOutcome =
   | { ok: true; url: string | null; submission: VerifiedSubmission }
@@ -113,6 +115,7 @@ export const createStripeUrl = async (
     : [{ name: "Returns & Exchanges Fee", amountCents: agreement.stripeChargeCents }];
 
   const isCreditMeta = isCredit ? "true" : "false";
+  const returnUrl = absoluteUrl("/");
   const stripeSession = await stripeClient().checkout.sessions.create({
     mode: "payment",
     payment_method_types: ["card"],

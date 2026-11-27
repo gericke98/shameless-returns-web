@@ -13,6 +13,7 @@ import { readCarrierMovement } from "@/lib/server/shipping";
 import { amphoraOrderIdFromShopifyId, cancelAmphoraReturn } from "@/lib/server/amphora";
 import { refundOrderPayment } from "@/lib/server/refundPayment";
 import { alertOps } from "@/lib/server/opsAlert";
+import { postmarkEnv } from "@/lib/server/serviceEnv";
 import { finishCancellation, releaseCancellation } from "@/lib/server/submissionScope";
 import { dictionaries, readLocale } from "@/lib/i18n";
 
@@ -191,11 +192,11 @@ async function sendCancellationEmail(order: {
   locale?: string | null;
   orderNumber: string;
 }): Promise<void> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return;
-
   const t = dictionaries[readLocale(order.locale)];
   try {
+    // Inside the try: an environment with no Postmark is logged below like
+    // any other failed send, never skipped in silence.
+    const token = postmarkEnv().serverToken;
     await axios.post(
       POSTMARK_API_URL,
       {

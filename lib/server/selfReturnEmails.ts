@@ -18,6 +18,7 @@ import {
   type EmailPayload,
 } from "@/lib/emails";
 import type { Locale } from "@/lib/i18n";
+import { postmarkEnv } from "./serviceEnv";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
@@ -25,10 +26,10 @@ async function sendSelfReturnEmail(
   payload: EmailPayload,
   to: string
 ): Promise<number> {
-  const token = process.env.POSTMARK_SERVER_TOKEN;
-  if (!token) return 500;
-
   try {
+    // Inside the try: an environment with no Postmark is logged below and
+    // reported as a failed send, never skipped in silence.
+    const token = postmarkEnv().serverToken;
     const res = await axios.post(
       POSTMARK_API_URL,
       {

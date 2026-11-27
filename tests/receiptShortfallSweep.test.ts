@@ -63,7 +63,7 @@ vi.mock("@/db/queries", () => ({
 vi.mock("@/lib/server/opsAlert", () => ({
   alertOps: async () => {},
   sendOpsAlert: async (subject: string) => {
-    if (!world.postmarkOk) return { ok: false, error: "Postmark 500" };
+    if (!world.postmarkOk) return { ok: false, reason: "rejected", error: "Postmark 500" };
     sent.push(subject);
     return { ok: true };
   },

@@ -74,7 +74,9 @@ export async function dispatchOpsAlerts(
       await markOpsAlertAccepted(alert.id);
       sent += 1;
     } else {
-      console.error(`[ops-outbox] ${alert.dedupeKey} not accepted: ${result.error}`);
+      // Not configured or rejected, the row stays pending: an environment
+      // without Postmark delays alerts, it never drops them.
+      console.error(`[ops-outbox] ${alert.dedupeKey} not accepted (${result.reason}): ${result.error}`);
       await markOpsAlertFailed(alert.id, result.error);
       failed += 1;
     }

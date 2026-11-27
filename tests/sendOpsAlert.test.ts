@@ -28,7 +28,7 @@ describe("sendOpsAlert", () => {
 
     const result = await sendOpsAlert("s", "b");
 
-    expect(result.ok).toBe(false);
+    expect(result).toMatchObject({ ok: false, reason: "rejected" });
     expect(!result.ok && result.error).toContain("406");
   });
 
@@ -42,12 +42,30 @@ describe("sendOpsAlert", () => {
     expect(!result.ok && result.error).toContain("down");
   });
 
-  it("is not ok when no token is configured, and sends nothing", async () => {
+  it("is a typed not-configured failure when no token is configured, and sends nothing", async () => {
     delete process.env.POSTMARK_SERVER_TOKEN;
     const { sendOpsAlert } = await import("@/lib/server/opsAlert");
 
-    expect((await sendOpsAlert("s", "b")).ok).toBe(false);
+    const result = await sendOpsAlert("s", "b");
+
+    expect(result).toEqual({
+      ok: false,
+      reason: "not-configured",
+      error: expect.stringContaining("Postmark not configured in this environment"),
+    });
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it("alertOps without Postmark says so instead of returning in silence", async () => {
+    delete process.env.POSTMARK_SERVER_TOKEN;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { alertOps } = await import("@/lib/server/opsAlert");
+
+    await expect(alertOps("s", "b")).resolves.toBeUndefined();
+
+    expect(post).not.toHaveBeenCalled();
+    expect(errors.mock.calls.map((c) => c.join(" ")).join("\n")).toContain("not-configured");
+    errors.mockRestore();
   });
 
   it("alertOps keeps its contract: resolves, never throws, on failure", async () => {

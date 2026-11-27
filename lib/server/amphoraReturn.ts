@@ -21,6 +21,7 @@ import {
   type AmphoraReturn,
 } from "./amphora";
 import { describeError } from "@/lib/describeError";
+import { postmarkEnv, ServiceNotConfigured } from "./serviceEnv";
 
 const POSTMARK_API_URL = "https://api.postmarkapp.com/email";
 
@@ -40,9 +41,13 @@ async function sendAmphoraConfirmationEmail(
   locale: Locale,
   exchange: ExchangeInfo | null
 ): Promise<{ status: number; error?: string }> {
-  const postmarkToken = process.env.POSTMARK_SERVER_TOKEN;
-  if (!postmarkToken) {
-    return { status: 500, error: "POSTMARK_SERVER_TOKEN is not set" };
+  let postmarkToken: string;
+  try {
+    postmarkToken = postmarkEnv().serverToken;
+  } catch (error) {
+    // Refused, not sent: the caller's alert carries this message.
+    if (error instanceof ServiceNotConfigured) return { status: 500, error: error.message };
+    throw error;
   }
 
   const emailData = {

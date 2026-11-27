@@ -5,6 +5,10 @@ import { pg16Available, startPg16 } from "./support/pg16";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import { giftCardObject, orderObject, returnObject } from "./support/shopifyEvidence";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // Races between CONNECTIONS, on a real local PostgreSQL 16 (PGlite has one
 // connection, so it cannot race). Each concurrent call below takes its own

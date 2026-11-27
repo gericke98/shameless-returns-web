@@ -4,6 +4,10 @@ import { settlementDatabase } from "./support/settlementDb";
 import { planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import type { SubmissionLineRow } from "@/lib/settlement/ledger";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // resolve-hold --open: an operator holds an accepted submission BEFORE
 // settlement would settle it — the customer was paid by hand outside the

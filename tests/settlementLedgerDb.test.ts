@@ -5,6 +5,10 @@ import { settlementDatabase } from "./support/settlementDb";
 import { insertFrozenReleaseHold, planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import { giftCardObject, orderObject, refundObject, returnObject } from "./support/shopifyEvidence";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // The ledger's SQL, run for real against migrations 0004/0006/0007 in PGlite:
 // admission, the claim → dispatch → record fences, finalization, the
@@ -33,7 +37,13 @@ vi.mock("@/lib/settlement/shopify", async (importOriginal) => {
     },
   };
 });
-vi.mock("@/lib/server/opsAlertOutbox", () => ({ enqueueOpsAlerts: async () => ({ failed: 0 }) }));
+const queuedAlerts = vi.hoisted(() => [] as Array<{ dedupeKey: string; subject: string; body: string }>);
+vi.mock("@/lib/server/opsAlertOutbox", () => ({
+  enqueueOpsAlerts: async (alerts: any[]) => {
+    queuedAlerts.push(...alerts);
+    return { failed: 0 };
+  },
+}));
 // Amphora covers every replacement here (A1 reads it before every orderCreate).
 const stock = vi.hoisted(() => ({ available: {} as Record<string, number>, reason: null as string | null, reads: 0 }));
 vi.mock("@/lib/server/amphoraStock", async () => (await import("./support/amphoraStockMock")).amphoraStockModule(stock));
@@ -62,6 +72,7 @@ beforeEach(async () => {
   await env.reset();
   for (const k of Object.keys(answers)) delete answers[k];
   sent.length = 0;
+  queuedAlerts.length = 0;
   (await import("./support/amphoraStockMock")).resetStock(stock);
 });
 
@@ -591,5 +602,71 @@ describe("ownership of the rows (S2 plan L2)", () => {
     expect(await c.claimForCancellation(sub)).toBe("cancelled");
     await c.finishCancellation(vid(seeded.orderId), [sub]);
     expect(await c.claimForCancellation(sub)).toBe("cancelled");
+  });
+});
+
+describe("F2a: an environment without Shopify keys runs nothing", () => {
+  /** Run `fn` with the Shopify keys absent, then put them back. */
+  async function withoutShopify<T>(fn: () => Promise<T>): Promise<T> {
+    const saved = { token: process.env.SHOPIFY_ADMIN_TOKEN, url: process.env.SHOPIFY_SHOP_URL };
+    delete process.env.SHOPIFY_ADMIN_TOKEN;
+    delete process.env.SHOPIFY_SHOP_URL;
+    try {
+      return await fn();
+    } finally {
+      process.env.SHOPIFY_ADMIN_TOKEN = saved.token;
+      process.env.SHOPIFY_SHOP_URL = saved.url;
+    }
+  }
+  const row = async (id: string) => {
+    const r = await opState(id);
+    return { state: r.state, owner: r.owner, lease_gen: r.lease_gen, attempt: r.attempt, dispatched_at: r.dispatched_at };
+  };
+
+  it("a pending operation is refused before the claim: still pending, never dispatched, nothing sent, logged", async () => {
+    const { plan } = await admitted();
+    const op = plan.ops[0] as any;
+    const before = await row(op.id);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const outcome = await withoutShopify(async () => (await runner()).runOutcome(sys, op.id));
+
+      expect(outcome).toEqual({
+        result: "not-configured",
+        reason: expect.stringContaining("Shopify not configured in this environment"),
+      });
+      expect(await row(op.id)).toEqual(before);
+      expect(before).toMatchObject({ state: "pending", dispatched_at: null });
+      expect(sent).toEqual([]);
+      expect(errors.mock.calls.map((c) => c.join(" ")).join("\n")).toContain(`operation ${op.id} not run`);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("recovery neither reads, takes over nor re-sends a dispatched operation, and says so once", async () => {
+    const { plan } = await admitted();
+    const op = plan.ops[0] as any;
+    // Sent once with no answer: dispatched, awaiting recovery.
+    expect(await (await runner()).run(sys, op.id)).toBe("in-flight");
+    await env.pg.query("UPDATE settlement_operations SET updated_at = now() - interval '1 hour', lease_until = now() - interval '1 minute'");
+    const before = await row(op.id);
+    sent.length = 0;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { recoverSettlements } = await import("@/lib/settlement/recovery");
+      const report = await withoutShopify(() => recoverSettlements(sys, { deadline: Date.now() + 60_000 }));
+
+      expect(report.ran).toEqual([
+        expect.objectContaining({ op: op.id, result: "not-configured", reason: expect.stringContaining("Shopify not configured") }),
+      ]);
+      expect(await row(op.id)).toEqual(before);
+      expect(sent).toEqual([]);
+      const alert = queuedAlerts.find((a) => a.dedupeKey.startsWith("settlement-not-configured:"));
+      expect(alert?.subject).toContain("SETTLEMENT NOT RUNNING");
+      expect(alert?.body).toContain(op.id);
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

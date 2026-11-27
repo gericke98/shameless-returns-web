@@ -1,6 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sys } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // FX §#8: the stock-hold drafts placed before FX are released by ONE
 // migration authority, from the orders' persisted pointers, through the ONE

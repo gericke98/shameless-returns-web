@@ -5,6 +5,10 @@ import { settlementDatabase } from "./support/settlementDb";
 import { insertFrozenReleaseHold, planFor, seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
 import { giftCardObject, orderObject, refundObject, returnObject } from "./support/shopifyEvidence";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // The L5 table, row by row: for each kind, what the mutation's answer, a
 // userError, no answer, and recovery's evidence read (0 / 1 / 2 / mismatch /

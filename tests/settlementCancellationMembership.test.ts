@@ -3,6 +3,10 @@ import { vid, vsub } from "./support/verified";
 import { settlementDatabase } from "./support/settlementDb";
 import { seedSubmission } from "./support/settlementSeed";
 import { line } from "./support/planFixtures";
+import { configureShopify } from "./support/serviceEnv";
+
+// Settlement refuses before the claim without Shopify keys (F2a).
+configureShopify();
 
 // Finding 3: a cancellation first establishes its COMPLETE membership — every
 // confirmed, unsettled row mapped to a submission — and each submission's own

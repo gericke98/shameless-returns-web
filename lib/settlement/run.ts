@@ -44,6 +44,7 @@ import {
 import { graphQLErrors } from "./shopify";
 import { ROOT_REFUND_REPLAY_HOURS, type Operation } from "./types";
 import type { WriteCapability } from "@/lib/server/identity";
+import { ServiceNotConfigured, shopifyEnv } from "@/lib/server/serviceEnv";
 
 export type RunResult =
   | "done"
@@ -56,7 +57,10 @@ export type RunResult =
   /** A1: Amphora is short for a fresh orderCreate — not sent; a hold now blocks the submission. */
   | "held"
   /** A1: Amphora is unreadable — not sent, back to pending for the next run. */
-  | "wait";
+  | "wait"
+  /** F2a: this environment holds no Shopify keys — refused before the claim,
+   *  so the operation is exactly as it was: never claimed, never dispatched. */
+  | "not-configured";
 
 type Judged = Verdict & { lines?: CreatedReplacementLine[] };
 
@@ -73,11 +77,32 @@ export async function run(cap: WriteCapability, opId: string, me: string = rando
   return (await runOutcome(cap, opId, me)).result;
 }
 
-/** A run's result, and why — for `wait`, the reason Amphora could not be read (A1). */
+/** A run's result, and why — for `wait`, the reason Amphora could not be read
+ *  (A1); for `not-configured`, which keys this environment lacks (F2a). */
 export type RunOutcome = { result: RunResult; reason?: string };
+
+/**
+ * F2a: every operation is a Shopify effect, so an environment without Shopify
+ * keys refuses BEFORE the claim. Refusing later would record a dispatch for a
+ * send that never left (the transport reports absent keys as a no-answer), and
+ * leave the op `dispatched` for recovery to chase. Logged, and returned for the
+ * caller to report.
+ */
+function notConfigured(opId: string): RunOutcome | null {
+  try {
+    shopifyEnv();
+    return null;
+  } catch (error) {
+    if (!(error instanceof ServiceNotConfigured)) throw error;
+    console.error(`[settlement] operation ${opId} not run: ${error.message}`);
+    return { result: "not-configured", reason: error.message };
+  }
+}
 
 /** `run`, keeping the reason a fresh exchange send waits (recovery reports and digests it). */
 export async function runOutcome(cap: WriteCapability, opId: string, me: string = randomUUID()): Promise<RunOutcome> {
+  const refused = notConfigured(opId);
+  if (refused) return refused;
   const claimed = await claim(cap, opId, me);
   if (!claimed) return { result: "not-claimed" };
   if (claimed.kind === "exchange_order") {
@@ -286,6 +311,22 @@ const hoursSince = (date: Date | null) =>
  * and it keeps the op's attempt (its idempotency key) and first-dispatch time.
  */
 export async function recoverDispatched(cap: WriteCapability, op: Operation, me: string = randomUUID()): Promise<RunResult> {
+  return (await recoverDispatchedOutcome(cap, op, me)).result;
+}
+
+/** `recoverDispatched`, keeping the reason it refused (recovery reports and digests it). */
+export async function recoverDispatchedOutcome(
+  cap: WriteCapability,
+  op: Operation,
+  me: string = randomUUID()
+): Promise<RunOutcome> {
+  // F2a: no evidence read, no takeover, no re-send without Shopify keys.
+  const refused = notConfigured(op.id);
+  if (refused) return refused;
+  return { result: await recoverReadingEvidence(cap, op, me) };
+}
+
+async function recoverReadingEvidence(cap: WriteCapability, op: Operation, me: string): Promise<RunResult> {
   // A gift card is re-sent with its frozen code: the re-send IS the probe
   // (created, or TAKEN → evidence). Every other kind is read first. When the
   // re-send is not authorized (review #1: legacy shape, its exchange not done,
